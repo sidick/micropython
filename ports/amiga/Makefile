@@ -31,11 +31,22 @@ else
 CFLAGS += -Os -DNDEBUG -fdata-sections -ffunction-sections
 endif
 
-LDFLAGS += -m68020
+LDFLAGS += -m68020 -lm
+
+# shared/libc/printf.c uses __attribute__((alias)) which bebbo GCC doesn't
+# support on AmigaOS. clib2 provides vsnprintf natively so drop this file.
+SRC_EXTMOD_C := $(filter-out shared/libc/printf.c, $(SRC_EXTMOD_C))
+
+# extmod/modjson.c uses a stack-allocated mp_obj_stringio_t passed through
+# the stream protocol; on 68k this fails because mp_obj_is_obj() requires
+# 4-byte pointer alignment not guaranteed for all stack frames by the SysV
+# ABI. Use a port-local replacement that reads directly from a buffer.
+SRC_EXTMOD_C := $(filter-out extmod/modjson.c, $(SRC_EXTMOD_C))
 
 SRC_C = \
 	main.c \
 	mphalport.c \
+	modjson.c \
 	amigafile.c \
 	amigaio.c \
 	shared/readline/readline.c \
@@ -44,7 +55,7 @@ SRC_C = \
 
 SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c amigaio.c
 
-OBJ = $(PY_CORE_O)
+OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 
 all: $(BUILD)/$(PROG)
