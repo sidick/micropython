@@ -10,7 +10,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 1 ✅ Skeleton: port builds and runs in Amiberry emulator
 - Phase 2 ✅ File system access and `import` from AmigaDOS volumes
 - Phase 3 ✅ Standard MicroPython library modules
-- Phase 4: Amiga-specific `amiga` C module (exec/dos library bindings)
+- Phase 4 ✅ Amiga-specific `amiga` C module (exec/dos library bindings)
 - Phase 5 (stretch): 68k native code emitter
 
 ### Non-goals (initially)
@@ -307,57 +307,45 @@ And `modjson.c` is added to `SRC_C` to pick up the port-local version.
 
 ---
 
-## Phase 4 — Amiga-specific `amiga` Module
+## Phase 4 — Amiga-specific `amiga` Module ✅
 
-Expose key AmigaOS services to Python as a built-in C module. Requires NDK.
+`ports/amiga/modamiga.c` exposes key exec.library and dos.library functions to
+Python. The NDK is available at `/opt/amiga/m68k-amigaos/ndk-include/` and is on
+the default compiler include path — no extra `-I` flag needed.
 
-### Proposed API
+`modamiga.c` must be in `SRC_QSTR` (not just `SRC_C`) so that `MP_REGISTER_MODULE`
+and its qstr identifiers are picked up by `makemoduledefs.py` and `makeqstrdefs.py`.
+
+### API
 
 ```python
 import amiga
 
-amiga.version()                       # → (major, minor) of AmigaOS
-amiga.alloc_vec(size, flags)          # → address int
-amiga.free_vec(addr)
-amiga.find_task(name=None)            # → task address or None
-amiga.execute(cmd, stdin=0, stdout=0) # → return code
+amiga.os_version()          # → (version, revision) tuple from ExecBase
+amiga.find_task(name=None)  # → int address of named task, or current task if None
+amiga.alloc_vec(size, flags=amiga.MEMF_ANY)  # → int address; raises MemoryError on failure
+amiga.free_vec(addr)        # → None
+amiga.execute(cmd)          # → int return code (0=OK, 5=WARN, 10=ERROR, 20=FAILURE, -1=failed to start)
+
+# Memory flags
+amiga.MEMF_ANY              # 0
+amiga.MEMF_PUBLIC           # 1
+amiga.MEMF_CHIP             # 2
+amiga.MEMF_FAST             # 4
+amiga.MEMF_CLEAR            # 0x10000
 ```
 
-### Implementation outline
+### Notes
 
-Create `ports/amiga/modamiga.c`. Note: use `static` not `STATIC` (removed from MicroPython):
-
-```c
-#include "py/runtime.h"
-#include "py/obj.h"
-#include <proto/exec.h>
-
-static mp_obj_t amiga_version(void) {
-    struct Library *lib = (struct Library *)SysBase;
-    mp_obj_t items[2] = {
-        mp_obj_new_int(lib->lib_Version),
-        mp_obj_new_int(lib->lib_Revision),
-    };
-    return mp_obj_new_tuple(2, items);
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(amiga_version_obj, amiga_version);
-
-static const mp_rom_map_elem_t amiga_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_amiga) },
-    { MP_ROM_QSTR(MP_QSTR_version),  MP_ROM_OBJ(&amiga_version_obj) },
-};
-static MP_DEFINE_CONST_DICT(amiga_module_globals, amiga_module_globals_table);
-
-const mp_obj_module_t amiga_module = {
-    .base    = { &mp_type_module },
-    .globals = (mp_obj_dict_t *)&amiga_module_globals,
-};
-MP_REGISTER_MODULE(MP_QSTR_amiga, amiga_module);
-```
+- `amiga.execute()` uses `SystemTagList()` (not `Execute()`). `Execute()` returns
+  an AmigaOS BOOL where TRUE = -1, giving no indication of the command's exit code.
+  `SystemTagList()` returns the actual CLI return code.
+- `amiga.find_task(None)` calls `FindTask(NULL)` which returns the current task pointer.
 
 ### Deliverable
 
-`import amiga; print(amiga.version())` prints the AmigaOS version.
+`import amiga; print(amiga.os_version())` prints the AmigaOS version tuple.
+`amiga.execute("echo hello")` returns 0.
 
 ---
 
@@ -404,5 +392,5 @@ Significant work (several thousand lines); defer until phases 1–4 are solid.
 | 1 — Skeleton | ✅ Done | Builds and runs in Amiberry (185 KB AmigaOS executable) |
 | 2 — File I/O | ✅ Done | `open()`, `import`, context manager; newlib stdio (no NDK needed) |
 | 3 — Stdlib | ✅ Done | math, struct, json, re, hashlib, float; json.loads via port-local modjson.c |
-| 4 — `amiga` module | Not started | AmigaOS library calls from Python; needs NDK |
+| 4 — `amiga` module | ✅ Done | os_version, find_task, alloc_vec, free_vec, execute; SystemTagList for exit codes |
 | 5 — 68k emitter | Not started | `--emit native` support |
