@@ -13,6 +13,7 @@
 #define MICROPY_HEAP_SIZE                   (256 * 1024)
 
 #define MICROPY_ENABLE_GC                   (1)
+#define MICROPY_ENABLE_FINALISER            (1)
 #define MICROPY_ENABLE_COMPILER             (1)
 #define MICROPY_HELPER_REPL                 (1)
 #define MICROPY_REPL_AUTO_INDENT            (1)
