@@ -46,6 +46,9 @@
 // Scheduler is used by asyncio and ussl callbacks; disable for now.
 #define MICROPY_ENABLE_SCHEDULER            (0)
 
+// Amiga-specific module
+#define MICROPY_PY_AMIGA                    (1)
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
