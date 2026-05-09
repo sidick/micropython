@@ -23,3 +23,17 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     return ret;
 }
 
+// Busy-wait delays using ANSI clock().
+// Replace with dos.library Delay() once the NDK is installed.
+void mp_hal_delay_ms(mp_uint_t ms) {
+    mp_uint_t start = mp_hal_ticks_ms();
+    while (mp_hal_ticks_ms() - start < ms) {
+    }
+}
+
+void mp_hal_delay_us(mp_uint_t us) {
+    mp_uint_t start = mp_hal_ticks_us();
+    while (mp_hal_ticks_us() - start < us) {
+    }
+}
+

@@ -7,6 +7,7 @@
 #include "py/repl.h"
 #include "py/gc.h"
 #include "py/mperrno.h"
+#include "py/stackctrl.h"
 #include "shared/runtime/pyexec.h"
 
 // Static heap — avoids needing AllocVec from the NDK for now.
@@ -32,6 +33,11 @@ void gc_collect(void) {
 int main(int argc, char **argv) {
     int stack_dummy;
     stack_top = (char *)&stack_dummy;
+
+    #if MICROPY_STACK_CHECK
+    mp_stack_ctrl_init();
+    mp_stack_set_limit(40 * 1024);
+    #endif
 
     #if MICROPY_ENABLE_GC
     gc_init(heap, heap + sizeof(heap));
