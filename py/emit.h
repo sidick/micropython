@@ -205,6 +205,7 @@ extern const emit_method_table_t emit_native_arm_method_table;
 extern const emit_method_table_t emit_native_xtensa_method_table;
 extern const emit_method_table_t emit_native_xtensawin_method_table;
 extern const emit_method_table_t emit_native_rv32_method_table;
+extern const emit_method_table_t emit_native_68k_method_table;
 extern const emit_method_table_t emit_native_debug_method_table;
 
 extern const mp_emit_method_table_id_ops_t mp_emit_bc_method_table_load_id_ops;
