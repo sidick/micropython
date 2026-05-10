@@ -121,6 +121,7 @@ ports/amiga/
 ├── amigafile.c           # mp_lexer_new_from_file(), mp_import_stat()
 ├── amigaio.c             # mp_builtin_open_obj (FileIO / TextIOWrapper)
 ├── sysstdio.c            # mp_sys_stdin/stdout/stderr stream objects
+├── floatconv.c           # bebbo soft-float library bug fixes
 ├── modjson.c             # Port-local json module (json.loads bypass for 68k)
 ├── qstrdefsport.h        # Port-specific interned strings
 └── variants/
@@ -737,7 +738,7 @@ absent from the port print `SKIP` and exit cleanly.
 | Directory | Tests | Expected result |
 |-----------|-------|----------------|
 | `basics/` | 491 | 490 pass, 83 self-skip (mostly intbig-only and threading), `struct1.py` fails (see below) |
-| `float/` | ~68 | All pass via soft-float (`-msoft-float`) |
+| `float/` | 57 | 54 pass, 11 self-skip (mostly intbig-only); 3 fail on EXACT-mode precision near double range edges (see below) |
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
 | `micropython/` | ~108 | Most pass; a few SKIP (scheduler, viper edge cases) |
 | `misc/` | ~30 | Most pass |
@@ -759,6 +760,25 @@ absent from the port print `SKIP` and exit cleanly.
 |------|-------|
 | `io/argv.py` | The vamos wrapper rewrites the host path of the test script (`/abs/.../io/argv.py`) to the AmigaOS volume form (`tests:io/argv.py`) so vamos can resolve it. CPython's reference output uses the host-style absolute path, so `sys.argv[0]` differs. Not a port bug — vamos has no way to surface absolute host paths. |
 | `basics/struct1.py` | `struct.calcsize("97sI")` returns 102, the test expects 104. bebbo gcc on m68k uses 2-byte alignment for `int` per the AmigaOS m68k ABI (`__alignof__(int) == 2`), while CPython on x86 uses 4. Both are platform-correct; the test implicitly assumes POSIX/x86 alignment. |
+| `float/float_parse*.py` | A handful of edge-case parses (very long mantissa with very negative exponent; `1e+300` vs `9.999...e+299` differing by 2 ULP; `1e4294967301` not detected as overflow → inf) come out 1–2 ULP off CPython. Bebbo's 80-bit long double soft-float has just enough precision loss that the EXACT-mode parser can't always nail the closest double. |
+| `float/float_format_accuracy.py` | repr round-trip rate ~72% (test wants ≥99.7% for double EXACT mode). Same long-double precision tax — repr hands an inexact long double to the format routine for a fraction of inputs and gets a string that doesn't round back exactly. |
+
+### Bebbo soft-float library bugs
+
+Bebbo gcc 6.5b on `-msoft-float` ships several incorrect floating-point
+helpers in libgcc / clib2 / libnix. `ports/amiga/floatconv.c` overrides
+each one (some directly, some via `--wrap` because clib2 fat-packs
+them with `__muldf3` and friends). If you ever drop `-msoft-float`
+or move to a different toolchain, revisit whether these workarounds
+are still needed.
+
+| Routine | Bug | Trigger |
+|---------|-----|---------|
+| `__floatunsidf`, `__floatundidf`, `__floatdidf` | High-bit set values convert to garbage (e.g. `(double)0x8AC7230489E7FFFF` → `1.353e+18` instead of `9.999e+18`) | `float("9"*51 + "e-39")`, `array.array('Q', [...])`, anywhere `mp_obj_new_int_from_uint(>2^31)` is converted to double |
+| `__eqdf2`, `__nedf2`, `__ledf2`, `__gedf2`, `__ltdf2`, `__gtdf2` | Treat NaN as ordered/equal (`nan == nan` returns true) | Every `==`/`!=`/`<=`/`>=` involving NaN; affects `math.isclose`, set/dict NaN keys, `if x != x` NaN check |
+| `pow(-1, NaN)` (libnix) | Returns `1.0`; CPython expects NaN | `(-1) ** float('nan')` |
+| `tgamma(-inf)` (libnix) | Returns `+inf`; CPython raises `ValueError` | `math.gamma(-inf)` |
+| `__fixdfsi` (clib2) | Calls `MathIeeeDoubBasBase::IEEEDPFix`, which under vamos raises `ValueError: cannot convert float NaN to integer` and aborts the whole emulator | `hash(float('nan'))` (gcc 6.5 emits `__fixdfsi` for the bit-level body of `mp_float_hash` after optimisation) |
 
 #### On-device batch runner (Amiberry)
 
