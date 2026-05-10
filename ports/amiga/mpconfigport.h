@@ -41,7 +41,13 @@
 // uncaught exception returns 1, sys.exit(N) returns N. Without this, the
 // embedded REPL convention applies and pyexec returns 1 on normal success.
 #define MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)
+// Honour the global mp_compile_only flag in pyexec, so `-X compile-only`
+// can compile a script and exit without running it (matches CPython).
+#define MICROPY_PYEXEC_COMPILE_ONLY         (1)
 #define MICROPY_PY_SYS_MODULES              (1)
+// sys.atexit registry; needed by the test runner's `-m` invocation so
+// modules that register atexit callbacks see them fire on a clean exit.
+#define MICROPY_PY_SYS_ATEXIT               (1)
 // sys.stdin/stdout/stderr stream objects backed by the mphal stdio HAL.
 // Implementation lives in ports/amiga/sysstdio.c.
 #define MICROPY_PY_SYS_STDFILES             (1)
