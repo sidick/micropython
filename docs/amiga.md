@@ -782,6 +782,28 @@ python3 tests/basics/string_format.py
 The outputs should be identical for passing tests. Tests that require a feature
 absent from the port print `SKIP` and exit cleanly.
 
+### Test suite summary
+
+Latest snapshot under vamos via `tools/amiga-vamos-run.sh`:
+
+| Directory | Files | Pass | Self-skip | Fail | Notes |
+|-----------|------:|-----:|----------:|-----:|-------|
+| `basics/`     | 574 | 490 | 83 | 1  | `struct1.py` (bebbo ABI alignment) |
+| `float/`      | 68  | 54  | 11 | 3  | EXACT-mode precision at double-range edges |
+| `io/`         | 16  | 12  | 3  | 1  | `argv.py` (vamos host-path rewriting) |
+| `import/`     | 30  | 27  | 0  | 3  | `import_file.py`, `import_broken.py`, `builtin_ext.py` |
+| `micropython/`| 108 | 42  | 19 | 47 | All native_*/viper_* — Phase 12 |
+| `misc/`       | 14  | 6   | 8  | 0  | Skips are settrace, sys_exc_info, cexample (build-time module) |
+| `cmdline/`    | 25  | 9   | 2  | 14 | Unix-port-specific (REPL banner, `-v`, terminal editing) |
+| `stress/`     | 13  | 12  | 0  | 1  | `bytecode_limit.py` parser memory pressure |
+
+Aggregate: **652 pass / 126 self-skip / 70 fail** out of 848 test files.
+
+Excluding the Phase-12 native/viper failures, the unix-port-specific
+cmdline tests, and the deferred `bytecode_limit.py` / `extreme_exc.py`
+parser-memory edge cases, **9 individual tests fail** — the rest are
+real platform differences documented in *Known test failures* below.
+
 ### Recommended test directories
 
 | Directory | Tests | Expected result |
@@ -789,10 +811,10 @@ absent from the port print `SKIP` and exit cleanly.
 | `basics/` | 491 | 490 pass, 83 self-skip (mostly intbig-only and threading), `struct1.py` fails (see below) |
 | `float/` | 57 | 54 pass, 11 self-skip (mostly intbig-only); 3 fail on EXACT-mode precision near double range edges (see below) |
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
-| `micropython/` | 108 | 41 pass, 19 self-skip; ~48 fail in `native_*` and `viper_*` (pre-existing 68k emitter bugs beyond the documented try/except + viper-locals limitations — separate effort) |
-| `misc/` | ~30 | Most pass |
+| `micropython/` | 108 | 42 pass, 19 self-skip; 47 fail in `native_*` and `viper_*` (Phase 12) |
+| `misc/` | 14 | 6 pass, 8 self-skip (settrace, sys_exc_info, cexample build-time module) |
 | `cmdline/` | 25 | 9 pass, 2 self-skip, 14 fail — most failures are unix-port-specific (REPL banner format, `-v` bytecode dump, terminal-editing). `-X compile-only`, `-O`, `-m` SystemExit handling, and `sys.atexit` all pass. |
-| `import/` | 30 | 28 pass; `import_file.py` fails for the same vamos path-rewriting reason as `io/argv.py`, `builtin_ext.py` fails because `uos` exposes no attributes (test relies on `os.sep` via `from uos import *`). |
+| `import/` | 30 | 27 pass; `import_file.py` fails for the same vamos path-rewriting reason as `io/argv.py`, `builtin_ext.py` fails because `uos` exposes no attributes, and `import_broken.py` fails because the dynamic 4 KB stack-check fallback is tighter than the deeply-nested import chain in that test wants — bumping the floor to ~6 KB on a vamos-detected build would recover it. |
 | `stress/` | 13 | 12 pass; `bytecode_limit.py` fails with a parser IndentationError partway through (memory-pressure edge case as it exec()s bodies that approach the bytecode-jump limit). |
 
 ### Directories to skip
