@@ -1,34 +1,49 @@
-#include <stdio.h>
 #include <string.h>
-#include <errno.h>
+
+#include <dos/dos.h>
+#include <proto/dos.h>
 
 #include "py/runtime.h"
 #include "py/stream.h"
 #include "py/obj.h"
 #include "py/mperrno.h"
 
-// File object wrapping FILE* (newlib stdio).
+// File object wrapping a dos.library BPTR file handle.
 // Used by the Python open() builtin. Both binary (FileIO) and text
-// (TextIOWrapper) modes share the same struct and protocol — only
-// mp_stream_p_t.is_text differs.
+// (TextIOWrapper) modes share the same struct and protocol.
 
 typedef struct _mp_obj_amiga_file_t {
     mp_obj_base_t base;
-    FILE *fp;
+    BPTR fh;  // 0 = closed
 } mp_obj_amiga_file_t;
 
 extern const mp_obj_type_t mp_type_amiga_fileio;
 extern const mp_obj_type_t mp_type_amiga_textio;
 
+// Map a dos.library IoErr() code to a MicroPython MP_E* errno.
+static int dos_errno(void) {
+    switch (IoErr()) {
+        case ERROR_OBJECT_NOT_FOUND:    return MP_ENOENT;
+        case ERROR_OBJECT_EXISTS:       return MP_EEXIST;
+        case ERROR_DISK_FULL:           return MP_ENOSPC;
+        case ERROR_OBJECT_IN_USE:       return MP_EBUSY;
+        case ERROR_READ_PROTECTED:
+        case ERROR_WRITE_PROTECTED:     return MP_EACCES;
+        case ERROR_OBJECT_WRONG_TYPE:   return MP_EISDIR;
+        case ERROR_DIRECTORY_NOT_EMPTY: return MP_EACCES;
+        default:                        return MP_EIO;
+    }
+}
+
 static mp_uint_t amiga_file_read(mp_obj_t self_in, void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_file_t *self = MP_OBJ_TO_PTR(self_in);
-    if (!self->fp) {
+    if (!self->fh) {
         *errcode = MP_EBADF;
         return MP_STREAM_ERROR;
     }
-    size_t n = fread(buf, 1, size, self->fp);
-    if (n == 0 && ferror(self->fp)) {
-        *errcode = MP_EIO;
+    LONG n = Read(self->fh, buf, (LONG)size);
+    if (n < 0) {
+        *errcode = dos_errno();
         return MP_STREAM_ERROR;
     }
     return (mp_uint_t)n;
@@ -36,13 +51,17 @@ static mp_uint_t amiga_file_read(mp_obj_t self_in, void *buf, mp_uint_t size, in
 
 static mp_uint_t amiga_file_write(mp_obj_t self_in, const void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_file_t *self = MP_OBJ_TO_PTR(self_in);
-    if (!self->fp) {
+    if (!self->fh) {
         *errcode = MP_EBADF;
         return MP_STREAM_ERROR;
     }
-    size_t n = fwrite(buf, 1, size, self->fp);
-    if (n < size) {
-        *errcode = MP_EIO;
+    LONG n = Write(self->fh, (APTR)buf, (LONG)size);
+    if (n < 0) {
+        *errcode = dos_errno();
+        return MP_STREAM_ERROR;
+    }
+    if ((mp_uint_t)n < size) {
+        *errcode = MP_ENOSPC;
         return MP_STREAM_ERROR;
     }
     return (mp_uint_t)n;
@@ -52,30 +71,47 @@ static mp_uint_t amiga_file_ioctl(mp_obj_t self_in, mp_uint_t request, uintptr_t
     mp_obj_amiga_file_t *self = MP_OBJ_TO_PTR(self_in);
     switch (request) {
         case MP_STREAM_FLUSH:
-            if (self->fp && fflush(self->fp) != 0) {
+            if (self->fh && !Flush(self->fh)) {
                 *errcode = MP_EIO;
                 return MP_STREAM_ERROR;
             }
             return 0;
+
         case MP_STREAM_SEEK: {
-            if (!self->fp) {
+            if (!self->fh) {
                 *errcode = MP_EBADF;
                 return MP_STREAM_ERROR;
             }
             struct mp_stream_seek_t *s = (struct mp_stream_seek_t *)arg;
-            if (fseek(self->fp, s->offset, s->whence) != 0) {
-                *errcode = MP_EIO;
+            // Map POSIX whence to AmigaOS: SET=-1, CUR=0, END=1
+            static const LONG whence_map[3] = {
+                OFFSET_BEGINNING, OFFSET_CURRENT, OFFSET_END
+            };
+            if (s->whence < 0 || s->whence > 2) {
+                *errcode = MP_EINVAL;
                 return MP_STREAM_ERROR;
             }
-            s->offset = ftell(self->fp);
+            if (Seek(self->fh, (LONG)s->offset, whence_map[s->whence]) < 0) {
+                *errcode = dos_errno();
+                return MP_STREAM_ERROR;
+            }
+            // Seek() returns old position; get new position with a 0-offset seek.
+            LONG pos = Seek(self->fh, 0, OFFSET_CURRENT);
+            if (pos < 0) {
+                *errcode = dos_errno();
+                return MP_STREAM_ERROR;
+            }
+            s->offset = pos;
             return 0;
         }
+
         case MP_STREAM_CLOSE:
-            if (self->fp) {
-                fclose(self->fp);
-                self->fp = NULL;
+            if (self->fh) {
+                Close(self->fh);
+                self->fh = 0;
             }
             return 0;
+
         default:
             *errcode = MP_EINVAL;
             return MP_STREAM_ERROR;
@@ -140,7 +176,6 @@ mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
         }
     }
 
-    // Parse mode: extract base op (r/w/a), plus flag, binary flag
     char base = 'r';
     bool has_plus = false, is_binary = false;
     for (const char *m = mode_s; *m; m++) {
@@ -153,25 +188,32 @@ mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
         }
     }
 
-    char fmode[4];
-    int fi = 0;
-    fmode[fi++] = base;
-    if (has_plus) {
-        fmode[fi++] = '+';
+    BPTR fh;
+    if (base == 'r' && !has_plus) {
+        fh = Open((STRPTR)fname, MODE_OLDFILE);
+    } else if (base == 'r' && has_plus) {
+        fh = Open((STRPTR)fname, MODE_READWRITE);
+    } else if (base == 'w') {
+        // 'w' and 'w+' both truncate
+        fh = Open((STRPTR)fname, MODE_NEWFILE);
+    } else {
+        // 'a' and 'a+': open existing for read/write, or create; seek to end
+        fh = Open((STRPTR)fname, MODE_READWRITE);
+        if (!fh) {
+            fh = Open((STRPTR)fname, MODE_NEWFILE);
+        }
+        if (fh) {
+            Seek(fh, 0, OFFSET_END);
+        }
     }
-    if (is_binary) {
-        fmode[fi++] = 'b';
-    }
-    fmode[fi] = '\0';
 
-    FILE *fp = fopen(fname, fmode);
-    if (!fp) {
-        mp_raise_OSError(errno);
+    if (!fh) {
+        mp_raise_OSError(dos_errno());
     }
 
     const mp_obj_type_t *type = is_binary ? &mp_type_amiga_fileio : &mp_type_amiga_textio;
     mp_obj_amiga_file_t *o = mp_obj_malloc_with_finaliser(mp_obj_amiga_file_t, type);
-    o->fp = fp;
+    o->fh = fh;
     return MP_OBJ_FROM_PTR(o);
 }
 MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);

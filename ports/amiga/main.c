@@ -1,6 +1,9 @@
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
+
+#include <exec/tasks.h>
+#include <exec/memory.h>
+#include <proto/exec.h>
 
 #include "py/compile.h"
 #include "py/runtime.h"
@@ -10,29 +13,33 @@
 #include "py/stackctrl.h"
 #include "shared/runtime/pyexec.h"
 
-// Static heap — avoids needing AllocVec from the NDK for now.
-// Increase MICROPY_HEAP_SIZE in mpconfigport.h as required.
-static char heap[MICROPY_HEAP_SIZE];
-
-// Used by gc_collect() to find the top of the C stack.
-static char *stack_top;
+static void *heap_ptr;
 
 #if MICROPY_ENABLE_GC
 void gc_collect(void) {
-    // WARNING: does not capture roots held only in CPU registers; a task
-    // switch during GC could theoretically miss some. Once the NDK is
-    // available, replace with FindTask(NULL)->tc_SPLower/tc_SPUpper for
-    // exact stack bounds.
+    // Scan the live portion of the task stack: from the current SP (approximated
+    // by a local variable) up to tc_SPUpper (the top of the stack allocation).
     void *dummy;
+    struct Task *task = FindTask(NULL);
     gc_collect_start();
-    gc_collect_root(&dummy, ((mp_uint_t)stack_top - (mp_uint_t)&dummy) / sizeof(mp_uint_t));
+    gc_collect_root(&dummy,
+        ((char *)task->tc_SPUpper - (char *)&dummy) / sizeof(void *));
     gc_collect_end();
 }
 #endif
 
 int main(int argc, char **argv) {
-    int stack_dummy;
-    stack_top = (char *)&stack_dummy;
+    (void)argc;
+    (void)argv;
+
+    // Allocate heap from Fast RAM; fall back to any available RAM.
+    heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST | MEMF_PUBLIC);
+    if (!heap_ptr) {
+        heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC);
+    }
+    if (!heap_ptr) {
+        return 1;
+    }
 
     #if MICROPY_STACK_CHECK
     mp_stack_ctrl_init();
@@ -40,7 +47,7 @@ int main(int argc, char **argv) {
     #endif
 
     #if MICROPY_ENABLE_GC
-    gc_init(heap, heap + sizeof(heap));
+    gc_init(heap_ptr, (char *)heap_ptr + MICROPY_HEAP_SIZE);
     #endif
 
     mp_init();
@@ -50,10 +57,10 @@ int main(int argc, char **argv) {
     #endif
 
     mp_deinit();
+    FreeVec(heap_ptr);
     return 0;
 }
 
-// Called when an exception propagates with no enclosing NLR frame.
 void nlr_jump_fail(void *val) {
     (void)val;
     for (;;) {
@@ -68,7 +75,9 @@ void MP_NORETURN __fatal_error(const char *msg) {
 
 #ifndef NDEBUG
 void MP_WEAK __assert_func(const char *file, int line, const char *func, const char *expr) {
-    printf("Assertion '%s' failed, at file %s:%d\n", expr, file, line);
+    mp_hal_stdout_tx_strn("Assertion '", 11);
+    mp_hal_stdout_tx_strn(expr, strlen(expr));
+    mp_hal_stdout_tx_strn("' failed\r\n", 10);
     __fatal_error("Assertion failed");
 }
 #endif

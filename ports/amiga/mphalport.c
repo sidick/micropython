@@ -1,17 +1,11 @@
-#include <stdio.h>
+#include <time.h>
 #include <dos/dos.h>
 #include <proto/dos.h>
 #include "py/mphal.h"
 #include "py/runtime.h"
 #include "shared/runtime/interrupt_char.h"
 
-// Currently uses newlib stdio so we can build without the AmigaOS NDK.
-// Once the NDK is available, replace with:
-//   FGetC(Input())          for stdin
-//   Write(Output(), ...)    for stdout
-
 // Called by MICROPY_VM_HOOK_LOOP every 1024 bytecodes.
-// Checks for Ctrl+C (SIGBREAKF_CTRL_C) and schedules KeyboardInterrupt.
 void amiga_check_ctrl_c(void) {
     if (CheckSignal(SIGBREAKF_CTRL_C)) {
         mp_sched_keyboard_interrupt();
@@ -19,37 +13,45 @@ void amiga_check_ctrl_c(void) {
 }
 
 int mp_hal_stdin_rx_chr(void) {
-    int c = getchar();
-    // AmigaOS uses Ctrl+\ (ASCII 28) for EOF; map it to Ctrl+D (ASCII 4)
-    // which MicroPython's readline uses as the REPL exit signal.
-    if (c == 28) {
-        c = 4;
+    BPTR in = Input();
+    for (;;) {
+        // Wait up to 200 ms for a character, checking Ctrl+C between polls.
+        if (WaitForChar(in, 200000L)) {
+            LONG c = FGetC(in);
+            if (c < 0) {
+                return 4;  // EOF -> Ctrl+D
+            }
+            if (c == 28) {
+                return 4;  // Ctrl+\ -> Ctrl+D (AmigaOS EOF convention)
+            }
+            if (c == mp_interrupt_char) {
+                mp_sched_keyboard_interrupt();
+            }
+            return (int)c;
+        }
+        // Poll Ctrl+C between WaitForChar timeouts.
+        amiga_check_ctrl_c();
     }
-    // If the received character is the configured interrupt character (Ctrl+C,
-    // set by pyexec.c before running user code), schedule KeyboardInterrupt.
-    if (c == mp_interrupt_char) {
-        mp_sched_keyboard_interrupt();
-    }
-    return c;
 }
 
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
-    mp_uint_t ret = fwrite(str, 1, len, stdout);
-    fflush(stdout);
-    return ret;
+    LONG written = Write(Output(), (APTR)str, (LONG)len);
+    return written < 0 ? 0 : (mp_uint_t)written;
 }
 
-// Busy-wait delays using ANSI clock().
-// Replace with dos.library Delay() once the NDK is installed.
+// Use dos.library Delay() (50 Hz ticks) for millisecond delays.
+// This yields to other AmigaOS tasks rather than busy-waiting.
 void mp_hal_delay_ms(mp_uint_t ms) {
-    mp_uint_t start = mp_hal_ticks_ms();
-    while (mp_hal_ticks_ms() - start < ms) {
+    if (ms >= 20) {
+        Delay((LONG)((ms + 9) / 20));
     }
+    // Sub-20ms remainder: too short for Delay(); just return.
+    // For accurate sub-tick delays, timer.device would be needed.
 }
 
 void mp_hal_delay_us(mp_uint_t us) {
-    mp_uint_t start = mp_hal_ticks_us();
-    while (mp_hal_ticks_us() - start < us) {
+    // Delay() has 20ms resolution; busy-wait with clock() for short delays.
+    clock_t end = clock() + (clock_t)us * (CLOCKS_PER_SEC / 1000000L);
+    while (clock() < end) {
     }
 }
-
