@@ -14,7 +14,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 5 ✅ 68k native code emitter (`--emit native` / `@micropython.native`)
 - Phase 6 ✅ Package imports (`import mypackage`) via `Lock`/`Examine`
 - Phase 7 ✅ Ctrl+C interrupt handling via dos.library break signals
-- Phase 8 — Native AmigaOS API migration (replace newlib stdio with dos.library)
+- Phase 8 ✅ Native AmigaOS API migration (replace newlib stdio with dos.library)
 - Phase 9 — Networking via `bsdsocket.library` (`usocket` module)
 - Phase 10 — CI build workflow
 
@@ -433,27 +433,26 @@ Ctrl+C now works via two paths:
 
 ---
 
-### Phase 8 — Native AmigaOS API migration
+### Phase 8 — Native AmigaOS API migration ✅
 
-The port currently uses newlib stdio (`getchar`, `fopen`, `fwrite`, etc.) because it
-requires no NDK. The NDK is now available. Replacing newlib with direct dos.library calls
-removes the newlib layer, enables proper Ctrl+C during blocking I/O, and gives correct
-AmigaOS-native behaviour.
+All newlib stdio replaced with direct dos.library calls:
 
-Priority order:
-
-| Component | Current | Target |
-|-----------|---------|--------|
-| Console input | `getchar()` | `FGetC(Input())` with `WaitForChar()` + signal check |
+| Component | Was | Now |
+|-----------|-----|-----|
+| Console input | `getchar()` | `FGetC(Input())` via `WaitForChar()` 200ms poll |
 | Console output | `fwrite(stdout)` | `Write(Output(), buf, len)` |
-| File I/O | `fopen`/`fread`/`fwrite` | `Open()`/`Read()`/`Write()`/`Close()`/`Seek()` |
-| Directory detect | `fopen`-based (broken) | `Lock()`/`Examine()`/`UnLock()` |
-| Heap | static 256 KB BSS | `AllocVec(size, MEMF_FAST\|MEMF_PUBLIC)` |
-| Delays | `clock()`-loop | `dos.library` `Delay(ticks)` |
+| File I/O | `FILE*` + `fopen`/`fread`/`fwrite` | `BPTR` + `Open`/`Read`/`Write`/`Close`/`Seek`/`Flush` |
+| Heap | static 256 KB BSS array | `AllocVec(MEMF_FAST\|MEMF_PUBLIC)`, fallback `MEMF_ANY` |
+| GC stack bounds | local-variable heuristic | `FindTask(NULL)->tc_SPUpper` |
+| `mp_hal_delay_ms` | `clock()` busy-wait | `Delay()` (yields to other tasks) |
 
-Replacing console I/O with `FGetC`/`WaitForChar` also fixes the second Ctrl+C case:
-`WaitForChar(Input(), timeout)` can be interrupted by `SIGBREAKF_CTRL_C` using
-`Wait(mask | SIGBREAKF_CTRL_C)`, allowing clean break detection without polling.
+The `WaitForChar()` poll also improves Ctrl+C responsiveness during input: instead of
+blocking in `FGetC`, the REPL polls every 200 ms and calls `amiga_check_ctrl_c()`
+between polls.
+
+Remaining newlib use: `clock()` in `mp_hal_delay_us` (sub-millisecond busy-wait) and
+`mp_hal_ticks_*` in `mphalport.h`; a timer.device implementation would improve
+accuracy but is not required for normal use.
 
 ---
 
@@ -501,9 +500,6 @@ without an emulator run. bebbo GCC can be installed in CI via the binary release
 | Issue | Status | Fix |
 |-------|--------|-----|
 | `try/except` in `@micropython.native` crashes | Known bug | Needs a 68k assembly NLR (`nlr68k.S`) that saves/restores D2–D7/A2–A5 in the `nlr_buf_t`; until then, avoid exceptions inside native functions |
-| Heap is a static 256 KB BSS array | Works but wastes Fast RAM at link time | Phase 8: `AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST\|MEMF_PUBLIC)` in `main.c` |
-| GC stack scan is a heuristic | May miss or over-scan roots | Phase 8: exact `FindTask(NULL)->tc_SPLower/tc_SPUpper` bounds |
-| I/O uses newlib stdio | Works; Ctrl+C during blocking read still needs polling | Phase 8: `dos.library` `FGetC`/`WaitForChar`/`Write` |
 | `@micropython.viper` limited to 1 register local | `MAX_REGS_FOR_LOCAL_VARS = 1` (D7 only) | Add a 68k-specific viper register allocator, or accept stack-based locals |
 
 ---
@@ -542,6 +538,6 @@ without an emulator run. bebbo GCC can be installed in CI via the binary release
 | 5 — 68k emitter | ✅ Done | `@micropython.native` via `MICROPY_EMIT_68K`; try/except in native mode is a known limitation |
 | 6 — Package imports | ✅ Done | `Lock`/`Examine` in `mp_import_stat()`; enables `import mypackage` |
 | 7 — Ctrl+C | ✅ Done | `CheckSignal(SIGBREAKF_CTRL_C)` via `MICROPY_VM_HOOK_LOOP` |
-| 8 — Native API migration | Planned | Replace newlib stdio with `dos.library` throughout |
+| 8 — Native API migration | ✅ Done | `dos.library` throughout; BSS 263 KB → 1 KB; exact GC stack bounds |
 | 9 — Networking | Planned | `bsdsocket.library` + `usocket` module |
 | 10 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
