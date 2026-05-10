@@ -42,6 +42,14 @@
 #define MICROPY_PY_SYS_STDFILES             (1)
 #define MICROPY_PY_SYS_STDIO_BUFFER         (0)
 
+// Use the pystack for VM code-state allocations. The default path uses
+// alloca for small functions, but bebbo gcc on 68k returns mixed 2-byte
+// and 4-byte aligned addresses from alloca; the VM relies on mp_obj_t
+// stack slots being 4-byte aligned (mp_obj_is_obj checks the low two
+// bits of the pointer). Routing through mp_pystack_alloc gives a single
+// AllocVec-backed buffer with deterministic 8-byte alignment.
+#define MICROPY_ENABLE_PYSTACK              (1)
+
 // No threads — AmigaOS uses cooperative multitasking.
 #define MICROPY_PY_THREAD                   (0)
 

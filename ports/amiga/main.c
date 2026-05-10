@@ -222,6 +222,14 @@ int main(int argc_unused, char **argv_unused) {
     gc_init(heap_ptr, (char *)heap_ptr + MICROPY_HEAP_SIZE);
     #endif
 
+    #if MICROPY_ENABLE_PYSTACK
+    // 4 KB pystack, matching the unix port; aligned(8) to satisfy
+    // MICROPY_PYSTACK_ALIGN since bebbo's default 16-bit struct alignment
+    // would otherwise leave a static char[] only 2-byte aligned.
+    static char pystack[4096] __attribute__((aligned(8)));
+    mp_pystack_init(pystack, pystack + sizeof(pystack));
+    #endif
+
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
