@@ -31,6 +31,10 @@ int mp_hal_stdin_rx_chr(void) {
         }
         // Poll Ctrl+C between WaitForChar timeouts.
         amiga_check_ctrl_c();
+        // Yield one 50 Hz tick. On emulators (e.g. vamos) WaitForChar may
+        // return 0 immediately rather than blocking, which would otherwise
+        // cause a busy-loop. Delay(1) costs ~20 ms and keeps CPU use low.
+        Delay(1);
     }
 }
 
