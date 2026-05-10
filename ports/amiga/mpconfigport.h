@@ -30,7 +30,7 @@
 // sys module
 #define MICROPY_PY_SYS_EXIT                 (1)
 #define MICROPY_PY_SYS_PATH                 (1)
-#define MICROPY_PY_SYS_ARGV                 (0)
+#define MICROPY_PY_SYS_ARGV                 (1)
 #define MICROPY_PY_SYS_MODULES              (1)
 // sys.stdin/stdout/stderr require stream objects tied to the VFS;
 // disable until a proper stdio stream type is wired up.

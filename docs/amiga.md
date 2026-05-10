@@ -16,7 +16,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 7 ✅ Ctrl+C interrupt handling via dos.library break signals
 - Phase 8 ✅ Native AmigaOS API migration (replace newlib stdio with dos.library)
 - Phase 9 ✅ Networking via `bsdsocket.library` (`socket` module)
-- Phase 10 — Command-line argument parsing (`micropython script.py`, `-c`, `-m`)
+- Phase 10 ✅ Command-line argument parsing (`micropython script.py`, `-c`, `-m`, `-h`)
 - Phase 11 — CI build workflow
 
 ### Non-goals (initially)
@@ -485,27 +485,31 @@ s.close()
 
 ---
 
-### Phase 10 — Command-line argument parsing
+### Phase 10 — Command-line argument parsing ✅
 
-Most MicroPython ports accept arguments to run scripts or code snippets directly:
+`main.c` now parses `argc`/`argv` before starting the REPL:
 
 ```sh
-micropython script.py           # run a file
-micropython -c "print('hello')" # run a string
-micropython -m module           # run a module
-micropython                     # REPL (current behaviour)
+micropython                     # interactive REPL (unchanged)
+micropython script.py [args]    # run a file; sys.argv = ["script.py", ...]
+micropython -c "code" [args]    # run a statement; sys.argv = ["-c", ...]
+micropython -m module [args]    # run a module; sys.argv = ["module", ...]
+micropython -h / --help         # print help and exit
+micropython --version           # print version string and exit
 ```
 
-This requires parsing `argc`/`argv` in `main()` using `pyexec_file()`, `mp_call_function_1()`,
-and `pyexec_frozen_module()` (or `mp_builtin___import__` for `-m`). The unix port
-(`ports/unix/main.c`) is a good reference.
+Implementation notes:
 
-Steps:
-1. Loop over `argv` in `main()` before starting the REPL.
-2. For `-c code_str`: call `pyexec_str(code_str)` (already provided by `shared/runtime/pyexec.c`).
-3. For `script.py`: call `pyexec_file(argv[i])`.
-4. For `-m module`: set up `sys.path`, `sys.argv[0]`, then `mp_builtin___import__`.
-5. If any script/command was run, exit rather than entering the REPL.
+- `MICROPY_PY_SYS_ARGV (1)` enabled; `mp_sys_argv` initialised to an empty list after `mp_init()`.
+- `mp_sys_path` initialised to `[""]` (empty string = current directory on AmigaOS).
+  For a script file, its directory is prepended to `sys.path[0]` using AmigaOS path parsing
+  (`"Work:scripts/foo.py"` → `"Work:scripts"`; `"Work:foo.py"` → `"Work:"`).
+- `-c` uses `pyexec_vstr()` from `shared/runtime/pyexec.c`.
+- `-m` calls `mp_builtin___import__()` with `fromlist=False` inside an `nlr_buf_t`.
+- Script files use `pyexec_file()` which handles its own NLR and exception printing.
+- Raw console mode (`SetMode(stdin_fh, 1)`) is only applied for the REPL, not for scripts or `-c`/`-m`.
+- `genhdr/mpversion.h` (generated at build time) is now included in `main.c` so that
+  `MICROPY_BANNER_NAME_AND_VERSION` / `MICROPY_GIT_TAG` are defined.
 
 ---
 
@@ -569,5 +573,5 @@ without an emulator run. bebbo GCC can be installed in CI via a binary release:
 | 7 — Ctrl+C | ✅ Done | `CheckSignal(SIGBREAKF_CTRL_C)` via `MICROPY_VM_HOOK_LOOP` |
 | 8 — Native API migration | ✅ Done | `dos.library` throughout; BSS 263 KB → 1 KB; exact GC stack bounds |
 | 9 — Networking | ✅ Done | `bsdsocket.library` socket module; `SocketBase` opened in `main()` |
-| 10 — CLI args | Planned | `micropython script.py`, `-c code`, `-m module` |
+| 10 — CLI args | ✅ Done | `-h/--help/--version/-c/-m/script.py`; sys.argv, sys.path populated |
 | 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
