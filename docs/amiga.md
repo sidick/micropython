@@ -12,7 +12,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 3 ✅ Standard MicroPython library modules
 - Phase 4 ✅ Amiga-specific `amiga` C module (exec/dos library bindings)
 - Phase 5 ✅ 68k native code emitter (`--emit native` / `@micropython.native`)
-- Phase 6 — Package imports (`import mypackage`) via `Lock`/`Examine`
+- Phase 6 ✅ Package imports (`import mypackage`) via `Lock`/`Examine`
 - Phase 7 ✅ Ctrl+C interrupt handling via dos.library break signals
 - Phase 8 — Native AmigaOS API migration (replace newlib stdio with dos.library)
 - Phase 9 — Networking via `bsdsocket.library` (`usocket` module)
@@ -406,29 +406,12 @@ amiga.MEMF_CLEAR            # 0x10000
 
 ## Future Work
 
-### Phase 6 — Package imports
+### Phase 6 — Package imports ✅
 
-`mp_import_stat()` currently uses `fopen` to detect files, which cannot distinguish
-directories from non-existent paths. `import mypackage` (where `mypackage/` is a
-directory containing `__init__.py`) will always fail with `ModuleNotFoundError`.
-
-Fix: replace the `fopen` probe in `amigafile.c` with dos.library `Lock`/`Examine`:
-
-```c
-mp_import_stat_t mp_import_stat(const char *path) {
-    BPTR lock = Lock((STRPTR)path, SHARED_LOCK);
-    if (!lock) return MP_IMPORT_STAT_NO_EXIST;
-    struct FileInfoBlock *fib = AllocDosObject(DOS_FIB, NULL);
-    mp_import_stat_t r = MP_IMPORT_STAT_NO_EXIST;
-    if (fib && Examine(lock, fib))
-        r = (fib->fib_DirEntryType > 0) ? MP_IMPORT_STAT_DIR : MP_IMPORT_STAT_FILE;
-    if (fib) FreeDosObject(DOS_FIB, fib);
-    UnLock(lock);
-    return r;
-}
-```
-
-NDK is already installed at `/opt/amiga/m68k-amigaos/ndk-include/` — no extra flags needed.
+`mp_import_stat()` in `amigafile.c` now uses dos.library `Lock`/`Examine` to
+distinguish files from directories. `fib_DirEntryType > 0` means directory,
+`< 0` means file. `import mypackage` works when `mypackage/__init__.py` exists
+on any mounted AmigaDOS volume.
 
 ---
 
@@ -521,7 +504,6 @@ without an emulator run. bebbo GCC can be installed in CI via the binary release
 | Heap is a static 256 KB BSS array | Works but wastes Fast RAM at link time | Phase 8: `AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST\|MEMF_PUBLIC)` in `main.c` |
 | GC stack scan is a heuristic | May miss or over-scan roots | Phase 8: exact `FindTask(NULL)->tc_SPLower/tc_SPUpper` bounds |
 | I/O uses newlib stdio | Works; Ctrl+C during blocking read still needs polling | Phase 8: `dos.library` `FGetC`/`WaitForChar`/`Write` |
-| Package imports (`import pkg`) fail | `mp_import_stat()` can't detect directories | Phase 6: `Lock`/`Examine` |
 | `@micropython.viper` limited to 1 register local | `MAX_REGS_FOR_LOCAL_VARS = 1` (D7 only) | Add a 68k-specific viper register allocator, or accept stack-based locals |
 
 ---
@@ -558,7 +540,7 @@ without an emulator run. bebbo GCC can be installed in CI via the binary release
 | 3 — Stdlib | ✅ Done | math, struct, json, re, hashlib, float; json.loads via port-local modjson.c |
 | 4 — `amiga` module | ✅ Done | os_version, find_task, alloc_vec, free_vec, execute; SystemTagList for exit codes |
 | 5 — 68k emitter | ✅ Done | `@micropython.native` via `MICROPY_EMIT_68K`; try/except in native mode is a known limitation |
-| 6 — Package imports | Planned | `Lock`/`Examine` in `mp_import_stat()`; enables `import mypackage` |
+| 6 — Package imports | ✅ Done | `Lock`/`Examine` in `mp_import_stat()`; enables `import mypackage` |
 | 7 — Ctrl+C | ✅ Done | `CheckSignal(SIGBREAKF_CTRL_C)` via `MICROPY_VM_HOOK_LOOP` |
 | 8 — Native API migration | Planned | Replace newlib stdio with `dos.library` throughout |
 | 9 — Networking | Planned | `bsdsocket.library` + `usocket` module |
