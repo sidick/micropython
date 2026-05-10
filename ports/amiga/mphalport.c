@@ -13,29 +13,17 @@ void amiga_check_ctrl_c(void) {
 }
 
 int mp_hal_stdin_rx_chr(void) {
-    BPTR in = Input();
-    for (;;) {
-        // Wait up to 200 ms for a character, checking Ctrl+C between polls.
-        if (WaitForChar(in, 200000L)) {
-            LONG c = FGetC(in);
-            if (c < 0) {
-                return 4;  // EOF -> Ctrl+D
-            }
-            if (c == 28) {
-                return 4;  // Ctrl+\ -> Ctrl+D (AmigaOS EOF convention)
-            }
-            if (c == mp_interrupt_char) {
-                mp_sched_keyboard_interrupt();
-            }
-            return (int)c;
-        }
-        // Poll Ctrl+C between WaitForChar timeouts.
-        amiga_check_ctrl_c();
-        // Yield one 50 Hz tick. On emulators (e.g. vamos) WaitForChar may
-        // return 0 immediately rather than blocking, which would otherwise
-        // cause a busy-loop. Delay(1) costs ~20 ms and keeps CPU use low.
-        Delay(1);
+    // FGetC blocks efficiently (suspends the task) until a key arrives.
+    // In raw mode, Ctrl+C arrives as ASCII 3 so no separate break-signal
+    // poll is needed here; the VM hook handles Ctrl+C during computation.
+    LONG c = FGetC(Input());
+    if (c < 0 || c == 28) {
+        return 4;  // EOF or Ctrl+\ -> Ctrl+D
     }
+    if ((int)c == mp_interrupt_char) {
+        mp_sched_keyboard_interrupt();
+    }
+    return (int)c;
 }
 
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
