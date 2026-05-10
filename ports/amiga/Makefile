@@ -53,6 +53,7 @@ SRC_C = \
 	shared/readline/readline.c \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
+	shared/runtime/interrupt_char.c \
 
 SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c amigaio.c modjson.c modamiga.c
 

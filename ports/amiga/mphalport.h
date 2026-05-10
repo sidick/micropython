@@ -2,6 +2,7 @@
 
 #include <time.h>
 #include "py/mpconfig.h"
+#include "shared/runtime/interrupt_char.h"
 
 // Ticks via ANSI clock(). Replace with DateStamp() once NDK is installed.
 static inline mp_uint_t mp_hal_ticks_ms(void) {
@@ -16,7 +17,5 @@ static inline mp_uint_t mp_hal_ticks_cpu(void) {
     return (mp_uint_t)clock();
 }
 
-// Ctrl-C interrupt character hook — wire to AmigaOS SIGBREAKF_CTRL_C later.
-static inline void mp_hal_set_interrupt_char(int c) {
-    (void)c;
-}
+// Called by the VM hook every N bytecodes to check for Ctrl+C.
+void amiga_check_ctrl_c(void);

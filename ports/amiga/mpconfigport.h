@@ -51,6 +51,17 @@
 // Loading pre-compiled native .mpy files is not yet supported on this port.
 #define MICROPY_PERSISTENT_CODE_LOAD_NATIVE (0)
 
+// Poll for Ctrl+C (SIGBREAKF_CTRL_C) every 1024 bytecodes.
+// amiga_check_ctrl_c() is defined in mphalport.c.
+#define MICROPY_VM_HOOK_COUNT  (1024)
+#define MICROPY_VM_HOOK_INIT   static uint amiga_vm_hook_counter = MICROPY_VM_HOOK_COUNT;
+#define MICROPY_VM_HOOK_LOOP \
+    if (--amiga_vm_hook_counter == 0) { \
+        extern void amiga_check_ctrl_c(void); \
+        amiga_vm_hook_counter = MICROPY_VM_HOOK_COUNT; \
+        amiga_check_ctrl_c(); \
+    }
+
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
