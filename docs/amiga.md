@@ -793,6 +793,7 @@ absent from the port print `SKIP` and exit cleanly.
 | `misc/` | ~30 | Most pass |
 | `cmdline/` | 25 | 9 pass, 2 self-skip, 14 fail — most failures are unix-port-specific (REPL banner format, `-v` bytecode dump, terminal-editing). `-X compile-only`, `-O`, `-m` SystemExit handling, and `sys.atexit` all pass. |
 | `import/` | 30 | 28 pass; `import_file.py` fails for the same vamos path-rewriting reason as `io/argv.py`, `builtin_ext.py` fails because `uos` exposes no attributes (test relies on `os.sep` via `from uos import *`). |
+| `stress/` | 13 | 12 pass; `bytecode_limit.py` fails with a parser IndentationError partway through (memory-pressure edge case as it exec()s bodies that approach the bytecode-jump limit). |
 
 ### Directories to skip
 
