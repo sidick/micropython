@@ -4,6 +4,8 @@
 #include <exec/tasks.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
+#include <dos/dos.h>
+#include <proto/dos.h>
 
 #include "py/compile.h"
 #include "py/runtime.h"
@@ -52,9 +54,17 @@ int main(int argc, char **argv) {
 
     mp_init();
 
+    // Switch console to raw mode so readline gets characters immediately
+    // rather than waiting for a full line. readline.c handles echo itself.
+    BPTR stdin_fh = Input();
+    SetMode(stdin_fh, 1);
+
     #if MICROPY_ENABLE_COMPILER
     pyexec_friendly_repl();
     #endif
+
+    // Restore cooked mode before returning to the CLI.
+    SetMode(stdin_fh, 0);
 
     mp_deinit();
     FreeVec(heap_ptr);
