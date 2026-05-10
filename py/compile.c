@@ -123,6 +123,8 @@ static const emit_method_table_t *emit_native_table[] = {
 #define NATIVE_EMITTER(f) emit_native_xtensawin_##f
 #elif MICROPY_EMIT_RV32
 #define NATIVE_EMITTER(f) emit_native_rv32_##f
+#elif MICROPY_EMIT_68K
+#define NATIVE_EMITTER(f) emit_native_68k_##f
 #elif MICROPY_EMIT_NATIVE_DEBUG
 #define NATIVE_EMITTER(f) emit_native_debug_##f
 #else
