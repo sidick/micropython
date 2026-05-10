@@ -18,6 +18,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 9 ✅ Networking via `bsdsocket.library` (`socket` module)
 - Phase 10 ✅ Command-line argument parsing (`micropython script.py`, `-c`, `-m`, `-h`)
 - Phase 11 — CI build workflow
+- Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
 
 ### Non-goals (initially)
 
@@ -415,7 +416,7 @@ amiga.MEMF_CLEAR            # 0x10000
 
 - **try/except in native mode is broken.** With `MICROPY_NLR_SETJMP = 1`, the `nlr_buf_t` slot used by `NLR_BUF_IDX_LOCAL_1` falls inside the `jmp_buf`, which is overwritten by `setjmp`. Functions using exceptions are unsafe in native/viper mode. Non-exceptional native functions work correctly.
 - **Viper integer arithmetic on address registers** is prevented by `MAX_REGS_FOR_LOCAL_VARS = 1`. Viper `int`/`uint` locals beyond the first will always use stack slots.
-- **Calling another function from a `@micropython.native` body crashes** (e.g. `@native def f(): print(1); f()` faults). A simple-return native (`return 42`) works, but as soon as `ASM_CALL_IND` is exercised the CPU jumps off into the vector table area. Most of the `tests/micropython/native_*.py` and `tests/micropython/viper_*.py` failures stem from this — needs a deeper look at the prologue/CALL_IND interaction (REG_FUN_TABLE setup, callee-saved register handling, or stack-frame layout). Marked as a known issue rather than fixed because it's a bigger emitter rework than the surrounding test-runner / soft-float / GC fixes.
+- **Calling another function from a `@micropython.native` body crashes.** Tracked as Phase 12 — see that section for symptoms and probable causes.
 
 ### Configuration
 
@@ -546,6 +547,53 @@ without an emulator run. bebbo GCC can be installed in CI via a binary release:
       sudo tar -xj -C /opt
     echo "/opt/amiga/bin" >> $GITHUB_PATH
 ```
+
+---
+
+### Phase 12 — 68k native emitter rework
+
+Phase 5 landed a working 68k native code emitter, but only for the
+single-statement `return <const>` shape. The moment a
+`@micropython.native` body calls another function — `print(1)`,
+indexing, slicing, `range()`, anything that goes through
+`mp_fun_table` — the CPU jumps off into the 68k vector-table area
+(typically PC=0x404, SR=0x0700) and faults. About 47 of the
+`tests/micropython/native_*.py` and `tests/micropython/viper_*.py`
+tests fail in exactly this pattern, with consistent symptoms:
+
+- `D0 = self_in` (function object) is correct on entry
+- `REG_FUN_TABLE` (A4) ends up pointing at random memory by the
+  time `ASM_CALL_IND` runs
+- The indirect `MOVEA.L (idx*4, A4), A0; JSR (A0)` then dereferences
+  the wrong address and lands in the vector table
+
+**Probable causes (need investigation):**
+
+1. **Prologue ordering.** `asm_68k_entry` does `LINK A5,#-N; MOVEM.L
+   D2-D7/A2-A4, -(SP); load D0..D3 from 8(A5)..20(A5)`. But A4 is in
+   the saved set, so its value at function entry is whatever the
+   parent left there. `emitnative.c` then loads A4 from the const
+   table via `REG_PARENT_ARG_1` (D0), but the load goes through
+   `asm_68k_ensure_areg` to materialise an areg from the dreg —
+   verify that this still leaves A4 with the right value at the
+   time of the first `ASM_CALL_IND`.
+2. **Register clobbering through CALL_IND.** Bebbo cdecl says caller
+   preserves nothing; we save D2–D7/A2–A4 across the *whole*
+   function but every `ASM_CALL_IND` could clobber A4 inside the
+   callee. If the C runtime function we call doesn't preserve A4,
+   the next CALL_IND in the same body sees garbage. Need either
+   per-call save/restore of A4 or a different register choice.
+3. **Stack frame mismatch.** Verify that `sp += MP_OBJ_ITER_BUF_NSLOTS - 1`
+   and friends in the VM's emit-time stack tracking match what
+   `LINK A5, #-N` actually allocates. The pystack fix (Phase 8 +
+   alignment work) deals with the bytecode VM stack, not the native
+   emitter's frame layout.
+
+The fix is a non-trivial emitter rework, but the existing tests in
+`tests/micropython/native_*.py` and `tests/micropython/viper_*.py`
+provide a precise repro corpus — start with the simplest one
+(`native_const.py` line 14: a nested native function that just
+returns 123, called from a wrapper) and work up.
 
 ---
 
@@ -884,3 +932,4 @@ Run it with:
 | 9 — Networking | ✅ Done | `bsdsocket.library` socket module; `SocketBase` opened in `main()` |
 | 10 — CLI args | ✅ Done | `-h/--help/--version/-c/-m/script.py`; sys.argv, sys.path populated |
 | 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
+| 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
