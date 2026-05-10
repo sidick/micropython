@@ -15,8 +15,9 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 6 ✅ Package imports (`import mypackage`) via `Lock`/`Examine`
 - Phase 7 ✅ Ctrl+C interrupt handling via dos.library break signals
 - Phase 8 ✅ Native AmigaOS API migration (replace newlib stdio with dos.library)
-- Phase 9 — Networking via `bsdsocket.library` (`usocket` module)
-- Phase 10 — CI build workflow
+- Phase 9 ✅ Networking via `bsdsocket.library` (`socket` module)
+- Phase 10 — Command-line argument parsing (`micropython script.py`, `-c`, `-m`)
+- Phase 11 — CI build workflow
 
 ### Non-goals (initially)
 
@@ -456,34 +457,62 @@ accuracy but is not required for normal use.
 
 ---
 
-### Phase 9 — Networking (`bsdsocket.library`)
+### Phase 9 — Networking (`bsdsocket.library`) ✅
 
-AmigaOS 3.x networking is provided by `bsdsocket.library`, a BSD socket API
-implemented as an Amiga shared library. It is present in any AmiTCP/Miami/Roadshow
-stack and in Amiberry's built-in networking.
+`ports/amiga/modsocket.c` implements the `socket` module via `bsdsocket.library`.
+Key implementation details:
 
-The MicroPython `usocket` module (`extmod/modusocket.c`) can be enabled once the
-BSD socket calls are wired up. Key differences from POSIX:
+- `SocketBase` is opened in `main()` via `amiga_socket_open()`; silently absent if
+  the library is not installed (socket creation raises `OSError`).
+- `errno` is per-library: `Errno()` used instead of global errno.
+- `IoctlSocket(FIONBIO)` for non-blocking mode; `SO_RCVTIMEO`/`SO_SNDTIMEO` for timeouts.
+- `Inet_NtoA()` / `inet_addr()` / `gethostbyname()` for address conversion.
+- `getaddrinfo()` / `freeaddrinfo()` / `gethostname()` for higher-level resolution.
+- `__NO_NETINCLUDE_TIMEVAL` guard avoids `devices/timer.h` conflict with `sys/time.h`.
+- `CloseSocket()` (not `close()`) used to close socket descriptors.
 
-- Library must be opened: `SocketBase = OpenLibrary("bsdsocket.library", 4)`
-- All socket calls go through the library base, not direct syscalls: use NDK macros
-  (`socket()`, `connect()`, etc. expand to `CallLib(SocketBase, ...)` via `<proto/socket.h>`)
-- `errno` is per-library: use `Errno()` from `<proto/socket.h>` instead of global `errno`
-- `select()` is available; `poll()` may not be
+The socket object implements MicroPython's stream protocol (read/write/ioctl), so
+it can be used with `readline()`, `with` statements, and anywhere a stream is expected.
 
-Suggested approach:
-1. Open `bsdsocket.library` in `main.c`; fail gracefully if absent
-2. Add `ports/amiga/amigasocket.c` providing `mp_uos_socket_*` shims that translate
-   MicroPython socket calls to `bsdsocket.library` calls
-3. Enable `MICROPY_PY_USOCKET (1)` in `mpconfigport.h`
-4. Map `Errno()` to MicroPython's `MP_E*` errno constants
+```python
+import socket
+s = socket.socket()
+s.connect(('1.1.1.1', 80))
+s.send(b'GET / HTTP/1.0\r\nHost: 1.1.1.1\r\n\r\n')
+print(s.recv(512))
+s.close()
+```
 
 ---
 
-### Phase 10 — CI build workflow
+### Phase 10 — Command-line argument parsing
+
+Most MicroPython ports accept arguments to run scripts or code snippets directly:
+
+```sh
+micropython script.py           # run a file
+micropython -c "print('hello')" # run a string
+micropython -m module           # run a module
+micropython                     # REPL (current behaviour)
+```
+
+This requires parsing `argc`/`argv` in `main()` using `pyexec_file()`, `mp_call_function_1()`,
+and `pyexec_frozen_module()` (or `mp_builtin___import__` for `-m`). The unix port
+(`ports/unix/main.c`) is a good reference.
+
+Steps:
+1. Loop over `argv` in `main()` before starting the REPL.
+2. For `-c code_str`: call `pyexec_str(code_str)` (already provided by `shared/runtime/pyexec.c`).
+3. For `script.py`: call `pyexec_file(argv[i])`.
+4. For `-m module`: set up `sys.path`, `sys.argv[0]`, then `mp_builtin___import__`.
+5. If any script/command was run, exit rather than entering the REPL.
+
+---
+
+### Phase 11 — CI build workflow
 
 Add `.github/workflows/ports_amiga.yml` to confirm the port cross-compiles on Linux
-without an emulator run. bebbo GCC can be installed in CI via the binary release:
+without an emulator run. bebbo GCC can be installed in CI via a binary release:
 
 ```yaml
 - name: Install bebbo GCC
@@ -539,5 +568,6 @@ without an emulator run. bebbo GCC can be installed in CI via the binary release
 | 6 — Package imports | ✅ Done | `Lock`/`Examine` in `mp_import_stat()`; enables `import mypackage` |
 | 7 — Ctrl+C | ✅ Done | `CheckSignal(SIGBREAKF_CTRL_C)` via `MICROPY_VM_HOOK_LOOP` |
 | 8 — Native API migration | ✅ Done | `dos.library` throughout; BSS 263 KB → 1 KB; exact GC stack bounds |
-| 9 — Networking | Planned | `bsdsocket.library` + `usocket` module |
-| 10 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
+| 9 — Networking | ✅ Done | `bsdsocket.library` socket module; `SocketBase` opened in `main()` |
+| 10 — CLI args | Planned | `micropython script.py`, `-c code`, `-m module` |
+| 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |

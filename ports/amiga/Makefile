@@ -50,12 +50,13 @@ SRC_C = \
 	modamiga.c \
 	amigafile.c \
 	amigaio.c \
+	modsocket.c \
 	shared/readline/readline.c \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
 	shared/runtime/interrupt_char.c \
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c amigaio.c modjson.c modamiga.c
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c amigaio.c modjson.c modamiga.c modsocket.c
 
 OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))

@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <exec/tasks.h>
@@ -54,6 +55,11 @@ int main(int argc, char **argv) {
 
     mp_init();
 
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern bool amiga_socket_open(void);
+    amiga_socket_open();
+    #endif
+
     // Switch console to raw mode so readline gets characters immediately
     // rather than waiting for a full line. readline.c handles echo itself.
     BPTR stdin_fh = Input();
@@ -65,6 +71,11 @@ int main(int argc, char **argv) {
 
     // Restore cooked mode before returning to the CLI.
     SetMode(stdin_fh, 0);
+
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern void amiga_socket_close(void);
+    amiga_socket_close();
+    #endif
 
     mp_deinit();
     FreeVec(heap_ptr);
