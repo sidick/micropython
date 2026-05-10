@@ -559,6 +559,174 @@ without an emulator run. bebbo GCC can be installed in CI via a binary release:
 
 ---
 
+## Running the Test Suite
+
+With `micropython script.py` support (Phase 10), any test from `tests/` can be run
+directly in the Amiga CLI. The test suite lives in `tests/` at the root of the
+MicroPython repository.
+
+### Mounting the tests directory in Amiberry
+
+In Amiberry's hard disk configuration add a host-directory entry:
+
+| Field | Value |
+|-------|-------|
+| Device | `TESTS` |
+| Volume label | `Tests` |
+| Host path | `/path/to/micropython/tests` |
+| File system | `FFS` or automount |
+
+After reboot (or `Mount TESTS:`) the test scripts are accessible as `TESTS:basics/`,
+`TESTS:float/`, etc.
+
+### Running individual tests
+
+```sh
+1> micropython TESTS:basics/string_format.py
+1> micropython TESTS:float/float_parse.py
+1> micropython TESTS:io/file1.py
+```
+
+To verify output, compare against CPython on the host:
+
+```sh
+python3 tests/basics/string_format.py
+```
+
+The outputs should be identical for passing tests. Tests that require a feature
+absent from the port print `SKIP` and exit cleanly.
+
+### Recommended test directories
+
+| Directory | Tests | Expected result |
+|-----------|-------|----------------|
+| `basics/` | ~574 | Most pass; a handful SKIP (array bigint, threads) |
+| `float/` | ~68 | All pass via soft-float (`-msoft-float`) |
+| `io/` | ~16 | Pass (dos.library file I/O) |
+| `micropython/` | ~108 | Most pass; a few SKIP (scheduler, viper edge cases) |
+| `misc/` | ~30 | Most pass |
+| `cmdline/` | ~20 | Pass — exercises `-c`, `-m`, and script args |
+
+### Directories to skip
+
+| Directory | Reason |
+|-----------|--------|
+| `inlineasm/` | Tests x86/ARM/Thumb/RISC-V inline assembly syntax |
+| `extmod/machine_*.py` | Hardware peripherals (I2C, SPI, UART, …) not present |
+| `multi_*/` | Requires two MicroPython instances communicating |
+| `net_inet/`, `net_hosted/` | Requires a host-side network test harness |
+| `thread/` | `MICROPY_PY_THREAD (0)` — threading disabled |
+
+### On-device batch runner
+
+Save this script as `runtests.py` on the Amiga (e.g. on `RAM:` or a volume) and
+run it to batch-test a whole directory. It uses `amiga.execute()` with shell
+redirection to capture each test's output and compares against `.exp` files where
+they exist.
+
+```python
+# runtests.py — run micropython tests on AmigaOS
+# Usage: micropython runtests.py TESTS:basics
+import sys
+import amiga
+
+OUT = "T:__mp_test_out"
+LST = "T:__mp_test_list"
+
+def run_test(path):
+    amiga.execute("micropython " + path + " >" + OUT + " 2>" + OUT)
+    try:
+        with open(OUT) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+def check_exp(test_path, actual):
+    exp_path = test_path[:-3] + ".exp"   # replace .py with .exp
+    try:
+        with open(exp_path) as f:
+            return actual.strip() == f.read().strip()
+    except OSError:
+        return None   # no .exp file
+
+def main():
+    test_dir = sys.argv[1] if len(sys.argv) > 1 else "TESTS:basics"
+    amiga.execute('List "' + test_dir + '" PAT #?.py LFORMAT "%P%N" >' + LST)
+    try:
+        with open(LST) as f:
+            files = [l.strip() for l in f if l.strip()]
+    except OSError:
+        print("Cannot list", test_dir)
+        return
+
+    passed = failed = skipped = 0
+    for path in sorted(files):
+        output = run_test(path)
+        if output.strip() == "SKIP":
+            skipped += 1
+            print("skip ", path)
+            continue
+        result = check_exp(path, output)
+        if result is True:
+            passed += 1
+            print("pass ", path)
+        elif result is False:
+            failed += 1
+            print("FAIL ", path)
+            for line in output.splitlines()[:4]:
+                print("      got:", line)
+        else:
+            # No .exp file — pass if no exception text in output
+            if "Traceback" not in output and "Error" not in output:
+                passed += 1
+                print("pass ", path)
+            else:
+                failed += 1
+                print("FAIL ", path)
+                for line in output.splitlines()[:4]:
+                    print("      got:", line)
+
+    total = passed + failed + skipped
+    print("\n{} passed, {} failed, {} skipped / {} total".format(
+        passed, failed, skipped, total))
+
+main()
+```
+
+Run it with:
+
+```sh
+1> micropython RAM:runtests.py TESTS:basics
+1> micropython RAM:runtests.py TESTS:float
+1> micropython RAM:runtests.py TESTS:io
+```
+
+### Running tests from the host with run-tests.py
+
+`run-tests.py` (default `--test-instance unix`) runs `micropython script.py` as a
+subprocess. The Amiga binary is a 68k HUNK executable and cannot run natively on
+the host, but two options exist:
+
+**vamos (Linux)** — vamos is a userspace 68k/AmigaOS emulator that can run AmigaOS
+HUNK binaries on Linux. With the dos.library and exec.library stubs present:
+
+```sh
+export MICROPY_MICROPYTHON="vamos ports/amiga/build-standard/micropython"
+cd tests
+./run-tests.py -d basics float io micropython misc
+```
+
+Results are written to `tests/results/`. Failures show a diff of expected vs. actual.
+
+**Exclude irrelevant directories** when using the host runner:
+
+```sh
+./run-tests.py -d basics float io micropython misc \
+    -e "inlineasm|machine_|thread|extmod/ussl|extmod/uasync"
+```
+
+---
+
 ## Implementation Order Summary
 
 | Phase | Status | Outcome |
