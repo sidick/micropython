@@ -37,9 +37,9 @@
 // embedded REPL convention applies and pyexec returns 1 on normal success.
 #define MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)
 #define MICROPY_PY_SYS_MODULES              (1)
-// sys.stdin/stdout/stderr require stream objects tied to the VFS;
-// disable until a proper stdio stream type is wired up.
-#define MICROPY_PY_SYS_STDFILES             (0)
+// sys.stdin/stdout/stderr stream objects backed by the mphal stdio HAL.
+// Implementation lives in ports/amiga/sysstdio.c.
+#define MICROPY_PY_SYS_STDFILES             (1)
 #define MICROPY_PY_SYS_STDIO_BUFFER         (0)
 
 // No threads — AmigaOS uses cooperative multitasking.
