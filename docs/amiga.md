@@ -171,6 +171,15 @@ Known limitations of the current newlib stdio I/O:
 - `MICROPY_PY_THREAD (0)` — AmigaOS cooperative multitasking only
 - `MICROPY_PY_ASYNCIO (0)` — deferred
 - `mp_int_t` = `int`, `mp_uint_t` = `unsigned int` (both 32-bit on 68k)
+- `MICROPY_ENABLE_PYSTACK (1)` — required, not optional. The default
+  path uses `alloca` for small VM code states, but bebbo gcc 6.5 returns
+  mixed 2-byte and 4-byte aligned addresses from `alloca` on 68k. The VM
+  walks `mp_obj_t state[]` (each slot 4 bytes) on this stack, and an
+  iterator constructed in those slots via `MP_BC_GET_ITER_STACK` becomes
+  unreachable on the next `MP_BC_FOR_ITER` because `mp_obj_is_obj`'s
+  `(o & 3) == 0` check fails when the slot address is 2-byte aligned.
+  Routing through `mp_pystack_alloc` (initialised in `main.c` with a
+  4 KB `aligned(8)` buffer) gives deterministic alignment.
 
 **mphalport.c** — must supply `mp_builtin_open_obj`:
 The io module (`py/modio.c`) references `mp_builtin_open_obj` (Python's `open()`) but deliberately does not define it — this is port-supplied. A `NotImplementedError` stub is provided until phase 2:
