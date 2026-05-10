@@ -701,29 +701,68 @@ Run it with:
 1> micropython RAM:runtests.py TESTS:io
 ```
 
-### Running tests from the host with run-tests.py
+### Running tests from the host with vamos
 
-`run-tests.py` (default `--test-instance unix`) runs `micropython script.py` as a
-subprocess. The Amiga binary is a 68k HUNK executable and cannot run natively on
-the host, but two options exist:
+`vamos` is a userspace 68k/AmigaOS emulator (part of `amitools`) that runs
+AmigaOS HUNK binaries directly on the host. It is much faster than booting a
+full Amiberry instance and integrates with `tests/run-tests.py`.
 
-**vamos (Linux)** — vamos is a userspace 68k/AmigaOS emulator that can run AmigaOS
-HUNK binaries on Linux. With the dos.library and exec.library stubs present:
+#### Setup
+
+vamos is installed at `~/vamos/` and activated via `pipenv`:
 
 ```sh
-export MICROPY_MICROPYTHON="vamos ports/amiga/build-standard/micropython"
+cd ~/vamos
+pipenv run vamos --cpu 68020 -V tests:/path/to/micropython/tests -- \
+    /path/to/micropython/ports/amiga/build/micropython tests:basics/string1.py
+```
+
+Key flags:
+- `--cpu 68020` — required; the default 68000 will fault on 68020 instructions.
+- `-V name:/host/path` — mount a host directory as an AmigaOS volume.
+- `--` — separator between vamos options and the binary + args.
+
+Anything after `--` is passed verbatim, so `--version`, `-c`, `-m`, etc. reach
+MicroPython rather than being intercepted by vamos's own argument parser.
+
+#### Wrapper script for run-tests.py
+
+Create a wrapper that supplies the required `--cpu 68020` and `-V tests:` flags,
+then point `run-tests.py` at it via `MICROPY_MICROPYTHON`:
+
+```sh
+#!/bin/sh
+# scripts/amiga-run.sh
+exec env -C "$HOME/vamos" pipenv run vamos --cpu 68020 \
+    -V "tests:$(pwd)/.." \
+    -- "$(pwd)/../ports/amiga/build/micropython" "$@"
+```
+
+```sh
+export MICROPY_MICROPYTHON="$(pwd)/scripts/amiga-run.sh"
 cd tests
 ./run-tests.py -d basics float io micropython misc
 ```
 
 Results are written to `tests/results/`. Failures show a diff of expected vs. actual.
 
-**Exclude irrelevant directories** when using the host runner:
+#### Exclude directories that can't run on Amiga
 
 ```sh
 ./run-tests.py -d basics float io micropython misc \
     -e "inlineasm|machine_|thread|extmod/ussl|extmod/uasync"
 ```
+
+#### Known vamos quirks
+
+- `WaitForChar` returns 0 immediately rather than blocking. The port's REPL
+  uses plain `FGetC` which vamos handles correctly, so this only matters if
+  you reintroduce `WaitForChar` polling.
+- `SetMode(fh, 1)` (raw console mode) is logged as an unknown call and is a
+  no-op; vamos already delivers characters one at a time.
+- `pr_Arguments` is set correctly, but bebbo's C runtime argv parser produces
+  broken pointers under vamos. The port parses `pr_Arguments` itself (see
+  `amiga_parse_args` in `main.c`) to work around this.
 
 ---
 

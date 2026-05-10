@@ -15,7 +15,11 @@ include $(TOP)/extmod/extmod.mk
 BUILD ?= build-standard
 PROG  = micropython
 
-# Target 68020 minimum; soft-float (no FPU on most Amigas)
+# Target 68020 minimum; soft-float (no FPU on most Amigas).
+# Note: bebbo gcc 6.5 ICEs on -malign-int (its global 32-bit alignment
+# flag), so struct alignment for mp_obj_t (which requires 4-byte alignment
+# for the tagged-pointer encoding) is enforced via MICROPY_OBJ_BASE_ALIGNMENT
+# in mpconfigport.h.
 CFLAGS_AMIGA = -m68020 -msoft-float
 
 INC += -I.

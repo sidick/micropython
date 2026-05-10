@@ -75,6 +75,13 @@
 #define MICROPY_HW_BOARD_NAME               "Amiga"
 #define MICROPY_HW_MCU_NAME                 "68020"
 
+// 68k bebbo gcc uses 16-bit alignment for ints inside structs by default,
+// which leaves mp_obj_t pointers (e.g. inside mp_state_ctx) only 2-byte
+// aligned. MicroPython's tagged-pointer encoding requires 4-byte alignment
+// (bits 0-2 must be zero on a heap object pointer). Force 4-byte alignment
+// on the object-type field that begins every mp_obj_base_t.
+#define MICROPY_OBJ_BASE_ALIGNMENT  __attribute__((aligned(4)))
+
 // Type definitions for a 32-bit big-endian machine.
 // (Endianness itself is auto-detected from GCC's __BYTE_ORDER__.)
 typedef int             mp_int_t;

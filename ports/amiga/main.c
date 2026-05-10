@@ -1,11 +1,13 @@
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <exec/tasks.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
+#include <dos/dosextens.h>
 #include <proto/dos.h>
 
 #include "genhdr/mpversion.h"
@@ -85,6 +87,94 @@ static void set_sys_argv(char **argv, int argc, int start) {
     }
 }
 
+// Parse the AmigaOS CLI argument string (pr_Arguments) into argc/argv.
+//
+// The bebbo C runtime's __nocommandline parser produces broken argv
+// pointers under vamos, so we parse the raw arg string ourselves.
+// pr_Arguments is a NUL-terminated string with a trailing newline.
+//
+// Tokenisation rules (matching AmigaOS shell):
+//   - whitespace (space, tab, LF) separates tokens
+//   - "..." groups quote a single token; '*' is the escape character:
+//     *N = LF, *E = ESC, *" = ", ** = *
+//   - the trailing newline ends parsing
+//
+// Returns the number of tokens parsed (argv[0] is always the program name).
+// argv array and string buffer are allocated with AllocVec.
+static int amiga_parse_args(char ***argv_out) {
+    struct Process *me = (struct Process *)FindTask(NULL);
+    const char *src = (me->pr_Arguments) ? (const char *)me->pr_Arguments : "";
+
+    // Get program name from dos.library; fall back to "micropython".
+    char prog_buf[64];
+    prog_buf[0] = 0;
+    if (DOSBase->dl_lib.lib_Version >= 36) {
+        GetProgramName((STRPTR)prog_buf, sizeof(prog_buf));
+    }
+    if (!prog_buf[0]) {
+        strcpy(prog_buf, "micropython");
+    }
+
+    // Worst-case: every char becomes a separate token, plus argv[0].
+    size_t srclen = strlen(src);
+    size_t plen = strlen(prog_buf);
+    size_t bufsz = srclen + plen + 16;
+    char *buf = AllocVec(bufsz, MEMF_ANY | MEMF_CLEAR);
+    char **argv = AllocVec((srclen / 2 + 4) * sizeof(char *), MEMF_ANY | MEMF_CLEAR);
+    if (!buf || !argv) {
+        if (buf) FreeVec(buf);
+        if (argv) FreeVec(argv);
+        return 0;
+    }
+
+    // argv[0] = program name.
+    memcpy(buf, prog_buf, plen + 1);
+    argv[0] = buf;
+    int argc = 1;
+    char *out = buf + plen + 1;
+
+    const char *p = src;
+    while (*p) {
+        // Skip leading whitespace.
+        while (*p == ' ' || *p == '\t' || *p == '\n') {
+            p++;
+        }
+        if (!*p) break;
+
+        argv[argc++] = out;
+
+        if (*p == '"') {
+            // Quoted token; '*' is the AmigaOS escape character.
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '*' && p[1]) {
+                    p++;
+                    if (*p == 'N' || *p == 'n') {
+                        *out++ = '\n';
+                    } else if (*p == 'E' || *p == 'e') {
+                        *out++ = 0x1b;
+                    } else {
+                        *out++ = *p;
+                    }
+                    p++;
+                } else {
+                    *out++ = *p++;
+                }
+            }
+            if (*p == '"') p++;
+        } else {
+            // Unquoted token: read until whitespace.
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n') {
+                *out++ = *p++;
+            }
+        }
+        *out++ = '\0';
+    }
+
+    *argv_out = argv;
+    return argc;
+}
+
 static int run_str(const char *str) {
     vstr_t vstr;
     size_t len = strlen(str);
@@ -96,7 +186,21 @@ static int run_str(const char *str) {
     return ret;
 }
 
-int main(int argc, char **argv) {
+int main(int argc_unused, char **argv_unused) {
+    (void)argc_unused;
+    (void)argv_unused;
+
+    // Parse arguments ourselves from pr_Arguments; the bebbo C runtime
+    // produces broken argv pointers under vamos.
+    char **argv = NULL;
+    int argc = amiga_parse_args(&argv);
+    if (argc == 0) {
+        // Parse failed (out of memory); fall back to a single dummy argv.
+        static char *fallback_argv[] = {"micropython", NULL};
+        argv = fallback_argv;
+        argc = 1;
+    }
+
     // Allocate heap from Fast RAM; fall back to any available RAM.
     heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST | MEMF_PUBLIC);
     if (!heap_ptr) {
@@ -116,12 +220,7 @@ int main(int argc, char **argv) {
     #endif
 
     mp_init();
-
-    // sys.path: "" means the current directory on AmigaOS.
-    mp_sys_path = mp_obj_new_list(0, NULL);
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
-    // sys.argv starts empty; populated below based on what is being run.
-    mp_obj_list_init(MP_OBJ_TO_PTR(mp_sys_argv), 0);
+    // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
     #if MICROPY_PY_AMIGA_SOCKET
     extern bool amiga_socket_open(void);
