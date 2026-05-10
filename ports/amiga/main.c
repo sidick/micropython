@@ -245,13 +245,17 @@ int main(int argc_unused, char **argv_unused) {
     #if MICROPY_STACK_CHECK
     mp_stack_ctrl_init();
     // AmigaOS CLIs run with whatever stack the user (or the Stack
-    // command) gave them; vamos defaults to 8 KiB, real hardware is
-    // commonly 4 KiB, and shells like KingCON sometimes hand out 32 KiB+.
+    // command) gave them; the AmigaDOS 4 KiB default is too tight for
+    // anything beyond trivial recursion, so the documented expectation
+    // for this port is `Stack 32768` or similar before launching, and
+    // tools/amiga-vamos-run.sh asks vamos for `-s 32`.
+    //
     // Use task->tc_SPLower/tc_SPUpper when populated to size the limit
-    // dynamically, leaving a 2 KiB safety margin for the C runtime.
-    // Vamos zeros both fields on the initial process, so fall back to
-    // 4 KiB which is small enough to fit any CLI's stack but big enough
-    // for normal Python.
+    // dynamically with a 2 KiB safety margin. Vamos zeros both fields
+    // on the initial process, in which case we assume the documented
+    // 32 KiB-ish stack and use a 24 KiB limit -- conservative against
+    // a smaller stack but big enough that the test suite's nested
+    // imports and stress-test recursion paths run cleanly.
     {
         struct Task *task = FindTask(NULL);
         size_t stack_size = (size_t)((char *)task->tc_SPUpper - (char *)task->tc_SPLower);
@@ -259,7 +263,7 @@ int main(int argc_unused, char **argv_unused) {
         if (stack_size > 4 * 1024) {
             limit = stack_size - 2 * 1024;
         } else {
-            limit = 4 * 1024;
+            limit = 24 * 1024;
         }
         mp_stack_set_limit(limit);
     }
