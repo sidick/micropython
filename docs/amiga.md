@@ -791,7 +791,7 @@ absent from the port print `SKIP` and exit cleanly.
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
 | `micropython/` | 108 | 41 pass, 19 self-skip; ~48 fail in `native_*` and `viper_*` (pre-existing 68k emitter bugs beyond the documented try/except + viper-locals limitations — separate effort) |
 | `misc/` | ~30 | Most pass |
-| `cmdline/` | ~20 | Pass — exercises `-c`, `-m`, and script args |
+| `cmdline/` | 25 | 9 pass, 2 self-skip, 14 fail — most failures are unix-port-specific (REPL banner format, `-v` bytecode dump, terminal-editing). `-X compile-only`, `-O`, `-m` SystemExit handling, and `sys.atexit` all pass. |
 
 ### Directories to skip
 
