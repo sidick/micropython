@@ -59,6 +59,12 @@
 #define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF (1)
 #define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE   (256)
 
+// Track the C stack ceiling so deep recursion turns into a Python
+// RuntimeError ("maximum recursion depth exceeded") rather than running
+// off the AmigaDOS stack and faulting the CPU. mp_stack_set_limit() is
+// called from main() with the standard 40 KB ceiling.
+#define MICROPY_STACK_CHECK                    (1)
+
 // Use the pystack for VM code-state allocations. The default path uses
 // alloca for small functions, but bebbo gcc on 68k returns mixed 2-byte
 // and 4-byte aligned addresses from alloca; the VM relies on mp_obj_t

@@ -244,7 +244,25 @@ int main(int argc_unused, char **argv_unused) {
 
     #if MICROPY_STACK_CHECK
     mp_stack_ctrl_init();
-    mp_stack_set_limit(40 * 1024);
+    // AmigaOS CLIs run with whatever stack the user (or the Stack
+    // command) gave them; vamos defaults to 8 KiB, real hardware is
+    // commonly 4 KiB, and shells like KingCON sometimes hand out 32 KiB+.
+    // Use task->tc_SPLower/tc_SPUpper when populated to size the limit
+    // dynamically, leaving a 2 KiB safety margin for the C runtime.
+    // Vamos zeros both fields on the initial process, so fall back to
+    // 4 KiB which is small enough to fit any CLI's stack but big enough
+    // for normal Python.
+    {
+        struct Task *task = FindTask(NULL);
+        size_t stack_size = (size_t)((char *)task->tc_SPUpper - (char *)task->tc_SPLower);
+        size_t limit;
+        if (stack_size > 4 * 1024) {
+            limit = stack_size - 2 * 1024;
+        } else {
+            limit = 4 * 1024;
+        }
+        mp_stack_set_limit(limit);
+    }
     #endif
 
     #if MICROPY_ENABLE_GC
