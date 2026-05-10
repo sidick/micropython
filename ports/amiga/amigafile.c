@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <proto/dos.h>
@@ -11,23 +9,24 @@
 
 mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
     const char *path = qstr_str(filename);
-    FILE *f = fopen(path, "rb");
-    if (!f) {
+    BPTR fh = Open((STRPTR)path, MODE_OLDFILE);
+    if (!fh) {
         mp_raise_OSError(MP_ENOENT);
     }
-
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    char *buf = m_new(char, size + 1);
-    if (fread(buf, 1, size, f) != (size_t)size) {
-        fclose(f);
+    // Seek to end to get file size; Seek() to OFFSET_BEGINNING returns old pos = size.
+    Seek(fh, 0, OFFSET_END);
+    LONG size = Seek(fh, 0, OFFSET_BEGINNING);
+    if (size < 0) {
+        Close(fh);
         mp_raise_OSError(MP_EIO);
     }
-    fclose(f);
+    char *buf = m_new(char, size + 1);
+    if (Read(fh, buf, size) != size) {
+        Close(fh);
+        mp_raise_OSError(MP_EIO);
+    }
+    Close(fh);
     buf[size] = '\0';
-
     return mp_lexer_new_from_str_len(filename, buf, (size_t)size, true);
 }
 
