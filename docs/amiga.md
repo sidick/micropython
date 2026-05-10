@@ -562,10 +562,128 @@ without an emulator run. bebbo GCC can be installed in CI via a binary release:
 ## Running the Test Suite
 
 With `micropython script.py` support (Phase 10), any test from `tests/` can be run
-directly in the Amiga CLI. The test suite lives in `tests/` at the root of the
-MicroPython repository.
+either **on the host via vamos** (fastest, no emulator GUI) or **inside Amiberry**
+(closer to real hardware behaviour).
 
-### Mounting the tests directory in Amiberry
+### Option A: vamos on the host (recommended for iteration)
+
+`vamos` is a userspace 68k/AmigaOS emulator from the `amitools` package that
+runs AmigaOS HUNK binaries directly on the host. It boots in milliseconds, has
+no GUI, and integrates with `tests/run-tests.py`.
+
+This setup assumes vamos is installed at `~/vamos/` and activated via `pipenv`
+(the standard `amitools` install).
+
+#### Smoke-test a single script
+
+```sh
+cd ~/vamos
+pipenv run vamos --cpu 68020 \
+    -V "tests:/path/to/micropython/tests" \
+    -- /path/to/micropython/ports/amiga/build/micropython tests:basics/string1.py
+```
+
+Key flags:
+- `--cpu 68020` — **required**; the vamos default is 68000, which faults on
+  any `m68020` instruction emitted by the build.
+- `-V name:/host/path` — mount a host directory as an AmigaOS volume named
+  `name:`. The MicroPython binary then references files via the AmigaOS path,
+  e.g. `tests:basics/string1.py`.
+- `--` — separator between vamos options and the binary + args. Without it,
+  vamos consumes `--version`, `-h`, `-c`, etc. as its own options.
+
+A bare REPL works too:
+
+```sh
+pipenv run vamos --cpu 68020 -- /path/to/build/micropython
+```
+
+#### Wrapper script for run-tests.py
+
+`tests/run-tests.py` invokes its target as `<MICROPY_MICROPYTHON> path/to/test.py`
+from inside `tests/`. The wrapper below mounts `tests/` as `tests:` and
+rewrites the script path argument to AmigaOS form so vamos can find it:
+
+```sh
+#!/bin/sh
+# tools/amiga-vamos-run.sh — wrapper used as MICROPY_MICROPYTHON.
+# run-tests.py invokes us with a path relative to tests/ (e.g.
+# basics/string1.py); rewrite that to tests:basics/string1.py for vamos.
+set -e
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MPY_BIN="$REPO_ROOT/ports/amiga/build/micropython"
+TESTS_DIR="$REPO_ROOT/tests"
+
+amiga_args=""
+for arg in "$@"; do
+    case "$arg" in
+        "$TESTS_DIR"/*) amiga_args="$amiga_args tests:${arg#$TESTS_DIR/}" ;;
+        */tests/*)      amiga_args="$amiga_args tests:${arg#*/tests/}" ;;
+        *)              amiga_args="$amiga_args $arg" ;;
+    esac
+done
+
+cd "$HOME/vamos"
+exec pipenv run vamos --cpu 68020 \
+    -V "tests:$TESTS_DIR" \
+    -- "$MPY_BIN" $amiga_args
+```
+
+Save it executable (`chmod +x tools/amiga-vamos-run.sh`) and run:
+
+```sh
+export MICROPY_MICROPYTHON="$(pwd)/tools/amiga-vamos-run.sh"
+cd tests
+./run-tests.py -d basics float io micropython misc
+```
+
+Results land in `tests/results/`. Failures show a diff of expected vs. actual
+output. Re-run only failures with `--run-failures`.
+
+#### Exclude directories that can't run on Amiga
+
+```sh
+./run-tests.py -d basics float io micropython misc \
+    -e "inlineasm|machine_|thread|extmod/ussl|extmod/uasync"
+```
+
+#### Test-runner integration requirements
+
+For `tests/run-tests.py` (default `--test-instance unix`) to work the binary
+must:
+
+- accept `-X <option>` flags as no-ops (run-tests.py always emits
+  `-X emit=bytecode` and on macOS adds `-X realtime`); `main.c` consumes them
+  and skips the argument.
+- return POSIX-style exit codes (0 on success). Set
+  `MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)` in `mpconfigport.h` so
+  `pyexec_file` returns 0 on a clean run instead of the embedded REPL's
+  bitmask convention (which has 1 = normal exit).
+- free its `AllocVec`'d argv buffers before returning, otherwise vamos's
+  orphan-memory check makes the process exit non-zero even on success.
+
+#### Known vamos quirks
+
+- `pr_Arguments` is set correctly, but bebbo's C runtime argv parser
+  produces broken pointers under vamos with multi-arg invocations. The port
+  parses `pr_Arguments` itself in `amiga_parse_args` (`ports/amiga/main.c`),
+  so this is invisible to test code.
+- `WaitForChar` returns 0 immediately rather than blocking. The REPL uses
+  plain `FGetC` (which vamos handles correctly), so this only matters if you
+  reintroduce a `WaitForChar` poll loop.
+- `SetMode(fh, 1)` (raw console mode) is logged as an unknown call and is a
+  no-op; vamos already delivers characters one at a time.
+- Quiet noisy logs with `-q` once you've confirmed setup; logs go to stderr
+  and `run-tests.py` filters stderr cleanly.
+
+### Option B: inside Amiberry
+
+Use this for verifying that something works on real-AmigaOS-like behaviour
+(timing, OS calls vamos doesn't fully implement, etc.) before flashing to
+hardware.
+
+#### Mounting the tests directory in Amiberry
 
 In Amiberry's hard disk configuration add a host-directory entry:
 
@@ -579,7 +697,7 @@ In Amiberry's hard disk configuration add a host-directory entry:
 After reboot (or `Mount TESTS:`) the test scripts are accessible as `TESTS:basics/`,
 `TESTS:float/`, etc.
 
-### Running individual tests
+#### Running individual tests in Amiberry
 
 ```sh
 1> micropython TESTS:basics/string_format.py
@@ -617,7 +735,7 @@ absent from the port print `SKIP` and exit cleanly.
 | `net_inet/`, `net_hosted/` | Requires a host-side network test harness |
 | `thread/` | `MICROPY_PY_THREAD (0)` — threading disabled |
 
-### On-device batch runner
+#### On-device batch runner (Amiberry)
 
 Save this script as `runtests.py` on the Amiga (e.g. on `RAM:` or a volume) and
 run it to batch-test a whole directory. It uses `amiga.execute()` with shell
@@ -701,68 +819,6 @@ Run it with:
 1> micropython RAM:runtests.py TESTS:io
 ```
 
-### Running tests from the host with vamos
-
-`vamos` is a userspace 68k/AmigaOS emulator (part of `amitools`) that runs
-AmigaOS HUNK binaries directly on the host. It is much faster than booting a
-full Amiberry instance and integrates with `tests/run-tests.py`.
-
-#### Setup
-
-vamos is installed at `~/vamos/` and activated via `pipenv`:
-
-```sh
-cd ~/vamos
-pipenv run vamos --cpu 68020 -V tests:/path/to/micropython/tests -- \
-    /path/to/micropython/ports/amiga/build/micropython tests:basics/string1.py
-```
-
-Key flags:
-- `--cpu 68020` — required; the default 68000 will fault on 68020 instructions.
-- `-V name:/host/path` — mount a host directory as an AmigaOS volume.
-- `--` — separator between vamos options and the binary + args.
-
-Anything after `--` is passed verbatim, so `--version`, `-c`, `-m`, etc. reach
-MicroPython rather than being intercepted by vamos's own argument parser.
-
-#### Wrapper script for run-tests.py
-
-Create a wrapper that supplies the required `--cpu 68020` and `-V tests:` flags,
-then point `run-tests.py` at it via `MICROPY_MICROPYTHON`:
-
-```sh
-#!/bin/sh
-# scripts/amiga-run.sh
-exec env -C "$HOME/vamos" pipenv run vamos --cpu 68020 \
-    -V "tests:$(pwd)/.." \
-    -- "$(pwd)/../ports/amiga/build/micropython" "$@"
-```
-
-```sh
-export MICROPY_MICROPYTHON="$(pwd)/scripts/amiga-run.sh"
-cd tests
-./run-tests.py -d basics float io micropython misc
-```
-
-Results are written to `tests/results/`. Failures show a diff of expected vs. actual.
-
-#### Exclude directories that can't run on Amiga
-
-```sh
-./run-tests.py -d basics float io micropython misc \
-    -e "inlineasm|machine_|thread|extmod/ussl|extmod/uasync"
-```
-
-#### Known vamos quirks
-
-- `WaitForChar` returns 0 immediately rather than blocking. The port's REPL
-  uses plain `FGetC` which vamos handles correctly, so this only matters if
-  you reintroduce `WaitForChar` polling.
-- `SetMode(fh, 1)` (raw console mode) is logged as an unknown call and is a
-  no-op; vamos already delivers characters one at a time.
-- `pr_Arguments` is set correctly, but bebbo's C runtime argv parser produces
-  broken pointers under vamos. The port parses `pr_Arguments` itself (see
-  `amiga_parse_args` in `main.c`) to work around this.
 
 ---
 

@@ -100,8 +100,9 @@ static void set_sys_argv(char **argv, int argc, int start) {
 //   - the trailing newline ends parsing
 //
 // Returns the number of tokens parsed (argv[0] is always the program name).
-// argv array and string buffer are allocated with AllocVec.
-static int amiga_parse_args(char ***argv_out) {
+// argv array and string buffer are allocated with AllocVec; the buffer
+// pointer is returned via *buf_out so main() can free it at exit.
+static int amiga_parse_args(char ***argv_out, char **buf_out) {
     struct Process *me = (struct Process *)FindTask(NULL);
     const char *src = (me->pr_Arguments) ? (const char *)me->pr_Arguments : "";
 
@@ -172,6 +173,7 @@ static int amiga_parse_args(char ***argv_out) {
     }
 
     *argv_out = argv;
+    *buf_out = buf;
     return argc;
 }
 
@@ -193,7 +195,8 @@ int main(int argc_unused, char **argv_unused) {
     // Parse arguments ourselves from pr_Arguments; the bebbo C runtime
     // produces broken argv pointers under vamos.
     char **argv = NULL;
-    int argc = amiga_parse_args(&argv);
+    char *argv_buf = NULL;
+    int argc = amiga_parse_args(&argv, &argv_buf);
     if (argc == 0) {
         // Parse failed (out of memory); fall back to a single dummy argv.
         static char *fallback_argv[] = {"micropython", NULL};
@@ -254,6 +257,14 @@ int main(int argc_unused, char **argv_unused) {
                 exit_code = run_str(argv[++a]);
                 ran_something = true;
                 break;
+
+            } else if (strcmp(argv[a], "-X") == 0) {
+                // -X <impl-option> — accepted and ignored. tests/run-tests.py
+                // emits "-X emit=bytecode" / "-X heapsize=N" etc. for the
+                // unix port; consume them silently so test runs proceed.
+                if (a + 1 < argc) {
+                    a++;
+                }
 
             } else if (strcmp(argv[a], "-m") == 0) {
                 if (a + 1 >= argc) {
@@ -330,6 +341,10 @@ int main(int argc_unused, char **argv_unused) {
 
     mp_deinit();
     FreeVec(heap_ptr);
+    if (argv_buf) {
+        FreeVec(argv_buf);
+        FreeVec(argv);
+    }
     return exit_code & 0xff;
 }
 

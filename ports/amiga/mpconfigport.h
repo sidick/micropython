@@ -31,6 +31,11 @@
 #define MICROPY_PY_SYS_EXIT                 (1)
 #define MICROPY_PY_SYS_PATH                 (1)
 #define MICROPY_PY_SYS_ARGV                 (1)
+
+// POSIX-style exit codes from pyexec_file/pyexec_vstr: success returns 0,
+// uncaught exception returns 1, sys.exit(N) returns N. Without this, the
+// embedded REPL convention applies and pyexec returns 1 on normal success.
+#define MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)
 #define MICROPY_PY_SYS_MODULES              (1)
 // sys.stdin/stdout/stderr require stream objects tied to the VFS;
 // disable until a proper stdio stream type is wired up.
