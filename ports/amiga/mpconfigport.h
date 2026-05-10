@@ -27,6 +27,11 @@
 // 68k has no hardware FPU; soft-float via -msoft-float in CFLAGS.
 #define MICROPY_FLOAT_IMPL                  MICROPY_FLOAT_IMPL_DOUBLE
 
+// Native 64-bit ints for values beyond 31-bit smallint range. Needed
+// for the 'q'/'Q' struct codes and any int literal > 30 bits in the
+// source (e.g. 0xFFFF_FFFF in feature-detect tests).
+#define MICROPY_LONGINT_IMPL                MICROPY_LONGINT_IMPL_LONGLONG
+
 // sys module
 #define MICROPY_PY_SYS_EXIT                 (1)
 #define MICROPY_PY_SYS_PATH                 (1)
