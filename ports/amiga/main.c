@@ -26,6 +26,11 @@
 
 static void *heap_ptr;
 
+// Set by `-X compile-only`. shared/runtime/pyexec.c checks this before
+// invoking module_fun, so the script gets parsed and compiled but not
+// executed. Provided by every port that defines MICROPY_PYEXEC_COMPILE_ONLY.
+bool mp_compile_only = false;
+
 // Stack ceiling captured at main() entry. Used by gc_collect when
 // task->tc_SPUpper is unavailable (vamos leaves it zero) to bound the
 // stack scan. The address of a local in main() is below the start of
@@ -291,11 +296,26 @@ int main(int argc_unused, char **argv_unused) {
                 break;
 
             } else if (strcmp(argv[a], "-X") == 0) {
-                // -X <impl-option> — accepted and ignored. tests/run-tests.py
-                // emits "-X emit=bytecode" / "-X heapsize=N" etc. for the
-                // unix port; consume them silently so test runs proceed.
+                // -X <impl-option>. tests/run-tests.py emits -X emit=bytecode
+                // (and on macOS -X realtime); we accept those silently. Honour
+                // -X compile-only so the cmd_compile_only test can verify
+                // parse-but-don't-execute behaviour.
                 if (a + 1 < argc) {
+                    if (strcmp(argv[a + 1], "compile-only") == 0) {
+                        mp_compile_only = true;
+                    }
                     a++;
+                }
+
+            } else if (argv[a][1] == 'O' && (argv[a][2] == '\0' || (argv[a][2] >= '0' && argv[a][2] <= '9'))) {
+                // -O / -OO / -O<digit> -- raise the optimisation level so
+                // assert is dropped and __debug__ becomes False.
+                if (argv[a][2] >= '0' && argv[a][2] <= '9') {
+                    MP_STATE_VM(mp_optimise_value) = argv[a][2] - '0';
+                } else {
+                    for (const char *p = argv[a] + 1; *p == 'O'; p++) {
+                        MP_STATE_VM(mp_optimise_value)++;
+                    }
                 }
 
             } else if (strcmp(argv[a], "-m") == 0) {
@@ -322,8 +342,26 @@ int main(int argc_unused, char **argv_unused) {
                 } else {
                     mp_hal_set_interrupt_char(-1);
                     mp_handle_pending(MP_HANDLE_PENDING_CALLBACKS_AND_CLEAR_EXCEPTIONS);
-                    mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
-                    exit_code = 1;
+                    // SystemExit exits with the value as the exit code; everything
+                    // else prints the traceback and exits 1. Mirrors the path in
+                    // shared/runtime/pyexec.c that handles -c / script files.
+                    mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
+                    if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(((mp_obj_base_t *)nlr.ret_val)->type),
+                            MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
+                        mp_obj_t val = mp_obj_exception_get_value(exc);
+                        if (val == mp_const_none) {
+                            exit_code = 0;
+                        } else if (mp_obj_is_int(val)) {
+                            exit_code = (int)mp_obj_int_get_truncated(val);
+                        } else {
+                            mp_obj_print_helper(&mp_plat_print, val, PRINT_STR);
+                            mp_print_str(&mp_plat_print, "\n");
+                            exit_code = 1;
+                        }
+                    } else {
+                        mp_obj_print_exception(&mp_plat_print, exc);
+                        exit_code = 1;
+                    }
                 }
                 ran_something = true;
                 break;
@@ -365,6 +403,12 @@ int main(int argc_unused, char **argv_unused) {
         // Restore cooked mode before returning to the CLI.
         SetMode(stdin_fh, 0);
     }
+
+    #if MICROPY_PY_SYS_ATEXIT
+    if (mp_obj_is_callable(MP_STATE_VM(sys_exitfunc))) {
+        mp_call_function_0(MP_STATE_VM(sys_exitfunc));
+    }
+    #endif
 
     #if MICROPY_PY_AMIGA_SOCKET
     extern void amiga_socket_close(void);
