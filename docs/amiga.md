@@ -12,11 +12,14 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 3 ✅ Standard MicroPython library modules
 - Phase 4 ✅ Amiga-specific `amiga` C module (exec/dos library bindings)
 - Phase 5 ✅ 68k native code emitter (`--emit native` / `@micropython.native`)
+- Phase 6 — Package imports (`import mypackage`) via `Lock`/`Examine`
+- Phase 7 — Ctrl+C interrupt handling via dos.library break signals
+- Phase 8 — Networking via `bsdsocket.library` (`usocket` module)
+- Phase 9 — CI build workflow
 
 ### Non-goals (initially)
 
 - Workbench GUI / Intuition window — CLI only
-- Networking (bsdsocket.library) — later
 - 68000 alignment-safe build — target 68020+ first
 
 ---
@@ -400,6 +403,105 @@ amiga.MEMF_CLEAR            # 0x10000
 
 ---
 
+## Future Work
+
+### Phase 6 — Package imports
+
+`mp_import_stat()` currently uses `fopen` to detect files, which cannot distinguish
+directories from non-existent paths. `import mypackage` (where `mypackage/` is a
+directory containing `__init__.py`) will always fail with `ModuleNotFoundError`.
+
+Fix: replace the `fopen` probe in `amigafile.c` with dos.library `Lock`/`Examine`:
+
+```c
+mp_import_stat_t mp_import_stat(const char *path) {
+    BPTR lock = Lock((STRPTR)path, SHARED_LOCK);
+    if (!lock) return MP_IMPORT_STAT_NO_EXIST;
+    struct FileInfoBlock *fib = AllocDosObject(DOS_FIB, NULL);
+    mp_import_stat_t r = MP_IMPORT_STAT_NO_EXIST;
+    if (fib && Examine(lock, fib))
+        r = (fib->fib_DirEntryType > 0) ? MP_IMPORT_STAT_DIR : MP_IMPORT_STAT_FILE;
+    if (fib) FreeDosObject(DOS_FIB, fib);
+    UnLock(lock);
+    return r;
+}
+```
+
+NDK is already installed at `/opt/amiga/m68k-amigaos/ndk-include/` — no extra flags needed.
+
+---
+
+### Phase 7 — Ctrl+C interrupt handling
+
+Currently Ctrl+C has no effect during a running script. AmigaOS delivers break signals
+via `CheckSignal(SIGBREAKF_CTRL_C)` rather than SIGINT.
+
+Fix: in `mphalport.h`, implement `mp_hal_is_interrupted()` to check the AmigaOS break
+signal and clear it:
+
+```c
+#include <proto/exec.h>
+static inline int mp_hal_is_interrupted(void) {
+    return (CheckSignal(SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) != 0;
+}
+```
+
+Enable `MICROPY_KBD_EXCEPTION (1)` in `mpconfigport.h` so the VM calls
+`mp_hal_is_interrupted()` at each bytecode step and raises `KeyboardInterrupt`.
+
+---
+
+### Phase 8 — Networking (`bsdsocket.library`)
+
+AmigaOS 3.x networking is provided by `bsdsocket.library`, a BSD socket API
+implemented as an Amiga shared library. It is present in any AmiTCP/Miami/Roadshow
+stack and in Amiberry's built-in networking.
+
+The MicroPython `usocket` module (`extmod/modusocket.c`) can be enabled once the
+BSD socket calls are wired up. Key differences from POSIX:
+
+- Library must be opened: `SocketBase = OpenLibrary("bsdsocket.library", 4)`
+- All socket calls go through the library base, not direct syscalls: use NDK macros
+  (`socket()`, `connect()`, etc. expand to `CallLib(SocketBase, ...)` via `<proto/socket.h>`)
+- `errno` is per-library: use `Errno()` from `<proto/socket.h>` instead of global `errno`
+- `select()` is available; `poll()` may not be
+
+Suggested approach:
+1. Open `bsdsocket.library` in `main.c`; fail gracefully if absent
+2. Add `ports/amiga/amigasocket.c` providing `mp_uos_socket_*` shims that translate
+   MicroPython socket calls to `bsdsocket.library` calls
+3. Enable `MICROPY_PY_USOCKET (1)` in `mpconfigport.h`
+4. Map `Errno()` to MicroPython's `MP_E*` errno constants
+
+---
+
+### Phase 9 — CI build workflow
+
+Add `.github/workflows/ports_amiga.yml` to confirm the port cross-compiles on Linux
+without an emulator run. bebbo GCC can be installed in CI via the binary release:
+
+```yaml
+- name: Install bebbo GCC
+  run: |
+    curl -L https://github.com/bebbo/amiga-gcc/releases/download/2024-01-01/amiga-gcc-linux.tar.bz2 | \
+      sudo tar -xj -C /opt
+    echo "/opt/amiga/bin" >> $GITHUB_PATH
+```
+
+---
+
+### Other known limitations
+
+| Issue | Status | Fix |
+|-------|--------|-----|
+| `try/except` in `@micropython.native` crashes | Known bug | Needs a 68k assembly NLR (`nlr68k.S`) that saves/restores D2–D7/A2–A5 in the `nlr_buf_t`; until then, avoid exceptions inside native functions |
+| Heap is a static 256 KB BSS array | Works but wastes Fast RAM at link time | Switch to `AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST\|MEMF_PUBLIC)` in `main.c` |
+| GC stack scan is a heuristic | May miss or over-scan roots | Replace with exact `FindTask(NULL)->tc_SPLower/tc_SPUpper` bounds |
+| Console uses newlib stdio | Works; small overhead | Switch to `dos.library` `FGetC`/`Write` for direct OS calls |
+| `@micropython.viper` limited to 1 register local | `MAX_REGS_FOR_LOCAL_VARS = 1` (D7 only) | Add a 68k-specific viper register allocator, or accept stack-based locals |
+
+---
+
 ## Key Risks and Mitigations
 
 | Risk | Mitigation |
@@ -432,3 +534,7 @@ amiga.MEMF_CLEAR            # 0x10000
 | 3 — Stdlib | ✅ Done | math, struct, json, re, hashlib, float; json.loads via port-local modjson.c |
 | 4 — `amiga` module | ✅ Done | os_version, find_task, alloc_vec, free_vec, execute; SystemTagList for exit codes |
 | 5 — 68k emitter | ✅ Done | `@micropython.native` via `MICROPY_EMIT_68K`; try/except in native mode is a known limitation |
+| 6 — Package imports | Planned | `Lock`/`Examine` in `mp_import_stat()`; enables `import mypackage` |
+| 7 — Ctrl+C | Planned | `CheckSignal(SIGBREAKF_CTRL_C)` + `MICROPY_KBD_EXCEPTION` |
+| 8 — Networking | Planned | `bsdsocket.library` + `usocket` module |
+| 9 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
