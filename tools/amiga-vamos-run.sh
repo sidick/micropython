@@ -40,7 +40,11 @@ cwd_args=""
 [ -n "$AMIGA_CWD" ] && cwd_args="--cwd $AMIGA_CWD"
 
 cd "$HOME/vamos"
-exec pipenv run vamos -q --cpu 68020 \
+# Vamos defaults to an 8 KiB stack -- enough for normal Python but
+# not for stress/import tests that nest several frames deep. 32 KiB
+# matches a typical "Stack 32768" AmigaDOS environment, which is
+# closer to what users run real MicroPython under.
+exec pipenv run vamos -q --cpu 68020 -s 32 \
     --vols-base-dir "$VOLS_DIR" \
     -V "tests:$TESTS_DIR" \
     $cwd_args \
