@@ -11,7 +11,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 2 ✅ File system access and `import` from AmigaDOS volumes
 - Phase 3 ✅ Standard MicroPython library modules
 - Phase 4 ✅ Amiga-specific `amiga` C module (exec/dos library bindings)
-- Phase 5 (stretch): 68k native code emitter
+- Phase 5 ✅ 68k native code emitter (`--emit native` / `@micropython.native`)
 
 ### Non-goals (initially)
 
@@ -349,16 +349,54 @@ amiga.MEMF_CLEAR            # 0x10000
 
 ---
 
-## Phase 5 (Stretch) — 68k Native Code Emitter
+## Phase 5 — 68k Native Code Emitter ✅
 
-MicroPython has native code emitters for x64, ARM/Thumb, AArch64, Xtensa, RISC-V. Adding 68k requires:
+`@micropython.native` and `--emit native` are now supported via the GENERIC_ASM_API.
 
-1. `py/asm68k.h` / `py/asm68k.c` — 68k instruction encoder (MOVEx, ADD, SUB, LINK/UNLK, JSR, RTS, etc.)
-2. `py/emit68k.c` — native emitter translating MicroPython IR to 68k, following `py/emitx64.c`
-3. Register mapping: `d0`–`d7` (data), `a0`–`a6` (address), `a7` = SP; use `a5` or `a4` as the code-state pointer
-4. Add `MICROPY_EMIT_68K` config macro and wire into `py/compile.c`
+### Files added
 
-Significant work (several thousand lines); defer until phases 1–4 are solid.
+| File | Role |
+|------|------|
+| `py/asm68k.h` | 68k instruction encoder: MOVE, ADD/SUB/MUL, logical, shift, CMP, Scc, LEA, Bcc/BRA, JSR/RTS, LINK/UNLK, MOVEM |
+| `py/asm68k.c` | Non-inline implementations: entry/exit, call_ind, branches, local access, load/store |
+| `py/emit68k.c` | Thin wrapper: `#define N_68K 1` + `GENERIC_ASM_API`, then `#include "py/emitnative.c"` |
+
+### Design decisions
+
+**Register allocation:**
+
+| Role | Register | Note |
+|------|----------|------|
+| REG_RET / REG_ARG_1 | D0 | Also return value |
+| REG_ARG_2 | D1 | |
+| REG_ARG_3 | D2 | Callee-saved; loaded from 16(A5) in prologue |
+| REG_ARG_4 | D3 | Callee-saved; loaded from 20(A5) in prologue |
+| REG_TEMP0/1/2 | D4, D5, D6 | Scratch |
+| REG_LOCAL_1 | D7 | Only cached-local register (data reg safe for arithmetic) |
+| REG_LOCAL_2 | A2 | Address register; used for REG_GENERATOR_STATE |
+| REG_LOCAL_3 | A3 | Address register; used for REG_QSTR_TABLE |
+| REG_FUN_TABLE | A4 | Points to `mp_fun_table` |
+| Frame pointer | A5 | LINK/UNLK; locals at (local-n_locals)*4(A5) |
+| A0 | scratch | Used by `asm_68k_ensure_areg` when base is Dn |
+
+**Calling convention:** AmigaOS/cdecl — args pushed right-to-left.
+- Entry prologue: `LINK A5, #-N; MOVEM.L D2-D7/A2-A4, -(SP)` then load 4 args from stack.
+- `ASM_CALL_IND`: push D3/D2/D1/D0; `MOVEA.L (idx*4, A4), A0; JSR (A0); ADDA.L #16, SP`.
+- Branches: always `.W` form (4 bytes: opcode + int16 displacement); displacement = target − (instruction + 2).
+- Comparisons: `CMP.L reg_rhs, REG_ARG_2; Scc REG_RET; ANDI.L #1, REG_RET`.
+- `MAX_REGS_FOR_LOCAL_VARS = 1`: only D7 used for register-cached locals; A2/A3 are address registers and cannot be used for general arithmetic by `emitnative.c`.
+
+### Known limitations
+
+- **try/except in native mode is broken.** With `MICROPY_NLR_SETJMP = 1`, the `nlr_buf_t` slot used by `NLR_BUF_IDX_LOCAL_1` falls inside the `jmp_buf`, which is overwritten by `setjmp`. Functions using exceptions are unsafe in native/viper mode. Non-exceptional native functions work correctly.
+- **Viper integer arithmetic on address registers** is prevented by `MAX_REGS_FOR_LOCAL_VARS = 1`. Viper `int`/`uint` locals beyond the first will always use stack slots.
+
+### Configuration
+
+```c
+// mpconfigport.h
+#define MICROPY_EMIT_68K (1)
+```
 
 ---
 
@@ -393,4 +431,4 @@ Significant work (several thousand lines); defer until phases 1–4 are solid.
 | 2 — File I/O | ✅ Done | `open()`, `import`, context manager; newlib stdio (no NDK needed) |
 | 3 — Stdlib | ✅ Done | math, struct, json, re, hashlib, float; json.loads via port-local modjson.c |
 | 4 — `amiga` module | ✅ Done | os_version, find_task, alloc_vec, free_vec, execute; SystemTagList for exit codes |
-| 5 — 68k emitter | Not started | `--emit native` support |
+| 5 — 68k emitter | ✅ Done | `@micropython.native` via `MICROPY_EMIT_68K`; try/except in native mode is a known limitation |
