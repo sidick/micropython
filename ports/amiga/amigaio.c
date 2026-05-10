@@ -15,6 +15,8 @@
 typedef struct _mp_obj_amiga_file_t {
     mp_obj_base_t base;
     BPTR fh;  // 0 = closed
+    bool readable;
+    bool writable;
 } mp_obj_amiga_file_t;
 
 extern const mp_obj_type_t mp_type_amiga_fileio;
@@ -37,7 +39,7 @@ static int dos_errno(void) {
 
 static mp_uint_t amiga_file_read(mp_obj_t self_in, void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_file_t *self = MP_OBJ_TO_PTR(self_in);
-    if (!self->fh) {
+    if (!self->fh || !self->readable) {
         *errcode = MP_EBADF;
         return MP_STREAM_ERROR;
     }
@@ -51,7 +53,7 @@ static mp_uint_t amiga_file_read(mp_obj_t self_in, void *buf, mp_uint_t size, in
 
 static mp_uint_t amiga_file_write(mp_obj_t self_in, const void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_file_t *self = MP_OBJ_TO_PTR(self_in);
-    if (!self->fh) {
+    if (!self->fh || !self->writable) {
         *errcode = MP_EBADF;
         return MP_STREAM_ERROR;
     }
@@ -214,6 +216,8 @@ mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) 
     const mp_obj_type_t *type = is_binary ? &mp_type_amiga_fileio : &mp_type_amiga_textio;
     mp_obj_amiga_file_t *o = mp_obj_malloc_with_finaliser(mp_obj_amiga_file_t, type);
     o->fh = fh;
+    o->readable = (base == 'r') || has_plus;
+    o->writable = (base != 'r') || has_plus;
     return MP_OBJ_FROM_PTR(o);
 }
 MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
