@@ -26,15 +26,34 @@
 
 static void *heap_ptr;
 
+// Stack ceiling captured at main() entry. Used by gc_collect when
+// task->tc_SPUpper is unavailable (vamos leaves it zero) to bound the
+// stack scan. The address of a local in main() is below the start of
+// the stack, but main()'s caller frames are all below us too, so this
+// is a safe upper bound: anything we want to keep alive is at or below
+// gc_stack_top.
+static void *gc_stack_top;
+
 #if MICROPY_ENABLE_GC
 void gc_collect(void) {
-    // Scan the live portion of the task stack: from the current SP (approximated
-    // by a local variable) up to tc_SPUpper (the top of the stack allocation).
+    // Scan from the current SP (approximated by a local variable) up to
+    // gc_stack_top (captured at main() entry). On real AmigaOS we could
+    // use task->tc_SPUpper, but vamos leaves that field zero on the
+    // initial process, which would compute a multi-gigabyte scan length
+    // and walk off into unmapped memory. Bounding the scan to main()'s
+    // frame and below is sufficient: nothing above main() (C runtime,
+    // AmigaOS startup) holds MicroPython object references.
     void *dummy;
-    struct Task *task = FindTask(NULL);
+    if (gc_stack_top == NULL || (char *)&dummy >= (char *)gc_stack_top) {
+        // Defensive: should not happen, but skip the scan rather than
+        // walk an enormous range.
+        gc_collect_start();
+        gc_collect_end();
+        return;
+    }
     gc_collect_start();
     gc_collect_root(&dummy,
-        ((char *)task->tc_SPUpper - (char *)&dummy) / sizeof(void *));
+        ((char *)gc_stack_top - (char *)&dummy) / sizeof(void *));
     gc_collect_end();
 }
 #endif
@@ -191,6 +210,11 @@ static int run_str(const char *str) {
 int main(int argc_unused, char **argv_unused) {
     (void)argc_unused;
     (void)argv_unused;
+
+    // Record the stack address at main() entry as the GC's stack ceiling.
+    // See gc_collect() above for why we don't trust task->tc_SPUpper.
+    int stack_top_marker;
+    gc_stack_top = &stack_top_marker;
 
     // Parse arguments ourselves from pr_Arguments; the bebbo C runtime
     // produces broken argv pointers under vamos.
