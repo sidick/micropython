@@ -116,6 +116,7 @@ ports/amiga/
 ├── main.c                # Entry point, gc_collect(), required stubs
 ├── amigafile.c           # mp_lexer_new_from_file(), mp_import_stat()
 ├── amigaio.c             # mp_builtin_open_obj (FileIO / TextIOWrapper)
+├── sysstdio.c            # mp_sys_stdin/stdout/stderr stream objects
 ├── modjson.c             # Port-local json module (json.loads bypass for 68k)
 ├── qstrdefsport.h        # Port-specific interned strings
 └── variants/
@@ -602,31 +603,30 @@ pipenv run vamos --cpu 68020 -- /path/to/build/micropython
 
 `tests/run-tests.py` invokes its target as `<MICROPY_MICROPYTHON> path/to/test.py`
 from inside `tests/`. The wrapper below mounts `tests/` as `tests:` and
-rewrites the script path argument to AmigaOS form so vamos can find it:
+rewrites the script path argument to AmigaOS form so vamos can find it.
+The wrapper also passes `--cwd` to vamos so relative paths in tests (e.g.
+`open("data/file1")` in `io/file1.py`) resolve correctly, uses a private
+`--vols-base-dir` so parallel workers don't collide on the auto `RAM:`
+volume, and adds `-q` so vamos log lines don't pollute the captured
+stdout/stderr that run-tests.py diffs against `.exp` files. The full
+script lives at `tools/amiga-vamos-run.sh`; the salient parts are:
 
 ```sh
-#!/bin/sh
-# tools/amiga-vamos-run.sh — wrapper used as MICROPY_MICROPYTHON.
-# run-tests.py invokes us with a path relative to tests/ (e.g.
-# basics/string1.py); rewrite that to tests:basics/string1.py for vamos.
-set -e
+ORIG_CWD="$PWD"
+case "$ORIG_CWD" in
+    "$TESTS_DIR")    AMIGA_CWD="tests:" ;;
+    "$TESTS_DIR"/*)  AMIGA_CWD="tests:${ORIG_CWD#$TESTS_DIR/}" ;;
+    *)               AMIGA_CWD="" ;;
+esac
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MPY_BIN="$REPO_ROOT/ports/amiga/build/micropython"
-TESTS_DIR="$REPO_ROOT/tests"
-
-amiga_args=""
-for arg in "$@"; do
-    case "$arg" in
-        "$TESTS_DIR"/*) amiga_args="$amiga_args tests:${arg#$TESTS_DIR/}" ;;
-        */tests/*)      amiga_args="$amiga_args tests:${arg#*/tests/}" ;;
-        *)              amiga_args="$amiga_args $arg" ;;
-    esac
-done
+VOLS_DIR="$(mktemp -d -t amiga-vamos-vols.XXXXXX)"
+trap 'rm -rf "$VOLS_DIR"' EXIT
 
 cd "$HOME/vamos"
-exec pipenv run vamos --cpu 68020 \
+exec pipenv run vamos -q --cpu 68020 \
+    --vols-base-dir "$VOLS_DIR" \
     -V "tests:$TESTS_DIR" \
+    --cwd "$AMIGA_CWD" \
     -- "$MPY_BIN" $amiga_args
 ```
 
@@ -720,7 +720,7 @@ absent from the port print `SKIP` and exit cleanly.
 |-----------|-------|----------------|
 | `basics/` | ~574 | Most pass; a handful SKIP (array bigint, threads) |
 | `float/` | ~68 | All pass via soft-float (`-msoft-float`) |
-| `io/` | ~16 | Pass (dos.library file I/O) |
+| `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
 | `micropython/` | ~108 | Most pass; a few SKIP (scheduler, viper edge cases) |
 | `misc/` | ~30 | Most pass |
 | `cmdline/` | ~20 | Pass — exercises `-c`, `-m`, and script args |
@@ -734,6 +734,12 @@ absent from the port print `SKIP` and exit cleanly.
 | `multi_*/` | Requires two MicroPython instances communicating |
 | `net_inet/`, `net_hosted/` | Requires a host-side network test harness |
 | `thread/` | `MICROPY_PY_THREAD (0)` — threading disabled |
+
+### Known io test failures
+
+| Test | Cause |
+|------|-------|
+| `io/argv.py` | The vamos wrapper rewrites the host path of the test script (`/abs/.../io/argv.py`) to the AmigaOS volume form (`tests:io/argv.py`) so vamos can resolve it. CPython's reference output uses the host-style absolute path, so `sys.argv[0]` differs. Not a port bug — vamos has no way to surface absolute host paths. |
 
 #### On-device batch runner (Amiberry)
 
