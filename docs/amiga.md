@@ -415,6 +415,7 @@ amiga.MEMF_CLEAR            # 0x10000
 
 - **try/except in native mode is broken.** With `MICROPY_NLR_SETJMP = 1`, the `nlr_buf_t` slot used by `NLR_BUF_IDX_LOCAL_1` falls inside the `jmp_buf`, which is overwritten by `setjmp`. Functions using exceptions are unsafe in native/viper mode. Non-exceptional native functions work correctly.
 - **Viper integer arithmetic on address registers** is prevented by `MAX_REGS_FOR_LOCAL_VARS = 1`. Viper `int`/`uint` locals beyond the first will always use stack slots.
+- **Calling another function from a `@micropython.native` body crashes** (e.g. `@native def f(): print(1); f()` faults). A simple-return native (`return 42`) works, but as soon as `ASM_CALL_IND` is exercised the CPU jumps off into the vector table area. Most of the `tests/micropython/native_*.py` and `tests/micropython/viper_*.py` failures stem from this — needs a deeper look at the prologue/CALL_IND interaction (REG_FUN_TABLE setup, callee-saved register handling, or stack-frame layout). Marked as a known issue rather than fixed because it's a bigger emitter rework than the surrounding test-runner / soft-float / GC fixes.
 
 ### Configuration
 
@@ -740,7 +741,7 @@ absent from the port print `SKIP` and exit cleanly.
 | `basics/` | 491 | 490 pass, 83 self-skip (mostly intbig-only and threading), `struct1.py` fails (see below) |
 | `float/` | 57 | 54 pass, 11 self-skip (mostly intbig-only); 3 fail on EXACT-mode precision near double range edges (see below) |
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
-| `micropython/` | ~108 | Most pass; a few SKIP (scheduler, viper edge cases) |
+| `micropython/` | 108 | 41 pass, 19 self-skip; ~48 fail in `native_*` and `viper_*` (pre-existing 68k emitter bugs beyond the documented try/except + viper-locals limitations — separate effort) |
 | `misc/` | ~30 | Most pass |
 | `cmdline/` | ~20 | Pass — exercises `-c`, `-m`, and script args |
 
