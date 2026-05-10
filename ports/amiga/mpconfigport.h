@@ -47,6 +47,12 @@
 #define MICROPY_PY_SYS_STDFILES             (1)
 #define MICROPY_PY_SYS_STDIO_BUFFER         (0)
 
+// Static buffer for exceptions raised while the heap is locked, so the
+// exception's args don't get lost to a failed alloc (the test
+// micropython/emg_exc.py exercises this via heap_lock + raise).
+#define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF (1)
+#define MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE   (256)
+
 // Use the pystack for VM code-state allocations. The default path uses
 // alloca for small functions, but bebbo gcc on 68k returns mixed 2-byte
 // and 4-byte aligned addresses from alloca; the VM relies on mp_obj_t
