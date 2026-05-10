@@ -95,13 +95,17 @@ if (!heap) heap = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC);
 gc_init(heap, (char *)heap + MICROPY_HEAP_SIZE);
 ```
 
-For GC root scanning, the current port uses the same local-variable heuristic as `ports/minimal`. Once the NDK is available, replace with exact stack bounds from exec:
+For GC root scanning, the port captures the address of a local in
+`main()` into `gc_stack_top` at startup and scans from the current SP
+(approximated by a local in `gc_collect`) up to that ceiling.
 
-```c
-struct Task *task = (struct Task *)FindTask(NULL);
-gc_collect_root((void **)task->tc_SPLower,
-    ((char *)task->tc_SPUpper - (char *)task->tc_SPLower) / sizeof(void *));
-```
+`task->tc_SPUpper` would be the principled choice on real AmigaOS, but
+vamos leaves both `tc_SPUpper` and `tc_SPLower` zero on the initial
+process. The naive computation `(tc_SPUpper - &dummy) / sizeof(void *)`
+then produces a ~4 GB scan length which walks off into unmapped memory
+and faults at vamos's 1 MiB RAM ceiling. Bounding the scan to main()'s
+frame and below is sufficient: nothing above that holds MicroPython
+object references.
 
 ---
 
@@ -171,6 +175,11 @@ Known limitations of the current newlib stdio I/O:
 - `MICROPY_PY_THREAD (0)` — AmigaOS cooperative multitasking only
 - `MICROPY_PY_ASYNCIO (0)` — deferred
 - `mp_int_t` = `int`, `mp_uint_t` = `unsigned int` (both 32-bit on 68k)
+- `MICROPY_LONGINT_IMPL_LONGLONG` — 64-bit ints via the C `long long`
+  type. Needed for the `'q'`/`'Q'` struct codes (which silently fall
+  through to garbage on the SMALLINT-only build) and for source-level
+  literals larger than 30 bits (e.g. `0xFFFF_FFFF` in feature-detect
+  comparisons). Adds about 5 KB to the binary.
 - `MICROPY_ENABLE_PYSTACK (1)` — required, not optional. The default
   path uses `alloca` for small VM code states, but bebbo gcc 6.5 returns
   mixed 2-byte and 4-byte aligned addresses from `alloca` on 68k. The VM
@@ -727,7 +736,7 @@ absent from the port print `SKIP` and exit cleanly.
 
 | Directory | Tests | Expected result |
 |-----------|-------|----------------|
-| `basics/` | ~574 | Most pass; a handful SKIP (array bigint, threads) |
+| `basics/` | 491 | 490 pass, 83 self-skip (mostly intbig-only and threading), `struct1.py` fails (see below) |
 | `float/` | ~68 | All pass via soft-float (`-msoft-float`) |
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
 | `micropython/` | ~108 | Most pass; a few SKIP (scheduler, viper edge cases) |
@@ -744,11 +753,12 @@ absent from the port print `SKIP` and exit cleanly.
 | `net_inet/`, `net_hosted/` | Requires a host-side network test harness |
 | `thread/` | `MICROPY_PY_THREAD (0)` — threading disabled |
 
-### Known io test failures
+### Known test failures (real platform differences, not port bugs)
 
 | Test | Cause |
 |------|-------|
 | `io/argv.py` | The vamos wrapper rewrites the host path of the test script (`/abs/.../io/argv.py`) to the AmigaOS volume form (`tests:io/argv.py`) so vamos can resolve it. CPython's reference output uses the host-style absolute path, so `sys.argv[0]` differs. Not a port bug — vamos has no way to surface absolute host paths. |
+| `basics/struct1.py` | `struct.calcsize("97sI")` returns 102, the test expects 104. bebbo gcc on m68k uses 2-byte alignment for `int` per the AmigaOS m68k ABI (`__alignof__(int) == 2`), while CPython on x86 uses 4. Both are platform-correct; the test implicitly assumes POSIX/x86 alignment. |
 
 #### On-device batch runner (Amiberry)
 
