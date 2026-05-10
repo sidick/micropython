@@ -59,7 +59,7 @@
 #endif
 
 // wrapper around everything in this file
-#if N_X64 || N_X86 || N_THUMB || N_ARM || N_XTENSA || N_XTENSAWIN || N_RV32 || N_DEBUG
+#if N_X64 || N_X86 || N_THUMB || N_ARM || N_XTENSA || N_XTENSAWIN || N_RV32 || N_68K || N_DEBUG
 
 // C stack layout for native functions:
 //  0:                          nlr_buf_t [optional]
@@ -147,7 +147,21 @@
 #define LOCAL_IDX_GEN_PC(emit) ((emit)->code_state_start + OFFSETOF_CODE_STATE_IP)
 #define LOCAL_IDX_LOCAL_VAR(emit, local_num) ((emit)->stack_start + (emit)->n_state - 1 - (local_num))
 
+#if N_68K
+
+// 68k: REG_LOCAL_1=D7 is the only data register safe for cached locals.
+// REG_LOCAL_2=A2 and REG_LOCAL_3=A3 are address registers; emitnative.c
+// may apply arithmetic to local-variable registers, which is invalid on An.
 #if MICROPY_PERSISTENT_CODE_SAVE
+#define REG_GENERATOR_STATE (REG_LOCAL_2)
+#define REG_QSTR_TABLE (REG_LOCAL_3)
+#else
+#define REG_GENERATOR_STATE (REG_LOCAL_2)
+#endif
+#define MAX_REGS_FOR_LOCAL_VARS (1)
+static const uint8_t reg_local_table[MAX_REGS_FOR_LOCAL_VARS] = {REG_LOCAL_1};
+
+#elif MICROPY_PERSISTENT_CODE_SAVE
 
 // When building with the ability to save native code to .mpy files:
 //  - Qstrs are indirect via qstr_table, and REG_LOCAL_3 always points to qstr_table.
@@ -625,8 +639,16 @@ static void emit_native_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scop
             // Set code_state.fun_bc
             ASM_MOV_LOCAL_REG(emit->as, LOCAL_IDX_FUN_OBJ(emit), REG_PARENT_ARG_1);
 
-            // Set code_state.n_state (only works on little endian targets due to n_state being uint16_t)
+            // Set code_state.n_state.
+            // n_state is a uint16_t, but the emitter writes a full uintptr_t-sized slot.
+            // On little-endian the value naturally lands in the correct bytes.
+            // On big-endian (N_68K) the uint16_t occupies the upper half of the word,
+            // so shift the value left by 16 to place it in the correct byte positions.
+            #if N_68K
+            emit_native_mov_state_imm_via(emit, emit->code_state_start + OFFSETOF_CODE_STATE_N_STATE, (mp_uint_t)emit->n_state << 16, REG_ARG_1);
+            #else
             emit_native_mov_state_imm_via(emit, emit->code_state_start + OFFSETOF_CODE_STATE_N_STATE, emit->n_state, REG_ARG_1);
+            #endif
 
             // Put address of code_state into first arg
             ASM_MOV_REG_LOCAL_ADDR(emit->as, REG_ARG_1, emit->code_state_start);
@@ -2623,6 +2645,31 @@ static void emit_native_binary_op(emit_t *emit, mp_binary_op_t op) {
 
                 default:
                     break;
+            }
+            #elif N_68K
+            // CMP.L reg_rhs, REG_ARG_2 → sets flags for REG_ARG_2 - reg_rhs.
+            // Scc REG_RET sets byte to 0xFF (true) or 0x00 (false).
+            // ANDI.L #1 extracts the boolean into bits 31:0 of REG_RET.
+            {
+                static const uint8_t ops[6 + 6] = {
+                    // unsigned (CMP: REG_ARG_2 - reg_rhs)
+                    ASM_68K_CC_CS,  // LESS        (carry set = below)
+                    ASM_68K_CC_HI,  // MORE        (above)
+                    ASM_68K_CC_EQ,  // EQUAL
+                    ASM_68K_CC_LS,  // LESS_EQUAL  (below or same)
+                    ASM_68K_CC_CC,  // MORE_EQUAL  (carry clear = above or same)
+                    ASM_68K_CC_NE,  // NOT_EQUAL
+                    // signed
+                    ASM_68K_CC_LT,  // LESS
+                    ASM_68K_CC_GT,  // MORE
+                    ASM_68K_CC_EQ,  // EQUAL
+                    ASM_68K_CC_LE,  // LESS_EQUAL
+                    ASM_68K_CC_GE,  // MORE_EQUAL
+                    ASM_68K_CC_NE,  // NOT_EQUAL
+                };
+                asm_68k_cmp_reg_reg(emit->as, REG_ARG_2, reg_rhs);
+                asm_68k_scc_dreg(emit->as, ops[op_idx], REG_RET);
+                asm_68k_andi_l(emit->as, REG_RET, 1);
             }
             #elif N_DEBUG
             asm_debug_setcc_reg_reg_reg(emit->as, op_idx, REG_RET, REG_ARG_2, reg_rhs);

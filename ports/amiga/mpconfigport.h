@@ -46,6 +46,11 @@
 // Scheduler is used by asyncio and ussl callbacks; disable for now.
 #define MICROPY_ENABLE_SCHEDULER            (0)
 
+// Native code emitter for Motorola 68020
+#define MICROPY_EMIT_68K                    (1)
+// Loading pre-compiled native .mpy files is not yet supported on this port.
+#define MICROPY_PERSISTENT_CODE_LOAD_NATIVE (0)
+
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
