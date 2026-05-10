@@ -65,6 +65,9 @@
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
+// bsdsocket.library networking (optional — silently absent if lib not found)
+#define MICROPY_PY_AMIGA_SOCKET             (1)
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
