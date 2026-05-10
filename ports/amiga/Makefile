@@ -37,6 +37,17 @@ endif
 
 LDFLAGS += -m68020 -lm
 
+# clib2's __eqdf2.o packs every double-comparison helper together with
+# __muldf3 / __floatsidf / etc, so we can't simply redefine the broken
+# comparison functions in floatconv.c (multi-def at link time when
+# clib2 pulls in __eqdf2.o for __muldf3). --wrap diverts the calls to
+# our amiga_dbl_* implementations without us having to take over the
+# rest of the object. See ports/amiga/floatconv.c for the why.
+LDFLAGS += -Wl,--wrap=__eqdf2,--wrap=__nedf2,--wrap=__ltdf2,--wrap=__ledf2,--wrap=__gtdf2,--wrap=__gedf2
+# libnix pow(-1, NaN) returns 1.0 (CPython expects NaN) and tgamma(-inf)
+# returns +inf (CPython raises ValueError). See floatconv.c.
+LDFLAGS += -Wl,--wrap=pow,--wrap=tgamma
+
 # shared/libc/printf.c uses __attribute__((alias)) which bebbo GCC doesn't
 # support on AmigaOS. clib2 provides vsnprintf natively so drop this file.
 SRC_EXTMOD_C := $(filter-out shared/libc/printf.c, $(SRC_EXTMOD_C))
@@ -56,6 +67,7 @@ SRC_C = \
 	amigaio.c \
 	modsocket.c \
 	sysstdio.c \
+	floatconv.c \
 	shared/readline/readline.c \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
