@@ -1,11 +1,22 @@
 #include <stdio.h>
+#include <dos/dos.h>
+#include <proto/dos.h>
 #include "py/mphal.h"
 #include "py/runtime.h"
+#include "shared/runtime/interrupt_char.h"
 
 // Currently uses newlib stdio so we can build without the AmigaOS NDK.
 // Once the NDK is available, replace with:
 //   FGetC(Input())          for stdin
 //   Write(Output(), ...)    for stdout
+
+// Called by MICROPY_VM_HOOK_LOOP every 1024 bytecodes.
+// Checks for Ctrl+C (SIGBREAKF_CTRL_C) and schedules KeyboardInterrupt.
+void amiga_check_ctrl_c(void) {
+    if (CheckSignal(SIGBREAKF_CTRL_C)) {
+        mp_sched_keyboard_interrupt();
+    }
+}
 
 int mp_hal_stdin_rx_chr(void) {
     int c = getchar();
@@ -13,6 +24,11 @@ int mp_hal_stdin_rx_chr(void) {
     // which MicroPython's readline uses as the REPL exit signal.
     if (c == 28) {
         c = 4;
+    }
+    // If the received character is the configured interrupt character (Ctrl+C,
+    // set by pyexec.c before running user code), schedule KeyboardInterrupt.
+    if (c == mp_interrupt_char) {
+        mp_sched_keyboard_interrupt();
     }
     return c;
 }
