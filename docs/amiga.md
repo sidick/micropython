@@ -43,7 +43,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 
 | Purpose | Current implementation | Target (post-NDK) |
 |---------|----------------------|-------------------|
-| Memory allocation | Static BSS array | `exec.library`: `AllocVec(size, MEMF_FAST)` / `FreeVec()` |
+| Memory allocation | Static BSS array | `exec.library`: `AllocVec(size, MEMF_ANY\|MEMF_PUBLIC\|MEMF_CLEAR)` / `FreeVec()` |
 | Console input | `getchar()` (newlib) | `dos.library`: `FGetC(Input())` |
 | Console output | `fwrite()` (newlib) | `dos.library`: `Write(Output(), buf, len)` |
 | File I/O | `fopen`/`fread` (newlib) | `dos.library`: `Open()`, `Close()`, `Read()`, `Write()`, `Seek()` |
@@ -94,10 +94,15 @@ Currently uses a static `char heap[MICROPY_HEAP_SIZE]` in BSS (256 KB). This avo
 Once the NDK is installed, switch to `AllocVec` for a runtime-configurable heap:
 
 ```c
-void *heap = AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST | MEMF_PUBLIC);
-if (!heap) heap = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC);
+void *heap = AllocVec(MICROPY_HEAP_SIZE,
+                      MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR);
 gc_init(heap, (char *)heap + MICROPY_HEAP_SIZE);
 ```
+
+`MEMF_ANY` lets AmigaOS hand out the fastest available memory
+(Fast > Slow > Chip on a system with all three), so a single call
+suffices and chip-RAM-only machines still get served. `MEMF_CLEAR`
+zeroes the region before `gc_init()` sets up its bookkeeping.
 
 For GC root scanning, the port captures the address of a local in
 `main()` into `gc_stack_top` at startup and scans from the current SP
@@ -474,7 +479,7 @@ All newlib stdio replaced with direct dos.library calls:
 | Console input | `getchar()` | `FGetC(Input())` via `WaitForChar()` 200ms poll |
 | Console output | `fwrite(stdout)` | `Write(Output(), buf, len)` |
 | File I/O | `FILE*` + `fopen`/`fread`/`fwrite` | `BPTR` + `Open`/`Read`/`Write`/`Close`/`Seek`/`Flush` |
-| Heap | static 256 KB BSS array | `AllocVec(MEMF_FAST\|MEMF_PUBLIC)`, fallback `MEMF_ANY` |
+| Heap | static 256 KB BSS array | `AllocVec(MEMF_ANY\|MEMF_PUBLIC\|MEMF_CLEAR)` |
 | GC stack bounds | local-variable heuristic | `FindTask(NULL)->tc_SPUpper` |
 | `mp_hal_delay_ms` | `clock()` busy-wait | `Delay()` (yields to other tasks) |
 
@@ -689,16 +694,14 @@ machine with 16+ MB of Fast RAM we leave most of it on the table; once
 the 256 KB is full the port raises `MemoryError` instead of expanding.
 Goals for this phase:
 
-> Note on allocation flags: this phase should use `MEMF_ANY|MEMF_PUBLIC`
-> (not `MEMF_FAST`) for both the initial alloc and any subsequent
-> growth chunks. AmigaOS's free memory list is ordered fastest-first,
-> so `MEMF_ANY` already prefers Fast RAM when it's available, and
-> degrades gracefully to Chip RAM on a stock A500/A1000/A2000 that
-> has no Fast at all. The current `MEMF_FAST`-then-fallback pattern
-> is actually slightly worse on those machines because it always
-> takes one failing `AllocVec` call before the real allocation.
-> The existing `main.c` allocation should also switch to `MEMF_ANY`
-> at the same time.
+> Note on allocation flags: use `MEMF_ANY|MEMF_PUBLIC|MEMF_CLEAR` for
+> both the initial alloc and any subsequent growth chunks. AmigaOS's
+> free memory list is ordered fastest-first, so `MEMF_ANY` already
+> prefers Fast RAM when it's available and degrades gracefully to
+> Chip RAM on a stock A500/A1000/A2000 that has no Fast at all.
+> `MEMF_CLEAR` zeroes the chunk so neither `gc_init()` nor `gc_add()`
+> can see stale bits from a previous task. The existing main.c heap
+> allocation switched to this combination on 2026-05-11 to match.
 
 1. **Runtime initial heap size.** Replace the compile-time
    `MICROPY_HEAP_SIZE` with a value derived at startup. Sources, in

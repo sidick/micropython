@@ -233,11 +233,13 @@ int main(int argc_unused, char **argv_unused) {
         argc = 1;
     }
 
-    // Allocate heap from Fast RAM; fall back to any available RAM.
-    heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST | MEMF_PUBLIC);
-    if (!heap_ptr) {
-        heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC);
-    }
+    // Allocate the GC heap. AmigaOS hands out the fastest available
+    // memory first when MEMF_ANY is set, so we don't need a separate
+    // MEMF_FAST-then-fallback dance; on chip-only machines (stock
+    // A500/A1000/A2000) MEMF_FAST would never succeed anyway. MEMF_CLEAR
+    // zeroes the region before gc_init() sets up its bookkeeping so
+    // there's no chance of reading stale bits from a previous task.
+    heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR);
     if (!heap_ptr) {
         return 1;
     }
