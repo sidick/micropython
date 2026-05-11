@@ -25,6 +25,15 @@ CROSS_COMPILE = m68k-amigaos-
 QSTR_DEFS = qstrdefsport.h
 QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
 
+# Frozen Python modules: ports/amiga/modules/amiga.py wraps the
+# C-side _amiga module and exposes the Library proxy on top of
+# the .fd-derived signature table in modules/_amiga_fd.py.
+FROZEN_MANIFEST ?= manifest.py
+# mpy-tool defaults to encoding integer literals as MPZ; this port
+# uses MICROPY_LONGINT_IMPL_LONGLONG so the frozen content must
+# match or the static_assert in frozen_content.c trips.
+MPY_TOOL_FLAGS ?= -mlongint-impl=longlong
+
 # Variant-supplied knobs. Each variant's mpconfigvariant.mk defines:
 #   AMIGA_CPU_FLAGS    — CPU/FPU selection, e.g. '-m68020 -msoft-float'
 #   AMIGA_FLOAT_WRAPS  — soft-float libgcc wraps (empty for FPU variants)
