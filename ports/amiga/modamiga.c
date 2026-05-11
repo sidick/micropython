@@ -10,12 +10,15 @@
 #include <exec/types.h>
 #include <exec/execbase.h>
 #include <exec/memory.h>
+#include <exec/ports.h>
 #include <exec/tasks.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <dos/dosasl.h>
+#include <rexx/storage.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/rexxsyslib.h>
 #include <workbench/startup.h>
 #include <workbench/workbench.h>
 #include <proto/icon.h>
@@ -711,6 +714,212 @@ static mp_obj_t amiga_wait_signal(size_t n_args, const mp_obj_t *pos_args, mp_ma
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_wait_signal_obj, 1, amiga_wait_signal);
 
+// ---------- Phase 18 (inbound): public ARexx port ----------
+//
+// AmigaOS apps expose a public MsgPort named "<APPNAME>.<N>" for ARexx
+// scripts to drive.  This block sets up one for the MicroPython VM so
+// external `rx "address MICROPYTHON.1; <python expr>"` invocations can
+// reach us.  Outbound (the `amiga.rexx()` client) is deferred.
+//
+// `amiga.rexx_open(stem="MICROPYTHON")` finds the lowest free `.N`
+// suffix (1-16), creates a public MsgPort with that name, and returns
+// the assigned name.  `amiga.rexx_recv(timeout_ms=None)` waits for an
+// incoming RexxMsg (with Ctrl+C and an optional timer.device timeout
+// ORed in) and returns its address as a Python int.  The Python-side
+// `RexxMessage` wrapper (in `amiga.py`) reads `rm_Args[0]` for the
+// command and calls `amiga.rexx_reply(msg, rc, result, secondary)` to
+// fill `rm_Result1/2` and ReplyMsg.  Result strings (non-NULL with
+// rc=0) are wrapped via `rexxsyslib.library` `CreateArgstring`; the
+// receiver is expected to `DeleteArgstring` after consuming.
+
+// Bebbo's proto/rexxsyslib.h declares this extern; we own the
+// definition.  Opened lazily on first reply with a result string and
+// closed in amiga_rexx_close().
+struct RxsLib *RexxSysBase = NULL;
+
+static struct MsgPort *amiga_rexx_port = NULL;
+static char            amiga_rexx_port_name[40];
+
+void amiga_rexx_shutdown(void);  // forward-declared for main.c cleanup
+
+// amiga.rexx_open(stem="MICROPYTHON") -> str of the assigned port name.
+static mp_obj_t amiga_rexx_open_fn(size_t n_args, const mp_obj_t *args) {
+    if (amiga_rexx_port != NULL) {
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("rexx port already open"));
+    }
+    const char *stem = (n_args >= 1)
+        ? mp_obj_str_get_str(args[0]) : "MICROPYTHON";
+
+    // Forbid()/Permit() so a concurrent task can't sneak in between our
+    // FindPort and AddPort and claim the same name.
+    int chosen = 0;
+    Forbid();
+    for (int i = 1; i <= 16; i++) {
+        int n = snprintf(amiga_rexx_port_name,
+            sizeof(amiga_rexx_port_name), "%s.%d", stem, i);
+        if (n <= 0 || (size_t)n >= sizeof(amiga_rexx_port_name)) {
+            continue;
+        }
+        if (FindPort((CONST_STRPTR)amiga_rexx_port_name) == NULL) {
+            amiga_rexx_port = CreateMsgPort();
+            if (amiga_rexx_port == NULL) {
+                amiga_rexx_port_name[0] = '\0';
+                Permit();
+                mp_raise_msg(&mp_type_OSError,
+                    MP_ERROR_TEXT("CreateMsgPort failed"));
+            }
+            amiga_rexx_port->mp_Node.ln_Name = (STRPTR)amiga_rexx_port_name;
+            amiga_rexx_port->mp_Node.ln_Pri  = 0;
+            AddPort(amiga_rexx_port);
+            chosen = i;
+            break;
+        }
+    }
+    Permit();
+    if (chosen == 0) {
+        amiga_rexx_port_name[0] = '\0';
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("no free MICROPYTHON.N port slot"));
+    }
+    return mp_obj_new_str(amiga_rexx_port_name,
+        strlen(amiga_rexx_port_name));
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_open_obj, 0, 1, amiga_rexx_open_fn);
+
+// Drain pending messages and tear down the port.  Safe to call any
+// number of times.  Replies anything still in-flight with rc=20 ("FAIL")
+// so the sender doesn't hang.
+static mp_obj_t amiga_rexx_close_fn(void) {
+    amiga_rexx_shutdown();
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_close_obj, amiga_rexx_close_fn);
+
+void amiga_rexx_shutdown(void) {
+    if (amiga_rexx_port == NULL) {
+        return;
+    }
+    RemPort(amiga_rexx_port);
+    struct RexxMsg *msg;
+    while ((msg = (struct RexxMsg *)GetMsg(amiga_rexx_port)) != NULL) {
+        msg->rm_Result1 = 20;
+        msg->rm_Result2 = 0;
+        ReplyMsg(&msg->rm_Node);
+    }
+    DeleteMsgPort(amiga_rexx_port);
+    amiga_rexx_port = NULL;
+    amiga_rexx_port_name[0] = '\0';
+    if (RexxSysBase != NULL) {
+        CloseLibrary((struct Library *)RexxSysBase);
+        RexxSysBase = NULL;
+    }
+}
+
+// amiga.rexx_port_name() -> str or None
+static mp_obj_t amiga_rexx_port_name_fn(void) {
+    if (amiga_rexx_port == NULL || amiga_rexx_port_name[0] == '\0') {
+        return mp_const_none;
+    }
+    return mp_obj_new_str(amiga_rexx_port_name,
+        strlen(amiga_rexx_port_name));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_port_name_obj, amiga_rexx_port_name_fn);
+
+// amiga.rexx_recv(timeout_ms=None) -> int (msg ptr) or None on timeout.
+// Raises KeyboardInterrupt if Ctrl+C fires during the wait.
+static mp_obj_t amiga_rexx_recv_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_timeout_ms, MP_ARG_OBJ, {.u_obj = mp_const_none} },
+    };
+    mp_arg_val_t arg_vals[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args,
+        MP_ARRAY_SIZE(allowed_args), allowed_args, arg_vals);
+
+    if (amiga_rexx_port == NULL) {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("rexx port not open"));
+    }
+
+    struct RexxMsg *msg = (struct RexxMsg *)GetMsg(amiga_rexx_port);
+    if (msg != NULL) {
+        return mp_obj_new_int_from_uint((uintptr_t)msg);
+    }
+
+    mp_obj_t timeout_obj = arg_vals[0].u_obj;
+    bool has_timeout = (timeout_obj != mp_const_none);
+    ULONG port_sig  = 1UL << amiga_rexx_port->mp_SigBit;
+    ULONG full_mask = port_sig | SIGBREAKF_CTRL_C;
+    ULONG timer_sig = 0;
+
+    if (has_timeout) {
+        mp_int_t ms = mp_obj_get_int(timeout_obj);
+        if (ms < 0) {
+            ms = 0;
+        }
+        timer_sig = amiga_async_timer_send((ULONG)ms);
+        if (timer_sig != 0) {
+            full_mask |= timer_sig;
+        }
+    }
+    ULONG got = Wait(full_mask);
+    if (timer_sig != 0) {
+        amiga_async_timer_abort();
+    }
+    if (got & SIGBREAKF_CTRL_C) {
+        mp_raise_type(&mp_type_KeyboardInterrupt);
+    }
+    msg = (struct RexxMsg *)GetMsg(amiga_rexx_port);
+    if (msg == NULL) {
+        return mp_const_none;
+    }
+    return mp_obj_new_int_from_uint((uintptr_t)msg);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_rexx_recv_obj, 0, amiga_rexx_recv_fn);
+
+// amiga.rexx_command(msg_ptr) -> bytes of the ARG0 command string.
+static mp_obj_t amiga_rexx_command_fn(mp_obj_t msg_obj) {
+    struct RexxMsg *msg = (struct RexxMsg *)(uintptr_t)mp_obj_get_int(msg_obj);
+    const char *cmd = (const char *)msg->rm_Args[0];
+    if (cmd == NULL) {
+        return mp_obj_new_bytes((const byte *)"", 0);
+    }
+    return mp_obj_new_bytes((const byte *)cmd, strlen(cmd));
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_rexx_command_obj, amiga_rexx_command_fn);
+
+// amiga.rexx_reply(msg_ptr, rc, result_or_None, secondary=0) -> None.
+// rc=0 with a non-None result wraps the result via CreateArgstring (the
+// receiver is expected to DeleteArgstring after consuming).  rc!=0 puts
+// `secondary` in rm_Result2 as the conventional error-code slot.
+static mp_obj_t amiga_rexx_reply_fn(size_t n_args, const mp_obj_t *args) {
+    struct RexxMsg *msg = (struct RexxMsg *)(uintptr_t)mp_obj_get_int(args[0]);
+    LONG rc = (LONG)mp_obj_get_int(args[1]);
+    mp_obj_t result_obj = args[2];
+    LONG secondary = (n_args >= 4) ? (LONG)mp_obj_get_int(args[3]) : 0;
+
+    msg->rm_Result1 = rc;
+    msg->rm_Result2 = secondary;
+
+    if (rc == 0 && result_obj != mp_const_none) {
+        if (RexxSysBase == NULL) {
+            RexxSysBase = (struct RxsLib *)OpenLibrary(
+                (CONST_STRPTR)"rexxsyslib.library", 0);
+        }
+        if (RexxSysBase != NULL) {
+            mp_buffer_info_t bi;
+            mp_get_buffer_raise(result_obj, &bi, MP_BUFFER_READ);
+            UBYTE *argstr = CreateArgstring(
+                (CONST_STRPTR)bi.buf, (ULONG)bi.len);
+            if (argstr != NULL) {
+                msg->rm_Result2 = (LONG)(uintptr_t)argstr;
+            }
+        }
+    }
+    ReplyMsg(&msg->rm_Node);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_reply_obj, 3, 4, amiga_rexx_reply_fn);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -743,6 +952,12 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_poke_bytes),  MP_ROM_PTR(&amiga_poke_bytes_obj) },
     { MP_ROM_QSTR(MP_QSTR_signal),      MP_ROM_PTR(&amiga_signal_obj) },
     { MP_ROM_QSTR(MP_QSTR_wait_signal), MP_ROM_PTR(&amiga_wait_signal_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_open),       MP_ROM_PTR(&amiga_rexx_open_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_close),      MP_ROM_PTR(&amiga_rexx_close_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_port_name),  MP_ROM_PTR(&amiga_rexx_port_name_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_recv),       MP_ROM_PTR(&amiga_rexx_recv_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_command),    MP_ROM_PTR(&amiga_rexx_command_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_reply),      MP_ROM_PTR(&amiga_rexx_reply_obj) },
     // Break-signal bits (Phase 25)
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },

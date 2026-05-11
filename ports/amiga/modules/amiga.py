@@ -563,3 +563,142 @@ def FileInfoBlock(addr):
 def IntuiMessage(addr):
     """Wrap a `struct IntuiMessage` (52 bytes)."""
     return Struct(addr, _structs.INTUIMESSAGE, name="IntuiMessage")
+
+
+# ---------- Phase 18 (inbound): RexxMessage facade ----------
+#
+# `_amiga.rexx_recv` returns the raw RexxMsg address (or None on
+# timeout); we wrap it here so callers see a normal Python object with
+# `.command` / `.reply(...)`.  Methods delegate to the C primitives.
+
+# ARexx action-code high byte (rexx/storage.h).
+RXCOMM  = 0x01000000
+RXFUNC  = 0x02000000
+RXCLOSE = 0x03000000
+RXQUERY = 0x04000000
+
+# Standard ARexx return-code levels.
+RC_OK     = 0
+RC_WARN   = 5
+RC_ERROR  = 10
+RC_FAIL   = 20
+
+
+class RexxMessage:
+    """A single inbound ARexx message, with a `.command` and a `.reply()`.
+
+    Constructed automatically by `amiga.rexx_recv()`.  Each message
+    *must* be replied to — leaving one un-replied blocks the sender
+    forever.  The `serve()` helper handles this for you; a manual loop
+    needs an explicit `msg.reply(...)` (or `msg.reply(rc=...)`) before
+    going back to `recv()`.
+    """
+
+    __slots__ = ("_msg", "_replied")
+
+    def __init__(self, msg_ptr):
+        # msg_ptr is the raw struct RexxMsg* as a Python int.
+        object.__setattr__(self, "_msg", msg_ptr)
+        object.__setattr__(self, "_replied", False)
+
+    @property
+    def addr(self):
+        return self._msg
+
+    @property
+    def command(self):
+        """The ARG0 command string, as bytes."""
+        return _c.rexx_command(self._msg)
+
+    @property
+    def action(self):
+        """The 32-bit action code (`rm_Action`).  High byte is one of
+        RXCOMM / RXFUNC / RXCLOSE / RXQUERY; low byte carries flags."""
+        return _c.peek_l(self._msg + 28) & 0xffffffff
+
+    def reply(self, result=None, rc=RC_OK, secondary=0):
+        """Reply to the sender with `(rc, result)`.
+
+        `result` (str / bytes) is wrapped as an ARexx argstring via
+        `rexxsyslib.library` when `rc == 0`; non-zero `rc` puts
+        `secondary` in `rm_Result2` as the error code slot.  Must be
+        called exactly once per message.
+        """
+        if self._replied:
+            raise RuntimeError("RexxMessage already replied")
+        if isinstance(result, str):
+            result = result.encode("latin-1")
+        _c.rexx_reply(self._msg, rc, result, secondary)
+        object.__setattr__(self, "_replied", True)
+
+    def __del__(self):
+        # An unread reply blocks the sender forever, so if the Python
+        # script forgets we deliver a synthetic RC_FAIL on GC.  Better
+        # than the alternative (a hung `rx`).
+        if not self._replied:
+            try:
+                _c.rexx_reply(self._msg, RC_FAIL, None, 0)
+            except Exception:
+                pass
+
+    def __repr__(self):
+        replied = "replied" if self._replied else "open"
+        return "<RexxMessage %s addr=0x%x>" % (replied, self._msg)
+
+
+def rexx_open(stem="MICROPYTHON"):
+    """Open a public ARexx port `<stem>.<N>` and return the assigned name."""
+    return _c.rexx_open(stem)
+
+
+def rexx_close():
+    """Tear down the port and reply to any pending messages with rc=20."""
+    _c.rexx_close()
+
+
+def rexx_port_name():
+    """Return the currently-assigned port name, or None if closed."""
+    return _c.rexx_port_name()
+
+
+def rexx_recv(timeout_ms=None):
+    """Wait for the next incoming RexxMsg.
+
+    Returns a `RexxMessage` instance, or `None` on timeout.  Raises
+    `KeyboardInterrupt` if Ctrl+C fires during the wait.
+    """
+    ptr = _c.rexx_recv(timeout_ms=timeout_ms)
+    if ptr is None:
+        return None
+    return RexxMessage(ptr)
+
+
+def rexx_serve(handler, timeout_ms=None):
+    """Run a small dispatcher loop on the open port.
+
+    Calls `handler(command_bytes)` for each incoming command and replies
+    with the function's return value (any non-None value is converted
+    via `str()`; `None` becomes a bare `rc=0` with no result string).
+    A raised exception is delivered as `rc=10` and the exception's
+    string form as the result.  Returns when `handler` raises
+    `StopIteration` or when Ctrl+C interrupts the wait.
+    """
+    while True:
+        try:
+            msg = rexx_recv(timeout_ms=timeout_ms)
+        except KeyboardInterrupt:
+            return
+        if msg is None:
+            continue
+        try:
+            result = handler(msg.command)
+        except StopIteration:
+            msg.reply(rc=RC_OK)
+            return
+        except Exception as exc:
+            msg.reply(str(exc), rc=RC_ERROR)
+            continue
+        if result is None:
+            msg.reply(rc=RC_OK)
+        else:
+            msg.reply(str(result), rc=RC_OK)
