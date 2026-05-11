@@ -1048,9 +1048,11 @@ mylib = amiga.library_from_signatures(
    phase, "anything in the NDK callable from Python".
 4. ✅ Tag-list helper (`amiga.taglist(WA_Width=640, ...) -> TagList`)
    plus low-level peek/poke primitives.
-5. Third-party `.fd` search path.
-6. Minimal struct helpers on top of the peek/poke primitives
-   (hand-curated Window/Screen/RastPort accessors).
+5. ✅ Third-party `.fd` search path plus explicit
+   `signatures=` / `library_from_signatures(...)` override.
+6. ✅ Minimal struct helpers on top of the peek/poke primitives —
+   `amiga.Struct` ctypes-lite, plus hand-curated Node / Task /
+   Library / DateStamp / FileInfoBlock / IntuiMessage layouts.
 7. (Later) callback thunks if anyone actually needs them.
 
 #### Step 1 — trampoline (shipped)
@@ -1256,8 +1258,97 @@ Smoke-tested under Amiberry:
   the proxy unwrapped via `int()` and the trampoline forwarded the
   address into A1.
 
-Steps 5 and 6 (third-party `.fd` search path, struct helpers on top
-of these peek/poke primitives) are still pending.
+#### Step 5 — runtime `.fd` loading + explicit signatures (shipped)
+
+Two complementary mechanisms let callers reach libraries that aren't
+baked into `_amiga_fd.LIBRARIES`:
+
+**Runtime `.fd` search path.** When `Library(name)` doesn't find
+`name` in the frozen table, it falls back to a small pure-Python
+`.fd` parser in `amiga.py` (`_parse_fd`) and walks
+`PROGDIR:fd/` then `LIBS:fd/`, trying both the bebbo `<base>_lib.fd`
+and the bare `<base>.fd` convention.  Drop `mylibrary.fd` next to
+the executable (or into LIBS:fd/), and `amiga.library("mylibrary.library")`
+finds it.  The parser drops `##private` functions and skips
+arg/reg-count mismatches, matching `tools/amiga-fdgen.py` semantics
+— `##private` entries still consume LVO slots so that subsequent
+public functions get the correct offsets (verified end-to-end in the
+smoke test).
+
+**Explicit `signatures=`.** `Library(name, version, signatures=...)`
+(or the convenience factory `amiga.library_from_signatures(name,
+version, signatures)`) bypasses both the frozen table and the runtime
+search and uses the caller-supplied dict directly.  Accepts entries
+in either `(lvo, regs_csv)` 2-tuple or `(lvo, regs_csv, metadata)`
+3-tuple form; the trampoline only consumes the first two slots.
+
+Smoke-tested under Amiberry: the parser correctly handled a
+synthetic 5-function `.fd` snippet (including the
+public→private→public bias-slot drift); `_load_fd("nosuch.library")`
+returned `None`; `amiga.library("exec.library", signatures={"MyAllocVec": ...})`
+dispatched the renamed function correctly and `ex.AllocVec` raised
+`AttributeError` (proving the override is exclusive); the
+`library_from_signatures(...)` factory matched the runtime
+`amiga.find_task` result.
+
+#### Step 6 — `Struct` ctypes-lite (shipped)
+
+`amiga.Struct(addr, layout, name=None)` wraps a C struct living at a
+fixed memory address and gives Python-attribute access to its
+fields, dispatching through the peek/poke primitives from step 4.
+`layout` is a `dict` mapping field name to `(offset, type_code)`:
+
+| code | meaning |
+|------|---------|
+| `B` / `b` | unsigned / signed 8-bit |
+| `H` / `h` | unsigned / signed 16-bit (big-endian m68k native) |
+| `L` / `l` | unsigned / signed 32-bit |
+| `P` | pointer (alias for `L`) |
+| `sN` | raw N-byte region — read returns `bytes`, write accepts `bytes`/`str` and pads with NUL |
+| `S` | NUL-terminated string *pointed at* by a ULONG slot (read-only; capped at 256 bytes) |
+
+`Struct` defines `__int__` so an instance can be passed straight to
+a `Library` proxy call wherever an address is expected (transparent
+unwrap, same mechanism as `TagList`).  Unknown fields raise
+`AttributeError`; reads always peek the live address (no caching);
+writes go through `_amiga.poke_*` immediately.
+
+`ports/amiga/modules/_amiga_structs.py` ships starter layouts for
+the most-used Exec / DOS / Intuition structs:
+
+| factory | struct | size |
+|---------|--------|------|
+| `amiga.Node(addr)` | `struct Node` | 14 bytes |
+| `amiga.Task(addr)` | `struct Task` | 92 bytes |
+| `amiga.Library_struct(addr)` | `struct Library` | 34 bytes |
+| `amiga.DateStamp(addr)` | `struct DateStamp` | 12 bytes |
+| `amiga.FileInfoBlock(addr)` | `struct FileInfoBlock` | 260 bytes |
+| `amiga.IntuiMessage(addr)` | `struct IntuiMessage` | 52 bytes |
+
+`amiga.Library_struct` carries the trailing `_struct` to avoid the
+class-vs-struct collision with `amiga.Library` (which represents an
+*opened* library proxy, not the raw memory layout).  Users wanting
+other AmigaOS structs build their own `dict` and pass it to
+`amiga.Struct(addr, my_layout)`.
+
+Smoke-tested under Amiberry — every read pulled live data from the
+running system:
+
+- `amiga.Task(find_task(None))` returned `ln_Name = b'Initial CLI'`,
+  `ln_Type = 13` (`NT_PROCESS`), `tc_State = 2` (`TS_RUN` for the
+  currently running task, confirming the offsets are right), and
+  non-zero stack bounds (4 KB CLI stack).
+- `amiga.Library_struct(exec.base)` returned `ln_Name =
+  b'exec.library'`, `lib_Version = 40`, `lib_Revision = 10`,
+  `lib_IdString = b'exec 40.10 (15.7.93)\\r\\n'` — exactly the
+  Kickstart 40.10 firmware identifier Amiberry boots.
+- DateStamp round-trip: `ds.ds_Days = 18000; ds.ds_Tick = 0xDEADBEEF`
+  poked the right offsets (raw `peek_l` confirms the encoding) and
+  the attribute reads returned the same values.
+- Unknown fields raise `AttributeError`.
+
+Step 7 (callback thunks for hook-driven library calls) is the only
+remaining piece, and is deferred until a concrete user need lands.
 
 #### Acceptance
 
