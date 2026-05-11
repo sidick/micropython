@@ -13,12 +13,29 @@ void amiga_check_ctrl_c(void) {
 }
 
 int mp_hal_stdin_rx_chr(void) {
+    // AmigaOS console emits CSI sequences as a single byte 0x9B followed by
+    // parameters, where xterm-style consoles use ESC '['. shared/readline/
+    // only understands the latter, so when we see 0x9B we return ESC now and
+    // hand '[' to the next call. Other bytes pass through unchanged, so
+    // hosts that already emit ESC '[' (e.g. vamos's host xterm pass-through)
+    // are unaffected.
+    static int pending = -1;
+    if (pending >= 0) {
+        int c = pending;
+        pending = -1;
+        return c;
+    }
+
     // FGetC blocks efficiently (suspends the task) until a key arrives.
     // In raw mode, Ctrl+C arrives as ASCII 3 so no separate break-signal
     // poll is needed here; the VM hook handles Ctrl+C during computation.
     LONG c = FGetC(Input());
     if (c < 0 || c == 28) {
         return 4;  // EOF or Ctrl+\ -> Ctrl+D
+    }
+    if (c == 0x9b) {
+        pending = '[';
+        return 0x1b;  // ESC
     }
     if ((int)c == mp_interrupt_char) {
         mp_sched_keyboard_interrupt();

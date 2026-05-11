@@ -19,6 +19,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 10 ✅ Command-line argument parsing (`micropython script.py`, `-c`, `-m`, `-h`)
 - Phase 11 — CI build workflow
 - Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
+- Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
 
 ### Non-goals (initially)
 
@@ -597,6 +598,80 @@ returns 123, called from a wrapper) and work up.
 
 ---
 
+### Phase 13 — Interactive line editing at the REPL ✅
+
+`shared/readline/readline.c` drives the REPL. `pyexec_friendly_repl()` calls
+`readline()` directly, so once the file was in `SRC_C` (since the initial
+skeleton commit) and `MICROPY_HELPER_REPL` / `MICROPY_REPL_EMACS_KEYS` /
+`MICROPY_REPL_AUTO_INDENT` were enabled (all true under
+`MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES`), the only remaining piece was
+escape-sequence translation.
+
+**CSI translation.** AmigaOS's `console.device` emits cursor reports as a
+single CSI byte (`0x9B`) followed by parameters, where xterm-style
+consoles use the two-byte `ESC [` form that `shared/readline/` expects.
+`mp_hal_stdin_rx_chr()` in `mphalport.c` keeps a one-byte pending buffer:
+when `FGetC` returns `0x9B`, the function returns `ESC` (`0x1B`) and
+hands `[` to the next call. Hosts that already deliver `ESC [` (vamos's
+xterm pass-through) see no change because `0x9B` simply never appears.
+
+This is enough for cursor left/right, up/down history, Home/End,
+Delete-forward, and any future CSI key that `readline.c` already handles
+on other ports. Pure `ESC` (no follow-up byte) still works as plain ESC
+because nothing else writes to `pending`.
+
+Verified under vamos with piped input:
+
+- `5` + CSI D + `1` → `15` (cursor-left + insert)
+- `x=42`<Enter> + CSI A + <Enter> → re-executes `x=42` (history recall)
+- `abcdef` + `^A` + `^K` + `7` → `7` (kill to end of line)
+- `999` + `^U` + `8` → `8` (kill to start)
+- `99` + backspace + `9` → `99` (backspace)
+
+`MICROPY_READLINE_HISTORY_SIZE` defaults to 8, which is fine for an
+interactive REPL on a 256 KB heap. The `readline_hist` root pointer is
+zero-initialised by BSS, so no explicit `readline_init0()` is needed.
+
+**Things deliberately left alone:**
+
+- Tab completion is enabled implicitly via `MICROPY_HELPER_REPL` and
+  works for top-level identifiers; nothing port-specific to do.
+- Persistent history (`S:micropython_history` on disk) is not
+  implemented; it's nice-to-have and easy to bolt on later via
+  `readline_push_history` calls at startup.
+- Multi-line paste relies on terminal bracketed-paste, which the AmigaOS
+  console doesn't support; pasting indented code into the REPL will
+  still misbehave the same way it does on serial consoles for other
+  ports. Document, don't fix.
+- The 200 ms `WaitForChar` poll in earlier drafts was removed in Phase 8;
+  `FGetC` blocks efficiently and Ctrl+C is caught either by the VM hook
+  or by `mp_interrupt_char` in `mp_hal_stdin_rx_chr`.
+
+#### Running the REPL interactively under vamos
+
+`SetMode(stdin, 1)` puts the AmigaOS console into raw mode under
+Amiberry / real hardware, but vamos doesn't translate that into a
+`tcsetattr()` on the host TTY. On a default macOS Terminal (or any
+cooked-mode shell) the result is that cursor keys echo as `^[[D` and
+read() doesn't deliver bytes to vamos until Enter — so `readline.c`
+never sees the escape sequence and there's no editing.
+
+Use `tools/amiga-vamos-repl.sh` for interactive vamos sessions. It puts
+the host TTY into `-icanon -echo -isig` (raw, no echo, byte-at-a-time,
+let the binary handle ^C/^D itself) for the duration of the run and
+restores the original mode on exit:
+
+```sh
+tools/amiga-vamos-repl.sh           # start the REPL
+tools/amiga-vamos-repl.sh script.py # run a script (host TTY stays raw,
+                                    # so any input() prompts get raw mode too)
+```
+
+Pipe input (`printf ... | vamos ...`) is unaffected and doesn't need the
+wrapper, because pipes never get cooked-mode line buffering.
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
@@ -957,3 +1032,4 @@ Run it with:
 | 10 — CLI args | ✅ Done | `-h/--help/--version/-c/-m/script.py`; sys.argv, sys.path populated |
 | 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
 | 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
+| 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
