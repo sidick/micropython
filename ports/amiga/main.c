@@ -529,6 +529,12 @@ int main(int argc_unused, char **argv_unused) {
     mp_pystack_init(pystack, pystack + sizeof(pystack));
     #endif
 
+    // Open timer.device for mp_hal_ticks_* / mp_hal_delay_* (Phase 23).
+    // Must happen before any code that might call into these HAL hooks; in
+    // practice mp_init() and below all do. A failure here is non-fatal —
+    // amiga_timer.c degrades to dos.library Delay() and ticks_* return 0.
+    amiga_timer_open();
+
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
@@ -746,6 +752,12 @@ int main(int argc_unused, char **argv_unused) {
     #endif
 
     mp_deinit();
+
+    // Tear down timer.device. Done after mp_deinit so any Python code run
+    // up to this point (sys.exitfunc, VFS/socket close hooks) still sees a
+    // working time module.
+    amiga_timer_close();
+
     // Free every still-tracked heap chunk. The GC's sweep auto-frees
     // empty grown areas during normal operation (see gc_sweep_free_blocks
     // under MICROPY_GC_SPLIT_HEAP_AUTO), so the only chunks left here are

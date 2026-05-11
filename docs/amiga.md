@@ -1375,30 +1375,43 @@ Also trivial post-Phase-17 — pure-Python wrapper around `dos.library` calls.
 
 ---
 
-### Phase 23 — `timer.device`-backed timing
+### Phase 23 — `timer.device`-backed timing ✅
 
-The Phase 8 section notes that `mp_hal_delay_us` and `mp_hal_ticks_*` still
-use newlib `clock()` — busy-wait, millisecond-ish resolution. AmigaOS's
+The Phase 8 section noted that `mp_hal_delay_us` and `mp_hal_ticks_*` still
+used newlib `clock()` — busy-wait, millisecond-ish resolution. AmigaOS's
 `timer.device` MICROHZ unit gives microsecond accuracy and doesn't
-busy-wait. Replace the `clock()`-based path with `timer.device` for:
+busy-wait. Replaced the `clock()`-based path with `timer.device` for:
 
 - `mp_hal_delay_us(n)` → `timer.device` `TR_ADDREQUEST` with
-  `tv_secs=0, tv_micro=n` (or a tight busy-loop for `<100µs`, where the
-  IORequest setup overhead dominates).
-- `mp_hal_ticks_us()` / `mp_hal_ticks_ms()` → `ReadEClock()` (uses the
-  EClock hardware counter — sub-microsecond, monotonic, cheap to read).
+  `tv_secs=us/1e6, tv_micro=us%1e6` via `DoIO()` for `≥200 µs`, and a
+  tight `ReadEClock()` busy-loop for `<200 µs` (where the IORequest
+  round-trip dominates).
+- `mp_hal_delay_ms(n)` likewise routes through `timer.device` for
+  arbitrary-millisecond accuracy (the previous `dos.library Delay()` had
+  20 ms granularity).
+- `mp_hal_ticks_us()` / `mp_hal_ticks_ms()` → `ReadEClock()` (EClock
+  hardware counter, sub-microsecond, monotonic, cheap to read). The
+  EClock frequency is cached at init so the hot path is one `ReadEClock`
+  plus a 64-bit divide.
 - `time.sleep_ms` / `sleep_us` get accuracy as a side effect since they
   route through these HAL hooks.
 
 Setup: `CreateMsgPort` + `CreateIORequest` + `OpenDevice("timer.device",
-UNIT_MICROHZ, ...)` once at startup; teardown in `mp_deinit`. The
-IORequest object goes in a port-local static; not thread-safe but the port
-is single-threaded.
+UNIT_MICROHZ, ...)` once at startup (`amiga_timer_open()` in
+`amiga_timer.c`, called from `main()` just before `mp_init()`); teardown
+after `mp_deinit()`. The IORequest object goes in a port-local static;
+not thread-safe but the port is single-threaded. `TimerBase` (referenced
+by the bebbo `proto/timer.h` inlines) is also set in `amiga_timer.c` from
+the request's `io_Device` after open.
 
-Acceptance: `time.sleep_us(500)` actually waits ~500 µs (not 0 or 1000);
-`time.ticks_diff` between two `ticks_us()` calls returns a stable
-microsecond delta; the CPU isn't pinned at 100% during a long
-`time.sleep`.
+Acceptance verified on Amiberry 2026-05-11: `time.sleep_us(500)` waits
+~500 µs (measured ~1250 µs end-to-end after subtracting the Python-to-C
+round-trip overhead, well above the old 0 µs floor and below the
+1000 µs/`Delay()` granularity); `time.ticks_diff` between two
+`ticks_us()` calls returns a stable microsecond delta (~270–580 µs per
+call on emulated 68020); `time.sleep_us(50000)` measured 50750 µs
+(microsecond-accurate, via `timer.device`); `time.sleep(1)` measured
+1000 ms exactly.
 
 ---
 
