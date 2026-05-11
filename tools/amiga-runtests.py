@@ -63,6 +63,12 @@ _SKIP_PREFIXES = (
     "fun_code",
     "native_",
     "viper_",
+    # cmdline/ tests need machinery only tests/run-tests.py provides:
+    # `# cmdline:` directives for per-test flags, regex .exp matching,
+    # and PTY interaction for repl_*.py. The on-device runner can't
+    # reproduce any of that, so skip the whole class up front.
+    "cmd_",
+    "repl_",
 )
 _SKIP_SUFFIXES = (
     "_intbig.py",
