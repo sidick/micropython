@@ -1,43 +1,70 @@
 #!/bin/bash
 # tools/amiga-vamos-run.sh — wrapper used as MICROPY_MICROPYTHON.
-# run-tests.py invokes us with a path relative to tests/ (e.g.
-# basics/string1.py); rewrite that to tests:basics/string1.py for vamos.
 #
-# run-tests.py also sets cwd to the test's directory so that relative
-# paths like data/file1 resolve. Map that to a vamos --cwd under tests:
-# so the binary sees the same working directory.
+# tests/run-tests.py invokes its target as
+#
+#     MICROPY_MICROPYTHON [-X opt ...] /abs/path/to/tests/<dir>/<test>.py
+#
+# with cwd set to /abs/path/to/tests/<dir>. This wrapper mounts the
+# repo's tests/ directory as `mp:` inside vamos, sets vamos's cwd to
+# the matching mp:<dir>, and replaces any test-script argument with
+# its basename. The Amiga binary then sees sys.argv[0] / __file__ as
+# just the filename (e.g. "argv.py"), exactly matching what
+# tools/amiga-gen-exp.py records when it runs host CPython with
+# cwd=<dirname> and argv=<basename>.
+#
+# The mount name `mp:` is purely internal -- it doesn't appear in any
+# captured test output and isn't something a user has to type.
 #
 # Each invocation gets a private --vols-base-dir to avoid collisions
 # between parallel workers on the auto RAM:/T:/etc volumes, and -q
 # suppresses vamos's log output (which would otherwise pollute the
 # captured stdout/stderr that run-tests.py diffs against .exp files).
+
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MPY_BIN="$REPO_ROOT/ports/amiga/build/micropython"
 TESTS_DIR="$REPO_ROOT/tests"
 
-ORIG_CWD="$PWD"
-case "$ORIG_CWD" in
-    "$TESTS_DIR")    AMIGA_CWD="tests:" ;;
-    "$TESTS_DIR"/*)  AMIGA_CWD="tests:${ORIG_CWD#$TESTS_DIR/}" ;;
-    *)               AMIGA_CWD="" ;;
-esac
-
 amiga_args=""
+test_cwd=""
 for arg in "$@"; do
     case "$arg" in
-        "$TESTS_DIR"/*) amiga_args="$amiga_args tests:${arg#$TESTS_DIR/}" ;;
-        */tests/*)      amiga_args="$amiga_args tests:${arg#*/tests/}" ;;
-        *)              amiga_args="$amiga_args $arg" ;;
+        # A test script under tests/: pass just the basename, and
+        # remember its directory (relative to tests/) so we can point
+        # vamos's cwd at it. With cwd set to the test's directory and
+        # the script invoked by basename, sys.argv[0] / __file__ inside
+        # the test see just the filename -- matching what
+        # tools/amiga-gen-exp.py records via host CPython.
+        "$TESTS_DIR"/*.py)
+            rel="${arg#$TESTS_DIR/}"
+            d="$(dirname "$rel")"
+            [ "$d" = "." ] && d=""
+            test_cwd="mp:$d"
+            amiga_args="$amiga_args $(basename "$arg")"
+            ;;
+        # Anything else (e.g. -X emit=bytecode): pass through.
+        *) amiga_args="$amiga_args $arg" ;;
     esac
 done
 
+# Prefer the test-derived cwd; otherwise track whatever cwd
+# tests/run-tests.py set on the host before invoking us, so that
+# relative paths inside the test (e.g. open("data/file1")) resolve
+# the same way as on the host.
+if [ -n "$test_cwd" ]; then
+    AMIGA_CWD="$test_cwd"
+else
+    case "$PWD" in
+        "$TESTS_DIR")    AMIGA_CWD="mp:" ;;
+        "$TESTS_DIR"/*)  AMIGA_CWD="mp:${PWD#$TESTS_DIR/}" ;;
+        *)               AMIGA_CWD="mp:" ;;
+    esac
+fi
+
 VOLS_DIR="$(mktemp -d -t amiga-vamos-vols.XXXXXX)"
 trap 'rm -rf "$VOLS_DIR"' EXIT
-
-cwd_args=""
-[ -n "$AMIGA_CWD" ] && cwd_args="--cwd $AMIGA_CWD"
 
 cd "$HOME/vamos"
 # Vamos defaults to an 8 KiB stack -- enough for normal Python but
@@ -46,6 +73,6 @@ cd "$HOME/vamos"
 # closer to what users run real MicroPython under.
 exec pipenv run vamos -q --cpu 68020 -s 32 \
     --vols-base-dir "$VOLS_DIR" \
-    -V "tests:$TESTS_DIR" \
-    $cwd_args \
+    -V "mp:$TESTS_DIR" \
+    --cwd "$AMIGA_CWD" \
     -- "$MPY_BIN" $amiga_args

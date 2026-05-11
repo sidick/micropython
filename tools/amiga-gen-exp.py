@@ -49,12 +49,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("dirs", nargs="+", help="test directories to process")
     parser.add_argument(
-        "-f",
-        "--force",
-        action="store_true",
-        help="regenerate .exp files even if one already exists",
-    )
-    parser.add_argument(
         "-v", "--verbose", action="store_true", help="print per-file progress"
     )
     parser.add_argument(
@@ -65,6 +59,14 @@ def main():
     )
     args = parser.parse_args()
 
+    # Existing .exp files are never overwritten -- many of them are
+    # upstream-shipped hand-curated files using the '########' line
+    # wildcard or non-trivial regex matching, and rewriting them with
+    # plain CPython output would silently break the matching the test
+    # framework depends on. If you need to refresh a specific generated
+    # file (e.g. one whose contents now depend on path-formatting
+    # changes), delete it first and re-run this tool.
+
     py_files = gather_tests(args.dirs)
     generated = 0
     kept_existing = 0
@@ -73,15 +75,21 @@ def main():
 
     for py in py_files:
         exp = py + ".exp"
-        if not args.force and os.path.exists(exp):
+        if os.path.exists(exp):
             kept_existing += 1
             if args.verbose:
                 print("keep   ", py)
             continue
         py_abs = os.path.abspath(py)
         try:
+            # Run CPython with cwd set to the test's directory and the
+            # test passed as a basename. This matches how the on-device
+            # runner invokes tests after os.chdir(test_dir), so that
+            # sys.argv[0] and __file__ are identical on both sides --
+            # otherwise tests like io/argv.py and import/import_file.py
+            # diverge purely on the path format.
             result = subprocess.run(
-                [CPYTHON3, "-BS", py_abs],
+                [CPYTHON3, "-BS", os.path.basename(py_abs)],
                 cwd=os.path.dirname(py_abs) or ".",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -102,6 +110,15 @@ def main():
         # Normalise to LF (CPython on macOS/Linux already emits LF, but be
         # defensive in case a host quirk produces CRLF).
         data = result.stdout.replace(b"\r\n", b"\n")
+        # CPython resolves __file__ to the absolute host path even when
+        # the script is invoked by basename with cwd set. The Amiga
+        # binary instead reports the path that import lookup actually
+        # used (e.g. "import1b.py" relative to cwd). Strip the test's
+        # absolute directory prefix from the captured output so a test
+        # like import/import_file.py, which prints an imported module's
+        # __file__, matches on both sides.
+        test_dir_prefix = (os.path.dirname(py_abs) + os.sep).encode()
+        data = data.replace(test_dir_prefix, b"")
         with open(exp, "wb") as f:
             f.write(data)
         generated += 1

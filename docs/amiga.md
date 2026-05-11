@@ -902,8 +902,10 @@ that all opened `data/file1` relative to cwd now pass.
 
 Verified under vamos:
 
-- `os.getcwd()` returns the volume-prefixed cwd string.
-- `os.chdir("tests:")` changes cwd; `os.listdir("basics")` lists 600+ entries.
+- `os.getcwd()` returns the volume-prefixed cwd string (e.g.
+  `"mp:basics"`, where `mp:` is the internal vamos-side mount of
+  `tests/` set up by `tools/amiga-vamos-run.sh`).
+- `os.chdir("mp:")` / `os.listdir("basics")` work.
 - `os.stat("basics/bool1.py")` returns a 10-tuple with mode/size set.
 - `open("nonexistent", "r+b")` raises `OSError(ENOENT)` — Python's "r+"
   semantic (fail if missing) is correctly mapped to AmigaOS
@@ -911,9 +913,12 @@ Verified under vamos:
   create-on-missing).
 - Full `basics/` regression: 490 / 1 / 83 unchanged from the
   pre-Phase-16 baseline.
-- Full `io/` regression: 14 pass / 1 skip / 1 fail (the known
-  `io/argv.py` vamos host-path-rewriting issue), up from the pre-
-  Phase-16 12 pass / 3 skip / 1 fail.
+- Full `io/` regression: 15 pass / 1 skip / 0 fail, up from the pre-
+  Phase-16 12 pass / 3 skip / 1 fail. (The previously-failing
+  `io/argv.py` and `import/import_file.py` now pass too: the runner
+  invokes each test by basename with cwd set, so `sys.argv[0]` and
+  `__file__` come out path-prefix-free on both the host and the
+  Amiga side.)
 
 ---
 
@@ -968,16 +973,22 @@ This setup assumes vamos is installed at `~/vamos/` and activated via `pipenv`
 ```sh
 cd ~/vamos
 pipenv run vamos --cpu 68020 \
-    -V "tests:/path/to/micropython/tests" \
-    -- /path/to/micropython/ports/amiga/build/micropython tests:basics/string1.py
+    -V "mp:/path/to/micropython/tests" \
+    --cwd mp:basics \
+    -- /path/to/micropython/ports/amiga/build/micropython string1.py
 ```
 
 Key flags:
 - `--cpu 68020` — **required**; the vamos default is 68000, which faults on
   any `m68020` instruction emitted by the build.
 - `-V name:/host/path` — mount a host directory as an AmigaOS volume named
-  `name:`. The MicroPython binary then references files via the AmigaOS path,
-  e.g. `tests:basics/string1.py`.
+  `name:`. The volume name is purely internal to vamos and never appears in
+  any captured test output as long as you pass the test script by basename
+  and use `--cwd` to point vamos at its directory.
+- `--cwd <vol>:<subdir>` — sets the spawned process's cwd. Combined with
+  basename invocation, this means `sys.argv[0]` / `__file__` come out as
+  just the filename inside the test, exactly matching what host CPython
+  produces in `tools/amiga-gen-exp.py`.
 - `--` — separator between vamos options and the binary + args. Without it,
   vamos consumes `--version`, `-h`, `-c`, etc. as its own options.
 
@@ -990,31 +1001,36 @@ pipenv run vamos --cpu 68020 -- /path/to/build/micropython
 #### Wrapper script for run-tests.py
 
 `tests/run-tests.py` invokes its target as `<MICROPY_MICROPYTHON> path/to/test.py`
-from inside `tests/`. The wrapper below mounts `tests/` as `tests:` and
-rewrites the script path argument to AmigaOS form so vamos can find it.
-The wrapper also passes `--cwd` to vamos so relative paths in tests (e.g.
-`open("data/file1")` in `io/file1.py`) resolve correctly, uses a private
-`--vols-base-dir` so parallel workers don't collide on the auto `RAM:`
-volume, and adds `-q` so vamos log lines don't pollute the captured
-stdout/stderr that run-tests.py diffs against `.exp` files. The full
-script lives at `tools/amiga-vamos-run.sh`; the salient parts are:
+from inside `tests/`. The wrapper at `tools/amiga-vamos-run.sh` mounts
+`tests/` as an internal `mp:` volume (a name chosen to avoid colliding with
+any conventional AmigaOS assign), points vamos's cwd at the test's
+directory, and replaces the test-script argument with its basename. It also
+uses a private `--vols-base-dir` so parallel workers don't collide on the
+auto `RAM:` volume, and adds `-q` so vamos log lines don't pollute the
+captured stdout/stderr that run-tests.py diffs against `.exp` files. The
+salient parts:
 
 ```sh
-ORIG_CWD="$PWD"
-case "$ORIG_CWD" in
-    "$TESTS_DIR")    AMIGA_CWD="tests:" ;;
-    "$TESTS_DIR"/*)  AMIGA_CWD="tests:${ORIG_CWD#$TESTS_DIR/}" ;;
-    *)               AMIGA_CWD="" ;;
-esac
-
-VOLS_DIR="$(mktemp -d -t amiga-vamos-vols.XXXXXX)"
-trap 'rm -rf "$VOLS_DIR"' EXIT
+amiga_args=""
+test_cwd=""
+for arg in "$@"; do
+    case "$arg" in
+        "$TESTS_DIR"/*.py)
+            rel="${arg#$TESTS_DIR/}"
+            d="$(dirname "$rel")"
+            [ "$d" = "." ] && d=""
+            test_cwd="mp:$d"
+            amiga_args="$amiga_args $(basename "$arg")"
+            ;;
+        *) amiga_args="$amiga_args $arg" ;;
+    esac
+done
 
 cd "$HOME/vamos"
-exec pipenv run vamos -q --cpu 68020 \
+exec pipenv run vamos -q --cpu 68020 -s 32 \
     --vols-base-dir "$VOLS_DIR" \
-    -V "tests:$TESTS_DIR" \
-    --cwd "$AMIGA_CWD" \
+    -V "mp:$TESTS_DIR" \
+    --cwd "$test_cwd" \
     -- "$MPY_BIN" $amiga_args
 ```
 
@@ -1071,26 +1087,31 @@ Use this for verifying that something works on real-AmigaOS-like behaviour
 (timing, OS calls vamos doesn't fully implement, etc.) before flashing to
 hardware.
 
-#### Mounting the tests directory in Amiberry
+#### Mounting the repo in Amiberry
 
-In Amiberry's hard disk configuration add a host-directory entry:
+In Amiberry's hard disk configuration add a single host-directory entry
+that points at the repo root (so `tools/` and `tests/` are both
+reachable from the same volume):
 
 | Field | Value |
 |-------|-------|
-| Device | `TESTS` |
-| Volume label | `Tests` |
-| Host path | `/path/to/micropython/tests` |
+| Device | `PY0` |
+| Volume label | `Py0` |
+| Host path | `/path/to/micropython` |
 | File system | `FFS` or automount |
 
-After reboot (or `Mount TESTS:`) the test scripts are accessible as `TESTS:basics/`,
-`TESTS:float/`, etc.
+The volume name is arbitrary; the example uses `PY0:` because that's the
+mount the on-device runner snippets here are written against. There's
+no need for a separate `tests:` (or similarly-named) assign — relative
+paths from `PY0:` are enough.
 
 #### Running individual tests in Amiberry
 
 ```sh
-1> micropython TESTS:basics/string_format.py
-1> micropython TESTS:float/float_parse.py
-1> micropython TESTS:io/file1.py
+1> cd py0:tests
+1> micropython basics/string_format.py
+1> micropython float/float_parse.py
+1> micropython io/file1.py
 ```
 
 To verify output, compare against CPython on the host:
@@ -1151,7 +1172,6 @@ real platform differences documented in *Known test failures* below.
 
 | Test | Cause |
 |------|-------|
-| `io/argv.py` | The vamos wrapper rewrites the host path of the test script (`/abs/.../io/argv.py`) to the AmigaOS volume form (`tests:io/argv.py`) so vamos can resolve it. CPython's reference output uses the host-style absolute path, so `sys.argv[0]` differs. Not a port bug — vamos has no way to surface absolute host paths. |
 | `basics/struct1.py` | `struct.calcsize("97sI")` returns 102, the test expects 104. bebbo gcc on m68k uses 2-byte alignment for `int` per the AmigaOS m68k ABI (`__alignof__(int) == 2`), while CPython on x86 uses 4. Both are platform-correct; the test implicitly assumes POSIX/x86 alignment. |
 | `float/float_parse*.py` | A handful of edge-case parses (very long mantissa with very negative exponent; `1e+300` vs `9.999...e+299` differing by 2 ULP; `1e4294967301` not detected as overflow → inf) come out 1–2 ULP off CPython. Bebbo's 80-bit long double soft-float has just enough precision loss that the EXACT-mode parser can't always nail the closest double. |
 | `float/float_format_accuracy.py` | repr round-trip rate ~72% (test wants ≥99.7% for double EXACT mode). Same long-double precision tax — repr hands an inexact long double to the format routine for a fraction of inputs and gets a string that doesn't round back exactly. |
@@ -1205,13 +1225,9 @@ trigger, and overflow shows up as a `Software Failure 8000000B`
 1> Stack 32768
 ```
 
-The on-device runner lives at `tools/amiga-runtests.py`. Copy it to the
-Amiga (e.g. to `RAM:` or any mounted volume) — for example via the same
-mount as the tests:
-
-```sh
-1> Copy TESTS:../tools/amiga-runtests.py RAM:
-```
+The on-device runner lives at `tools/amiga-runtests.py`. With the repo
+mounted as `PY0:` (per the section above), it's already accessible at
+`PY0:tools/amiga-runtests.py` — no need to copy it anywhere.
 
 It uses `amiga.execute()` with shell redirection to capture each test's
 output, compares against the matching `.exp` file (with `########` line
@@ -1221,9 +1237,10 @@ runner does:
 
 ```sh
 1> Stack 32768
-1> micropython RAM:amiga-runtests.py TESTS:basics
-1> micropython RAM:amiga-runtests.py TESTS:float T:my-results/
-1> micropython RAM:amiga-runtests.py TESTS:io
+1> cd py0:
+1> micropython tools/amiga-runtests.py tests/basics
+1> micropython tools/amiga-runtests.py tests/float T:my-results/
+1> micropython tools/amiga-runtests.py tests/io
 ```
 
 The second positional argument is the result directory; default is
