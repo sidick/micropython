@@ -460,6 +460,11 @@ int main(int argc_unused, char **argv_unused) {
     amiga_socket_close();
     #endif
 
+    #if MICROPY_VFS
+    extern void vfs_amiga_cleanup(void);
+    vfs_amiga_cleanup();
+    #endif
+
     mp_deinit();
     FreeVec(heap_ptr);
     if (argv_buf) {

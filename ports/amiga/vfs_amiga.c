@@ -262,11 +262,27 @@ static MP_DEFINE_CONST_FUN_OBJ_3(vfs_amiga_open_obj, vfs_amiga_open);
 
 // Save the inherited cwd lock on first chdir so we don't UnLock something
 // the shell still owns -- the lock that CurrentDir returned to us at that
-// point is the parent shell's, and we must hand it back at process exit.
+// point is what AmigaOS handed our process at startup (DupLock'd from the
+// shell), and vfs_amiga_cleanup() restores it as current before we exit
+// so the user's shell sees the same cwd it had before they ran us.
 // Subsequent chdirs replace our own owned lock, so UnLock'ing the previous
 // one is correct.
 static BPTR vfs_amiga_owned_lock; // 0 = we never chdir'd; cwd is shell-inherited
 static BPTR vfs_amiga_inherited_lock; // saved on first chdir
+
+// Called by main.c just before mp_deinit() to put the process's cwd back
+// to whatever we inherited from the shell. clib2's exit code would
+// otherwise UnLock whatever cwd happens to be current, which may be a
+// directory the user's script chdir'd into; restoring the inherited
+// lock makes our exit a no-op for the shell.
+void vfs_amiga_cleanup(void) {
+    if (vfs_amiga_owned_lock) {
+        BPTR prev = CurrentDir(vfs_amiga_inherited_lock);
+        UnLock(prev);
+        vfs_amiga_owned_lock = 0;
+        vfs_amiga_inherited_lock = 0;
+    }
+}
 
 static mp_obj_t vfs_amiga_chdir(mp_obj_t self_in, mp_obj_t path_in) {
     (void)self_in;
