@@ -635,6 +635,82 @@ static mp_obj_t amiga_poke_bytes(mp_obj_t addr_obj, mp_obj_t data_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_bytes_obj, amiga_poke_bytes);
 
+// ---------- Phase 25: break-signal IPC ----------
+//
+// AmigaOS gives every task four user-defined break signals
+// (SIGBREAKF_CTRL_C/D/E/F).  Ctrl+C is already handled by the port to
+// raise KeyboardInterrupt; the rest are exposed here as a cheap
+// cooperative-IPC primitive on top of exec.library Signal() / Wait().
+//
+// amiga.signal(task_addr, sigmask) — wakes another task with the given
+//   signal bits (or even the current task, for a self-test).
+// amiga.wait_signal(sigmask, timeout_ms=None) — blocks until any of
+//   `sigmask` arrives.  SIGBREAKF_CTRL_C is always implicitly ORed in
+//   so the user can break out of an otherwise-infinite wait; if it
+//   fires, KeyboardInterrupt is raised instead of being returned.  A
+//   non-None `timeout_ms` arms an async timer.device request alongside
+//   the Wait(); returns 0 if the timeout expires before any user
+//   signal arrives.
+
+extern ULONG amiga_async_timer_send(ULONG ms);
+extern void  amiga_async_timer_abort(void);
+
+static mp_obj_t amiga_signal(mp_obj_t task_obj, mp_obj_t mask_obj) {
+    struct Task *task = (struct Task *)(uintptr_t)mp_obj_get_int(task_obj);
+    ULONG mask = (ULONG)mp_obj_get_int_truncated(mask_obj);
+    if (task == NULL) {
+        mp_raise_ValueError(MP_ERROR_TEXT("task pointer is NULL"));
+    }
+    Signal(task, mask);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_signal_obj, amiga_signal);
+
+static mp_obj_t amiga_wait_signal(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_mask,       MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0} },
+        { MP_QSTR_timeout_ms, MP_ARG_OBJ, {.u_obj = mp_const_none} },
+    };
+    mp_arg_val_t arg_vals[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args,
+                     MP_ARRAY_SIZE(allowed_args), allowed_args, arg_vals);
+    ULONG user_mask = (ULONG)arg_vals[0].u_int;
+    mp_obj_t timeout_obj = arg_vals[1].u_obj;
+    bool has_timeout = (timeout_obj != mp_const_none);
+
+    // SIGBREAKF_CTRL_C is reserved — the caller can't suppress it.  Mask
+    // it out of the user request so the returned value (`got & user_mask`)
+    // never includes it; we still listen for it via `full_mask` below
+    // and raise KeyboardInterrupt if it fires.
+    user_mask &= ~SIGBREAKF_CTRL_C;
+    ULONG full_mask = user_mask | SIGBREAKF_CTRL_C;
+    ULONG timer_sig = 0;
+
+    if (has_timeout) {
+        mp_int_t ms = mp_obj_get_int(timeout_obj);
+        if (ms < 0) {
+            ms = 0;
+        }
+        timer_sig = amiga_async_timer_send((ULONG)ms);
+        if (timer_sig != 0) {
+            full_mask |= timer_sig;
+        }
+        // If timer setup failed (timer_sig == 0) we fall through to an
+        // untimed wait; documented best-effort behaviour.
+    }
+
+    ULONG got = Wait(full_mask);
+
+    if (timer_sig != 0) {
+        amiga_async_timer_abort();
+    }
+    if (got & SIGBREAKF_CTRL_C) {
+        mp_raise_type(&mp_type_KeyboardInterrupt);
+    }
+    return mp_obj_new_int_from_uint(got & user_mask);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_wait_signal_obj, 1, amiga_wait_signal);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -665,6 +741,13 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_poke_w),      MP_ROM_PTR(&amiga_poke_w_obj) },
     { MP_ROM_QSTR(MP_QSTR_poke_l),      MP_ROM_PTR(&amiga_poke_l_obj) },
     { MP_ROM_QSTR(MP_QSTR_poke_bytes),  MP_ROM_PTR(&amiga_poke_bytes_obj) },
+    { MP_ROM_QSTR(MP_QSTR_signal),      MP_ROM_PTR(&amiga_signal_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wait_signal), MP_ROM_PTR(&amiga_wait_signal_obj) },
+    // Break-signal bits (Phase 25)
+    { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
+    { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },
+    { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_E), MP_ROM_INT(SIGBREAKF_CTRL_E) },
+    { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_F), MP_ROM_INT(SIGBREAKF_CTRL_F) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },
