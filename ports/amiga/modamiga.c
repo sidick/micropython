@@ -565,7 +565,7 @@ static mp_obj_t amiga_lib_call(size_t n_args, const mp_obj_t *args, mp_map_t *kw
 static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_lib_call_obj, 2, amiga_lib_call);
 
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
-    { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_amiga) },
+    { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
     { MP_ROM_QSTR(MP_QSTR_find_task),   MP_ROM_PTR(&amiga_find_task_obj) },
     { MP_ROM_QSTR(MP_QSTR_alloc_vec),   MP_ROM_PTR(&amiga_alloc_vec_obj) },
@@ -600,6 +600,9 @@ const mp_obj_module_t amiga_module = {
     .globals = (mp_obj_dict_t *)&amiga_module_globals,
 };
 
-MP_REGISTER_MODULE(MP_QSTR_amiga, amiga_module);
+// Registered as `_amiga` (underscore prefix) so the frozen `amiga.py`
+// in ports/amiga/modules/ can do `from _amiga import *` and add the
+// Python-side Library proxy on top (Phase 17 step 3).
+MP_REGISTER_MODULE(MP_QSTR__amiga, amiga_module);
 
 #endif // MICROPY_PY_AMIGA

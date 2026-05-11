@@ -1040,15 +1040,16 @@ mylib = amiga.library_from_signatures(
 
 1. ✅ `lib_open` / `lib_close` / `lib_call` with the asm trampoline.
    Smoke test: reopen `intuition.library` and call `DisplayBeep(0)`.
-2. Frozen `.fd` table generator (`tools/amiga-fdgen.py`) for NDK libraries.
-3. `amiga.library(name, version)` proxy on top.
+2. ✅ Frozen `.fd` table generator (`tools/amiga-fdgen.py`) for NDK
+   libraries, with chronological NDK-release ordering and per-function
+   `since` stamps.
+3. ✅ `amiga.library(name, version)` proxy on top of the trampoline,
+   driven by the frozen FD table — the headline deliverable for the
+   phase, "anything in the NDK callable from Python".
 4. Tag-list helper (`amiga.taglist(WA_Width=640, ...) -> ptr`).
 5. Third-party `.fd` search path.
 6. Minimal struct helpers (peek/poke + hand-curated Window/Screen/RastPort).
 7. (Later) callback thunks if anyone actually needs them.
-
-Steps 1–3 should land as a single deliverable — that's "anything in the NDK,
-callable from Python" for roughly 400 lines of C+asm+Python.
 
 #### Step 1 — trampoline (shipped)
 
@@ -1096,8 +1097,96 @@ a paired `FreeVec` (proves D0/D1/A1 + correct LVO dispatch);
 `lib_open("nosuch.library", 0)` raises `OSError(ENOENT)`; unknown
 `lib_call` kwargs raise `TypeError`.
 
-Steps 2–6 (the `.fd`-driven proxy and the rest of the design above)
-are still pending.
+#### Step 2 — FD table generator (shipped)
+
+`tools/amiga-fdgen.py` parses every `.fd` file under one or more NDK
+trees and emits a single Python module whose `LIBRARIES` dict maps
+each openable name (`"intuition.library"`, `"console.device"`,
+`"card.resource"`, ...) to a per-library dict of
+`function_name -> (lvo, regs_csv, since)`.
+
+Key design choices:
+
+- **Chronological release ordering.** AmigaOS development restarted
+  under Hyperion several years after 3.9, so 3.1.4 → 3.2 → 3.2.x → 3.3
+  are *calendar-newer* than 3.5/3.9. A simple numeric-tuple sort would
+  put 3.2 before 3.9 and silently wreck the `since` stamps. The tool
+  uses a hand-maintained `AMIGA_OS_RELEASE_ORDER` list and looks up
+  each source's chronological position from it. Unknown versions emit
+  a one-time stderr warning and sort after every known release.
+- **Drift detection.** LVOs are append-only in AmigaOS (libraries
+  never renumber); a function that appears with a different offset or
+  register list in a later NDK is a hard warning. The earlier entry
+  wins on the assumption that the older NDK is more authoritative
+  about historical layout.
+- **Public-only by default.** `##private` sections still consume LVO
+  slots so the offset arithmetic is correct, but the resulting
+  functions are dropped from the output unless `--include-private` is
+  passed.
+- **CIA + IEEE-double exceptions.** Two corners of the NDK don't fit
+  the standard 1-reg-per-arg / no-A6-input convention
+  (`cia_lib.fd`'s `AbleICR`/`SetICR` take a CIA pointer in A6;
+  `mathieeedoub*` doubles span two registers per arg). The tool warns
+  about these and skips them; users wanting access can write a
+  small port-side wrapper.
+
+Run against the current bebbo NDK (which already ships the Hyperion
+3.2 FDs): **76 .fd files → 75 openable names → 1146 public function
+signatures**, ~80 KB of Python source.
+
+#### Step 3 — `amiga.library` proxy (shipped)
+
+The C extension is now registered as **`_amiga`** (the underscore
+prefix is a deliberate signal that callers should reach for the
+high-level wrapper). A frozen Python module at
+`ports/amiga/modules/amiga.py` re-exports every name from `_amiga`
+via `from _amiga import *`, and adds the `Library` class on top of
+the FD table baked in from `ports/amiga/modules/_amiga_fd.py`:
+
+```python
+import amiga
+
+with amiga.library("intuition.library", 37) as intuition:
+    intuition.DisplayBeep(0)            # signature from _amiga_fd
+    win = intuition.OpenWindow(nw_ptr)  # A0 = nw_ptr, return in D0
+    intuition.CloseWindow(win)
+```
+
+`Library.__getattr__` looks up the signature, builds a thin closure
+that maps positional args into the right register kwargs of
+`_amiga.lib_call`, and `setattr`s the closure onto the instance —
+so subsequent reads skip `__getattr__` and execute as fast as a
+normal method call. `Library` supports context-manager use
+(`__enter__`/`__exit__` close on exit), explicit `close()`, and a
+GC-time best-effort cleanup via `__del__`.
+
+To wire frozen modules in: `ports/amiga/manifest.py` is the standard
+`freeze("$(PORT_DIR)/modules")` one-liner; the Makefile sets
+`FROZEN_MANIFEST = manifest.py` and forces the freeze pipeline to
+use the LONGLONG int impl via `MPY_TOOL_FLAGS = -mlongint-impl=longlong`
+(the port's `MICROPY_LONGINT_IMPL` setting), since `mpy-tool.py`
+defaults to MPZ-encoded literals which would fail the `static_assert`
+in `frozen_content.c` at link time.
+
+Smoke-tested under Amiberry:
+
+- `amiga.find_task` and other re-exports from `_amiga` are available
+  on the `amiga` module without explicit imports.
+- `amiga.library("exec.library", 0)` opens; `ex.FindTask(0)` matches
+  the C-side `amiga.find_task(None)` (proves A1 dispatch + D0 return).
+- `ex.AllocVec(64, MEMF_ANY|MEMF_CLEAR)` / `ex.FreeVec(...)` round
+  trip cleanly (proves D0/D1/A1 dispatch).
+- `with amiga.library("intuition.library", 37) as intuition`:
+  `intuition.DisplayBeep(0)` returns cleanly; the context manager
+  closes on `__exit__`.
+- Error paths: unknown library → `OSError(ENOENT)`; missing function
+  → `AttributeError` with a clear message; wrong arg count →
+  `TypeError`; call after close → `ValueError`.
+- The closure is cached via `setattr(self, fnname, call)` after first
+  use; verified by `'FindTask' in ex.__dict__` after the first call.
+
+Steps 4–6 (tag-list helper, third-party `.fd` search path, struct
+helpers) are still pending.
 
 #### Acceptance
 
