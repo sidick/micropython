@@ -53,12 +53,23 @@ def check_exp(test_path, actual):
 
 def main():
     test_dir = sys.argv[1] if len(sys.argv) > 1 else "TESTS:basics"
+
+    # Pre-check the directory so an unmounted volume / missing path gives
+    # a clean error instead of an AmigaDOS auto-requester ("Please insert
+    # volume X: in any drive") when List goes looking for it.
+    if not amiga.exists(test_dir):
+        print("No such directory:", test_dir)
+        return
+
     amiga.execute('List "' + test_dir + '" PAT #?.py LFORMAT "%P%N" >' + LST)
     try:
         with open(LST) as f:
             files = [l.strip() for l in f if l.strip()]
     except OSError:
         print("Cannot list", test_dir)
+        return
+    if not files:
+        print("No .py files in", test_dir)
         return
 
     passed = failed = skipped = 0
