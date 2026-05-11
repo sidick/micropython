@@ -975,19 +975,34 @@ mount as the tests:
 ```
 
 It uses `amiga.execute()` with shell redirection to capture each test's
-output, normalises CRLF to LF, and compares against the matching `.exp`
-file. Run it with:
+output, compares against the matching `.exp` file (with `########` line
+wildcards handled the same way `tests/run-tests.py` does), and writes
+per-test failure artefacts to a result directory the same way the host
+runner does:
 
 ```sh
 1> Stack 32768
 1> micropython RAM:amiga-runtests.py TESTS:basics
-1> micropython RAM:amiga-runtests.py TESTS:float
+1> micropython RAM:amiga-runtests.py TESTS:float T:my-results/
 1> micropython RAM:amiga-runtests.py TESTS:io
 ```
 
-The generated `.exp` files are not checked into the repository; add
-`tests/**/*.py.exp` to `.git/info/exclude` if `git status` chatter
-bothers you.
+The second positional argument is the result directory; default is
+`T:mp-test-results/` (RAM under AmigaOS, so a reboot wipes it). On
+FAIL, the captured stdout/stderr lands at `<dir>/<test>.py.out` and
+the expected output at `<dir>/<test>.py.exp`. On pass (or skip), any
+stale `.out`/`.exp` from a previous run gets deleted so the dir
+always reflects the current state. After a run you can inspect a
+failure with:
+
+```sh
+1> Type T:mp-test-results/struct1.py.out
+1> Type T:mp-test-results/struct1.py.exp
+```
+
+The generated `.exp` files in `tests/` are not checked into the
+repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
+`git status` chatter bothers you.
 
 
 ---
