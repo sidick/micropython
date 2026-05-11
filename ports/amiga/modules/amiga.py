@@ -20,6 +20,122 @@ import _amiga_fd
 import _amiga_tags
 
 
+_VALID_REGS = frozenset((
+    "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
+    "a0", "a1", "a2", "a3", "a4", "a5",
+))
+
+
+def _parse_fd(text):
+    """Pure-Python `.fd` parser — runtime counterpart to tools/amiga-fdgen.py.
+
+    Returns a dict mapping function name to a `(lvo, regs_csv, "")`
+    triple.  Functions inside `##private` sections still consume LVO
+    slots but are dropped from the output.  Functions whose arg / reg
+    counts disagree (the IEEE-double convention used in
+    `mathieeedoub*_lib.fd`) or that target A6 (cia.resource's special
+    base-register ABI) are skipped silently — they're rare and the
+    trampoline can't handle them without per-function help anyway.
+    """
+    bias = None
+    slot = 0
+    public = True
+    out = {}
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line or line[0] == "*":
+            continue
+        if line.startswith("##"):
+            parts = line.split(None, 1)
+            directive = parts[0]
+            arg = parts[1].strip() if len(parts) > 1 else ""
+            if directive == "##bias":
+                try:
+                    bias = int(arg)
+                except ValueError:
+                    continue
+                slot = 0
+            elif directive == "##public":
+                public = True
+            elif directive == "##private":
+                public = False
+            elif directive == "##end":
+                break
+            continue
+        # Function line:  Name(args)(regs)
+        lp1 = line.find("(")
+        rp1 = line.find(")", lp1 + 1) if lp1 != -1 else -1
+        lp2 = line.find("(", rp1 + 1) if rp1 != -1 else -1
+        rp2 = line.find(")", lp2 + 1) if lp2 != -1 else -1
+        if lp1 == -1 or rp1 == -1 or lp2 == -1 or rp2 == -1:
+            continue
+        if bias is None:
+            continue
+        name = line[:lp1].strip()
+        args_csv = line[lp1 + 1:rp1]
+        regs_csv = line[lp2 + 1:rp2]
+        lvo = -(bias + slot * 6)
+        slot += 1
+        if not public:
+            continue
+        args = [a.strip() for a in args_csv.split(",") if a.strip()]
+        regs = []
+        for chunk in regs_csv.split(","):
+            for r in chunk.split("/"):
+                r = r.strip().lower()
+                if r:
+                    regs.append(r)
+        if len(args) != len(regs) or any(r not in _VALID_REGS for r in regs):
+            continue
+        out[name] = (lvo, ",".join(regs), "")
+    return out
+
+
+# Search path for runtime .fd lookup.  PROGDIR: is automatically
+# assigned by AmigaDOS to the directory of the running executable;
+# LIBS: is the system-wide libraries assign.  Files are tried in the
+# order listed, with both the bebbo `<name>_lib.fd` and bare
+# `<name>.fd` conventions accepted.
+_FD_SEARCH_PATH = ("PROGDIR:fd/", "LIBS:fd/")
+
+
+def _load_fd(name):
+    """Search the runtime .fd path for a library and return its parsed
+    signature dict, or None if no match is found."""
+    for suffix in (".library", ".device", ".resource"):
+        if name.endswith(suffix):
+            base = name[:-len(suffix)]
+            break
+    else:
+        base = name
+    for prefix in _FD_SEARCH_PATH:
+        for suffix in ("_lib.fd", ".fd"):
+            path = prefix + base + suffix
+            try:
+                f = open(path, "r")
+            except OSError:
+                continue
+            try:
+                text = f.read()
+            finally:
+                f.close()
+            return _parse_fd(text)
+    return None
+
+
+def _normalize_signatures(sigs):
+    """Accept a user-supplied signature dict in either 2-tuple
+    `(lvo, regs_csv)` or 3-tuple `(lvo, regs_csv, meta)` form and
+    normalize to the 3-tuple form used internally."""
+    out = {}
+    for fname, sig in sigs.items():
+        if len(sig) == 2:
+            out[fname] = (sig[0], sig[1], "")
+        else:
+            out[fname] = (sig[0], sig[1], sig[2])
+    return out
+
+
 class Library:
     """Open an AmigaOS library / device / resource and dispatch its
     functions by name using the frozen `.fd` signature table.
@@ -32,11 +148,20 @@ class Library:
     subsequent reads skip `__getattr__`.
     """
 
-    def __init__(self, name, version=0):
-        # Look up the signature table first so an unsupported library
-        # raises before we burn an OpenLibrary call.
+    def __init__(self, name, version=0, signatures=None):
+        # Resolve the signature table in priority order:
+        #   1. explicit `signatures=` kwarg (caller override)
+        #   2. frozen NDK-derived table in `_amiga_fd.LIBRARIES`
+        #   3. runtime .fd search path (PROGDIR:fd/, LIBS:fd/)
+        #   4. empty (calls will raise AttributeError per-function)
         self._name = name
-        self._signatures = _amiga_fd.LIBRARIES.get(name, {})
+        if signatures is not None:
+            self._signatures = _normalize_signatures(signatures)
+        else:
+            sigs = _amiga_fd.LIBRARIES.get(name)
+            if sigs is None:
+                sigs = _load_fd(name) or {}
+            self._signatures = sigs
         self._base = _c.lib_open(name, version)
 
     @property
@@ -118,9 +243,21 @@ class Library:
         return call
 
 
-def library(name, version=0):
-    """Convenience factory equivalent to `Library(name, version)`."""
-    return Library(name, version)
+def library(name, version=0, signatures=None):
+    """Convenience factory equivalent to `Library(name, version, signatures=...)`."""
+    return Library(name, version, signatures=signatures)
+
+
+def library_from_signatures(name, version, signatures):
+    """Open `name` and dispatch its functions using `signatures` directly,
+    bypassing both `_amiga_fd.LIBRARIES` and the runtime .fd search path.
+
+    Useful for libraries that ship no `.fd` file at all (e.g. proprietary
+    third-party libs), or for overriding a baked-in signature without
+    rebuilding the binary.  `signatures` is a dict mapping function name
+    to `(lvo, regs_csv)` or `(lvo, regs_csv, metadata)`.
+    """
+    return Library(name, version, signatures=signatures)
 
 
 class TagList:
@@ -262,3 +399,167 @@ def taglist(*pairs, **named):
             raise KeyError("unknown tag name: %r" % name)
         items.append((tag_id, val))
     return TagList(items)
+
+
+# ---------- Phase 17 step 6: ctypes-lite struct accessors ----------
+#
+# `Struct(addr, layout)` wraps a C struct living at `addr` and gives
+# Python-attribute access to its fields, dispatching through the
+# `_amiga.peek_*` / `poke_*` primitives.  `layout` is a `dict`
+# mapping field name to `(offset, type_code)`, where the type code is:
+#
+#   'B'   unsigned byte   (1)
+#   'b'   signed byte     (1)
+#   'H'   unsigned word   (2, big-endian native)
+#   'h'   signed word     (2)
+#   'L'   unsigned long   (4)
+#   'l'   signed long     (4)
+#   'P'   pointer         (4, alias for 'L')
+#   'sN'  raw N-byte region — read returns bytes; assign accepts bytes
+#   'S'   NUL-terminated string pointed at by a ULONG slot — read
+#         dereferences and returns bytes up to the first NUL (cap 256);
+#         not writable through the accessor.
+#
+# `ports/amiga/modules/_amiga_structs.py` ships hand-curated layouts
+# for `Node`, `Task`, `Library`, `DateStamp`, `FileInfoBlock`, and
+# `IntuiMessage`, with per-struct factory functions re-exported here
+# (`amiga.Task(addr)`, `amiga.Library_struct(addr)`, ...).
+
+import _amiga_structs as _structs
+
+
+def _struct_read(addr, typ):
+    if typ == "B":
+        return _c.peek_b(addr)
+    if typ == "b":
+        v = _c.peek_b(addr)
+        return v - 256 if v >= 128 else v
+    if typ == "H":
+        return _c.peek_w(addr)
+    if typ == "h":
+        v = _c.peek_w(addr)
+        return v - 65536 if v >= 32768 else v
+    if typ in ("L", "P"):
+        return _c.peek_l(addr) & 0xffffffff
+    if typ == "l":
+        v = _c.peek_l(addr) & 0xffffffff
+        return v if v < 0x80000000 else v - 0x100000000
+    if typ == "S":
+        ptr = _c.peek_l(addr) & 0xffffffff
+        if ptr == 0:
+            return None
+        out = bytearray()
+        i = 0
+        while i < 256:
+            b = _c.peek_b(ptr + i)
+            if b == 0:
+                break
+            out.append(b)
+            i += 1
+        return bytes(out)
+    if typ[0] == "s":
+        n = int(typ[1:])
+        return _c.peek_bytes(addr, n)
+    raise ValueError("unknown struct type code %r" % typ)
+
+
+def _struct_write(addr, typ, value):
+    if typ == "B" or typ == "b":
+        _c.poke_b(addr, value & 0xff)
+    elif typ == "H" or typ == "h":
+        _c.poke_w(addr, value & 0xffff)
+    elif typ in ("L", "l", "P"):
+        _c.poke_l(addr, value & 0xffffffff)
+    elif typ[0] == "s":
+        n = int(typ[1:])
+        if isinstance(value, str):
+            value = value.encode("ascii")
+        if len(value) > n:
+            raise ValueError("value too long for s%d slot" % n)
+        # Pad with NULs to the full slot width.
+        padded = bytes(value) + b"\x00" * (n - len(value))
+        _c.poke_bytes(addr, padded)
+    else:
+        raise ValueError("type %r not writable through Struct" % typ)
+
+
+class Struct:
+    """Pythonic accessor for a C struct at a fixed address.
+
+    `layout` is a dict mapping field name to `(offset, type_code)`.
+    Attribute reads peek; assignments poke (where supported by the
+    type).  Pass `addr=0` only as a placeholder — every read/write
+    runs against the live address.
+
+    Pre-curated layouts ship in `_amiga_structs`; re-export factories
+    such as `amiga.Task(addr)` build the right `Struct` for you.
+    """
+
+    def __init__(self, addr, layout, name=None):
+        object.__setattr__(self, "_addr", addr)
+        object.__setattr__(self, "_layout", layout)
+        object.__setattr__(self, "_name", name)
+
+    @property
+    def addr(self):
+        return self._addr
+
+    def __int__(self):
+        return self._addr
+
+    def __getattr__(self, fname):
+        if fname.startswith("_"):
+            raise AttributeError(fname)
+        info = self._layout.get(fname)
+        if info is None:
+            raise AttributeError(fname)
+        offset, typ = info
+        return _struct_read(self._addr + offset, typ)
+
+    def __setattr__(self, fname, value):
+        if fname.startswith("_"):
+            object.__setattr__(self, fname, value)
+            return
+        info = self._layout.get(fname)
+        if info is None:
+            raise AttributeError(fname)
+        offset, typ = info
+        _struct_write(self._addr + offset, typ, value)
+
+    def __repr__(self):
+        nm = self._name or "Struct"
+        return "<%s @ 0x%x>" % (nm, self._addr)
+
+
+def Node(addr):
+    """Wrap a `struct Node` at `addr`."""
+    return Struct(addr, _structs.NODE, name="Node")
+
+
+def Task(addr):
+    """Wrap a `struct Task` at `addr`."""
+    return Struct(addr, _structs.TASK, name="Task")
+
+
+def Library_struct(addr):
+    """Wrap a `struct Library` at `addr`.
+
+    Named with a trailing `_struct` to avoid the class-vs-struct collision
+    with `amiga.Library` (which represents an *opened* library proxy).
+    """
+    return Struct(addr, _structs.LIBRARY, name="Library")
+
+
+def DateStamp(addr):
+    """Wrap a `struct DateStamp` (12-byte days/minutes/ticks triple)."""
+    return Struct(addr, _structs.DATESTAMP, name="DateStamp")
+
+
+def FileInfoBlock(addr):
+    """Wrap a `struct FileInfoBlock` (260 bytes)."""
+    return Struct(addr, _structs.FILEINFOBLOCK, name="FileInfoBlock")
+
+
+def IntuiMessage(addr):
+    """Wrap a `struct IntuiMessage` (52 bytes)."""
+    return Struct(addr, _structs.INTUIMESSAGE, name="IntuiMessage")
