@@ -26,8 +26,8 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 18 — ARexx integration: inbound `MICROPYTHON.1` port plus outbound `amiga.rexx(port, command)` client via `rexxsyslib.library`
 - Phase 19 ✅ Workbench launch support: `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype()`, auto-opened CON: window for stdin/stdout, `SCRIPT=` / `HEAP=` / `MAXHEAP=` tooltypes honoured at startup
 - Phase 20 ✅ Env-var integration: `os.getenv` / `os.putenv` / `os.unsetenv` backed by `dos.library` `GetVar`/`SetVar` (local vars, matching Unix semantics; `ENV:` and `ENVARC:` writeable directly for shell-shared / persistent vars)
-- Phase 21 — Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)`
-- Phase 22 — AmigaDOS pattern matching: expose `MatchFirst`/`MatchNext` as `amiga.match("#?.py")`
+- Phase 21 ✅ Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)` via `LockDosList`/`NextDosEntry` and `Info()`
+- Phase 22 ✅ AmigaDOS pattern matching: `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator with finaliser) via `MatchFirst`/`MatchNext`/`MatchEnd`
 - Phase 23 ✅ `timer.device`-backed timing: MICROHZ-accurate `mp_hal_delay_us` / `ticks_us` via `timer.device` + cached-frequency `ReadEClock()`
 - Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
 - Phase 25 — Extra break signals: expose `SIGBREAKF_CTRL_D/E/F` and `amiga.signal()` / `amiga.wait_signal()`
@@ -372,6 +372,15 @@ amiga.free_vec(addr)        # → None
 amiga.execute(cmd)          # → int return code (0=OK, 5=WARN, 10=ERROR, 20=FAILURE, -1=failed to start)
 amiga.exists(path)          # → bool; does this file/dir/volume exist? Suppresses
                             #   AmigaDOS volume requesters around the Lock()
+
+# Phase 21 — dos.library introspection (see Phase 21 below)
+amiga.volumes()             # → list[str] of mounted volume names ("Work:", "RAM:", ...)
+amiga.assigns()             # → dict[str, str] mapping assign name to resolved target
+amiga.disk_info(path)       # → (free_bytes, total_bytes, block_size) for the path's volume
+
+# Phase 22 — AmigaDOS pattern matching (see Phase 22 below)
+amiga.match(pattern)        # → list[str] of full paths matching an AmigaDOS pattern
+amiga.imatch(pattern)       # → iterator yielding matches lazily (frees AnchorPath on GC)
 
 # Memory flags
 amiga.MEMF_ANY              # 0
@@ -1256,44 +1265,109 @@ and unrelated).
 
 ---
 
-### Phase 21 — Volume and assign introspection
+### Phase 21 — Volume and assign introspection ✅
 
-Surface the AmigaDOS device list — mounted volumes, assigns, and free-space
-info — to Python. Walks `DosList` via `dos.library` `LockDosList` /
-`NextDosEntry` / `UnLockDosList`, and `Info()` for per-volume stats.
+Three port-side C bindings in `modamiga.c` surface the AmigaDOS device
+list to Python:
 
 ```python
 import amiga
-amiga.volumes()         # → ['Work:', 'Workbench:', 'RAM:']
-amiga.assigns()         # → {'LIBS:': 'Workbench:Libs',
-                        #    'C:':    'Workbench:C', ...}
-amiga.disk_info("Work:")
+amiga.volumes()
+# → ['Python:', 'Ram Disk:', 'Workbench:']
+amiga.assigns()
+# → {'C:': 'Workbench:C', 'LIBS:': 'Workbench:Libs',
+#    'ENV:': 'Ram Disk:ENV', 'HELP:': 'LOCALE:Help', ...}
+amiga.disk_info("SYS:")
 # → (free_bytes, total_bytes, block_size)
 ```
 
-Trivial on top of Phase 17 (a handful of `dos.library` calls), or hand-written
-as port-side C if Phase 17 isn't there yet — but the post-Phase-17 version is
-a ~50-line frozen Python module.
+Implementation:
+
+- **`amiga.volumes()`** locks the DosList with
+  `LockDosList(LDF_VOLUMES | LDF_READ)`, walks it via `NextDosEntry`,
+  and copies each `dol_Name` (a BSTR — length byte followed by chars)
+  into a `volume:` C string. `UnLockDosList` releases the read lock.
+- **`amiga.assigns()`** does the same walk under `LDF_ASSIGNS`. The
+  target path comes from `NameFromLock(dol_Lock, ...)` for standard
+  (`DLT_DIRECTORY`) assigns, or from `dol_misc.dol_assign.dol_AssignName`
+  for late-binding / non-binding assigns (which have no Lock).
+  Multi-directory assigns are reported by their first directory only;
+  the rare caller that needs the full chain can fall back to the
+  shell `Assign` command.
+- **`amiga.disk_info(path)`** `Lock`s the given path (suppressing
+  AmigaDOS auto-requesters via `pr_WindowPtr = (APTR)-1`, so an
+  unmounted volume raises `OSError(ENODEV)` instead of popping
+  "Insert volume X:" in the user's face), calls `Info()` to fill an
+  `InfoData`, then `UnLock`s. Returns `(free, total, block_size)`
+  with the byte counts computed as `uint64_t` so volumes >4 GB
+  (typical under Amiberry) report correctly.
+
+A small `dos_errno → MP_E*` mapping table in `modamiga.c` converts
+`IoErr()` values to MicroPython errno constants (`ERROR_DEVICE_NOT_MOUNTED`
+→ `MP_ENODEV`, `ERROR_OBJECT_NOT_FOUND` → `MP_ENOENT`, etc.) so
+Python exception handlers see sensible codes. (`vfs_amiga.c` has a
+similar mapping for VFS operations; the two are kept separate rather
+than coupled.)
+
+Tested under Amiberry against an A1200 disk image: `volumes()` finds
+Python:/Ram Disk:/Workbench:; `assigns()` returns 16 entries including
+the well-known set (C:, LIBS:, S:, ENV:, ENVARC:, FONTS:, ...);
+`disk_info("SYS:")` reports a sane `(free, total, bs)` triple; a
+deliberately-bogus `disk_info("NoSuchVol:")` raises `OSError` with
+errno 19 (`MP_ENODEV`).
 
 ---
 
-### Phase 22 — AmigaDOS pattern matching
+### Phase 22 — AmigaDOS pattern matching ✅
 
-AmigaDOS patterns (`#?.py`, `~(#?.bak)`, `[a-z]#?`) are richer than POSIX
-glob and what users at the AmigaShell already know. Expose `dos.library`
-`ParsePattern` / `MatchFirst` / `MatchNext` / `MatchEnd`:
+AmigaDOS patterns (`#?.py`, `~(#?.bak)`, `[a-z]#?`) are richer than
+POSIX glob and are what users at the AmigaShell already know. Two
+port-side bindings in `modamiga.c` expose the `dos.library` matcher:
 
 ```python
 import amiga
-for path in amiga.match("Work:src/#?.py"):
+for path in amiga.match("S:#?"):       # eager list
+    print(path)
+
+for path in amiga.imatch("Work:#?.py"):  # lazy iterator
     print(path)
 ```
 
-Generator form (`amiga.imatch`) for memory-efficient iteration over large
-match sets — useful since `MatchFirst` builds an `AnchorPath` that holds
-real file `Lock`s during iteration.
+Implementation: one `AnchorPath` (the `dos/dosasl.h` struct expected
+by `MatchFirst`/`MatchNext`) is `AllocVec`'d with a trailing 512-byte
+buffer for the full path; `ap_Strlen` is preset to that size so the
+matcher writes each result into `ap_Buf` as a null-terminated string.
+`MatchFirst` parses the pattern internally — there's no separate
+`ParsePattern` call.
 
-Also trivial post-Phase-17 — pure-Python wrapper around `dos.library` calls.
+- **`amiga.match(pattern)`** is the eager form. Loops
+  `MatchFirst` → `MatchNext` while the return code is 0, appending
+  each `ap_Buf` to a Python list. `MatchEnd` and `FreeVec` always
+  run before return. Return codes `ERROR_NO_MORE_ENTRIES` (no more
+  matches) and `ERROR_OBJECT_NOT_FOUND` (path/volume missing) are
+  treated as "empty list" rather than raising; any other DOS error
+  becomes `OSError`.
+- **`amiga.imatch(pattern)`** is the iterator form, built on the
+  same `mp_type_polymorph_iter_with_finaliser` pattern that
+  `vfs_amiga.c`'s `ilistdir` uses. The iterator owns the
+  `AnchorPath`; its `iternext` calls `MatchNext` and yields
+  `ap_Buf`; its finaliser (`__del__`, run on GC of the iterator)
+  calls `MatchEnd` + `FreeVec` so an abandoned loop —
+  `for p in amiga.imatch(...): break` — doesn't leak the anchor.
+  `MatchFirst` runs eagerly inside `imatch()` itself so the first
+  result is ready on the very first `next()` call.
+
+Both calls suppress AmigaDOS auto-requesters around the matcher
+(via `pr_WindowPtr = (APTR)-1`) so an unmounted volume in the
+pattern just produces an `OSError` instead of an interactive
+"Insert volume" dialog.
+
+Tested under Amiberry: `match("S:#?")` finds the 9 expected
+startup-script files (Shell-Startup, user-startup, PCD, etc.);
+`imatch("S:#?")` yields the same 9 paths one at a time with the
+correct first result; `imatch` aborted via `break` + `gc.collect()`
+runs the finaliser without leaks; `imatch("NoSuchVol:#?")` raises
+`OSError(ENODEV)`.
 
 ---
 
@@ -1854,8 +1928,8 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 18 — ARexx integration | Planned | Outbound `amiga.rexx(port, command)` and inbound `MICROPYTHON.1` port via `rexxsyslib.library` |
 | 19 — Workbench launch / tooltypes | ✅ Done | `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype(name[, default])` in `modamiga.c`; bebbo crt0 does `WaitPort`+`GetMsg`+`ReplyMsg` so `main.c` just reads `_WBenchMsg`; `CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT` opened as stdin/stdout when WB-launched; `SCRIPT=` tooltype runs that path on startup; `HEAP=`/`MAXHEAP=` tooltypes feed the heap-sizing pre-scan (lower priority than env vars / `-X`); cannot be exercised under vamos (no Workbench, no `icon.library`) |
 | 20 — Env-var integration | ✅ Done | `os.getenv`/`os.putenv`/`os.unsetenv` via `GetVar`/`SetVar` (flags=0, local vars; matches Unix `os.putenv` semantics) in `ports/amiga/modos.c` (included via `MICROPY_PY_OS_INCLUDEFILE`); two vamos bugs worked around — see Phase 20 |
-| 21 — Volume / assign introspection | Planned | `amiga.volumes()` / `assigns()` / `disk_info()` via `DosList` and `Info()` |
-| 22 — AmigaDOS pattern matching | Planned | `amiga.match("#?.py")` via `MatchFirst`/`MatchNext` |
+| 21 — Volume / assign introspection | ✅ Done | `amiga.volumes()` / `assigns()` / `disk_info()` in `modamiga.c` via `LockDosList`+`NextDosEntry` and `Info()`; auto-requesters suppressed; `disk_info` returns 64-bit byte counts for >4 GB volumes; `IoErr()` mapped to `MP_E*` (incl. `ENODEV` for unmounted volumes) |
+| 22 — AmigaDOS pattern matching | ✅ Done | `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator) in `modamiga.c` via `MatchFirst`/`MatchNext`/`MatchEnd`; iterator uses `mp_type_polymorph_iter_with_finaliser` so an abandoned loop cleans up the `AnchorPath` on GC |
 | 23 — `timer.device` timing | ✅ Done | `mp_hal_delay_us` uses `timer.device` MICROHZ (`DoIO`) for ≥200 µs and a tight `ReadEClock()` loop below; `mp_hal_ticks_us/ms` read EClock with a cached frequency; `mp_hal_delay_ms` no longer goes via `dos.library Delay()` (20 ms granularity); setup/teardown in `amiga_timer.c` around `mp_init/deinit` |
 | 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
 | 25 — Extra break signals | Planned | Expose `SIGBREAKF_CTRL_D/E/F`, `amiga.signal()`, `amiga.wait_signal()` (Ctrl+C-safe) |
