@@ -422,9 +422,19 @@ int main(int argc_unused, char **argv_unused) {
 
         } else {
             // Positional argument: treat as a script file.
-            // Add the script's directory to the front of sys.path.
+            // Add the script's directory to the front of sys.path so
+            // `from sibling_module import ...` works. If the script
+            // was passed by basename, the directory component is
+            // empty — fall back to the cwd (matches CPython, which
+            // sets sys.path[0] to the script's resolved absolute dir).
             char dir[256];
             path_dir(argv[a], dir, sizeof(dir));
+            if (!dir[0]) {
+                struct Process *me_p = (struct Process *)FindTask(NULL);
+                if (!NameFromLock(me_p->pr_CurrentDir, (STRPTR)dir, sizeof(dir))) {
+                    dir[0] = '\0';
+                }
+            }
             if (dir[0]) {
                 mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
                     mp_obj_new_str(dir, strlen(dir)));
