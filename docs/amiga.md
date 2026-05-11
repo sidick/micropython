@@ -20,6 +20,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 11 — CI build workflow
 - Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
 - Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
+- Phase 14 — Dynamic heap growth via `gc_add()` + runtime-configurable initial heap size
 
 ### Non-goals (initially)
 
@@ -678,6 +679,70 @@ wrapper, because pipes never get cooked-mode line buffering.
 
 ---
 
+### Phase 14 — Dynamic heap growth and runtime sizing
+
+Today the GC heap is a single 256 KB chunk allocated once at startup in
+`main.c` via `AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST|MEMF_PUBLIC)` (with
+`MEMF_ANY` fallback). That's fine for a 1 MB chip-RAM A500, but on a
+machine with 16+ MB of Fast RAM we leave most of it on the table; once
+the 256 KB is full the port raises `MemoryError` instead of expanding.
+Goals for this phase:
+
+1. **Runtime initial heap size.** Replace the compile-time
+   `MICROPY_HEAP_SIZE` with a value derived at startup. Sources, in
+   priority order:
+     - `-X heap=<N>[K|M]` on the command line (matches what other ports
+       accept; `main.c` already parses `-X` for `compile-only` etc.).
+     - `MICROPYHEAP` env var (read via `GetVar()` from dos.library).
+     - A sensible default (probably still 256 KB) so out-of-the-box
+       behaviour is unchanged for users not configuring anything.
+
+2. **Dynamic growth via `gc_add()`.** When `gc_alloc` can't satisfy a
+   request after a collection, ask `AllocVec` for another chunk
+   (typically 128–256 KB) and feed it to the GC via `gc_add(start,
+   end)`. MicroPython supports multiple non-contiguous GC arenas
+   natively, so this is just plumbing.
+   Track each chunk in a small linked list of `BPTR`s so we can
+   `FreeVec` them all in `mp_deinit()` at exit.
+
+3. **Growth policy.** Don't grow on every collection — only after a
+   full collection still leaves the heap above some occupancy
+   threshold (e.g. >80 %). Cap the total via a `-X maxheap=<N>`
+   option so a runaway script can still be stopped without thrashing
+   the system. On the failure to grow (out of Fast RAM, hit the cap)
+   fall back to the standard `MemoryError` path.
+
+4. **Reporting.** Extend `amiga.os_version()`-style introspection with
+   `amiga.heap_info()` returning a tuple of `(total_bytes,
+   free_bytes, num_arenas)`. Useful for the user to tune `-X heap` /
+   `-X maxheap` for their workload.
+
+Implementation lives in `main.c` (parsing, initial allocation, the
+chunk list, `mp_deinit` cleanup) and a small helper hook from
+`gc.c`-callers — MicroPython already calls a port-provided
+`gc_helper_get_regs_and_sp` etc., but the natural extension hook is
+`gc_collect_root_with_alloc_fail` or similar; failing that, the port
+overrides `mp_alloc_failed_oom` via a port-local wrapper.
+
+Open questions to settle before starting:
+
+- Should chunks be released when the heap drops back below some low-
+  water mark? Probably not — `FreeVec` on a `gc_add`'d region needs
+  the region to be empty of live objects, which the GC can't guarantee.
+  Just keep grown chunks until exit.
+- Is `MEMF_FAST` still the right preference at growth time, or do we
+  want to fall back to `MEMF_ANY` immediately to keep more Fast RAM
+  available for non-Python code? Probably `MEMF_FAST` first, same as
+  the initial allocation.
+
+Acceptance: a build with `MICROPY_HEAP_SIZE` at its default plus
+`-X heap=2M` can compile and execute a script that allocates well
+beyond 256 KB; `amiga.heap_info()` shows the heap growing across
+multiple arenas; rebooting after the run frees all chunks cleanly
+(verified under vamos's orphan-memory check).
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
@@ -1025,3 +1090,4 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
 | 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
 | 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
+| 14 — Dynamic heap / runtime sizing | Planned | Replace fixed 256 KB heap with `-X heap=<N>`/`MICROPYHEAP` initial size plus `gc_add()`-based growth on demand, capped by `-X maxheap=<N>`; `amiga.heap_info()` for introspection |
