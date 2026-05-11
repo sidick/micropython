@@ -83,6 +83,7 @@ SRC_EXTMOD_C := $(filter-out extmod/modjson.c, $(SRC_EXTMOD_C))
 SRC_C = \
 	main.c \
 	mphalport.c \
+	amiga_timer.c \
 	modjson.c \
 	modamiga.c \
 	vfs_amiga.c \
