@@ -759,6 +759,12 @@ int main(int argc_unused, char **argv_unused) {
     vfs_amiga_cleanup();
     #endif
 
+    // Phase 18 (inbound): if a script forgot to amiga.rexx_close(),
+    // tear the port down ourselves so we don't leave a dangling public
+    // MsgPort name (and a freed memory pointer) in Exec's port list.
+    extern void amiga_rexx_shutdown(void);
+    amiga_rexx_shutdown();
+
     mp_deinit();
 
     // Tear down timer.device. Done after mp_deinit so any Python code run
