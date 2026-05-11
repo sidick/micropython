@@ -689,6 +689,17 @@ machine with 16+ MB of Fast RAM we leave most of it on the table; once
 the 256 KB is full the port raises `MemoryError` instead of expanding.
 Goals for this phase:
 
+> Note on allocation flags: this phase should use `MEMF_ANY|MEMF_PUBLIC`
+> (not `MEMF_FAST`) for both the initial alloc and any subsequent
+> growth chunks. AmigaOS's free memory list is ordered fastest-first,
+> so `MEMF_ANY` already prefers Fast RAM when it's available, and
+> degrades gracefully to Chip RAM on a stock A500/A1000/A2000 that
+> has no Fast at all. The current `MEMF_FAST`-then-fallback pattern
+> is actually slightly worse on those machines because it always
+> takes one failing `AllocVec` call before the real allocation.
+> The existing `main.c` allocation should also switch to `MEMF_ANY`
+> at the same time.
+
 1. **Runtime initial heap size.** Replace the compile-time
    `MICROPY_HEAP_SIZE` with a value derived at startup. Sources, in
    priority order:
@@ -731,10 +742,11 @@ Open questions to settle before starting:
   water mark? Probably not — `FreeVec` on a `gc_add`'d region needs
   the region to be empty of live objects, which the GC can't guarantee.
   Just keep grown chunks until exit.
-- Is `MEMF_FAST` still the right preference at growth time, or do we
-  want to fall back to `MEMF_ANY` immediately to keep more Fast RAM
-  available for non-Python code? Probably `MEMF_FAST` first, same as
-  the initial allocation.
+- What `MEMF_*` mask should grown chunks use? `MEMF_ANY|MEMF_PUBLIC`,
+  same as the initial allocation under this plan. AmigaOS already
+  hands out the fastest available region first; chip-RAM-only
+  machines (stock A500/A1000/A2000) simply can't satisfy `MEMF_FAST`
+  so insisting on it would close those configurations off entirely.
 
 Acceptance: a build with `MICROPY_HEAP_SIZE` at its default plus
 `-X heap=2M` can compile and execute a script that allocates well
