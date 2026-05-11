@@ -1,11 +1,17 @@
 # amiga-runtests.py — on-device MicroPython test runner for AmigaOS.
 #
 # This script is meant to run *on* the Amiga (under the port's own
-# micropython binary), not on the host. Copy it to the Amiga (e.g. to
-# RAM: or a mounted volume) and invoke it as:
+# micropython binary), not on the host. Typical invocation from an
+# Amiberry shell, with the repo (containing both `tools/` and
+# `tests/`) mounted as e.g. `py0:`:
 #
 #     1> Stack 32768
-#     1> micropython RAM:amiga-runtests.py TESTS:basics
+#     1> cd py0:
+#     1> micropython tools/amiga-runtests.py tests/basics
+#
+# The test directory argument is just a path -- relative to the
+# current cwd, or absolute via any AmigaOS volume name. There's no
+# need for a dedicated `tests:` assign.
 #
 # It walks a single directory of .py tests, runs each one with
 # amiga.execute("micropython ... > T:..."), and compares the captured
@@ -99,14 +105,21 @@ def should_skip(path):
     return False
 
 
-def run_test(path):
-    """Run a test; captured output ends up at OUT."""
+def run_test(name):
+    """Run a single test (already a basename, after main()'s chdir).
+    Captured output ends up at OUT."""
+    # Pass the test as a basename only -- main() already chdir'd into
+    # the test dir, so the bare filename resolves correctly via cwd,
+    # and sys.argv[0] / __file__ inside the test then match what host
+    # CPython produces for the .exp (tools/amiga-gen-exp.py does the
+    # same: cwd=dirname, argv=basename). Leaving the directory prefix
+    # in argv made io/argv.py and similar tests fail purely on the
+    # path-string format.
     # Only redirect stdout. AmigaDOS shell doesn't parse `2>file` -- it
-    # passes the token straight through to the child, polluting sys.argv
-    # (e.g. io/argv.py would see "2>T:..." as argv[1]). Our binary
-    # routes sys.stderr through the same console stream as stdout, so
-    # tracebacks still get captured.
-    amiga.execute("micropython " + path + " >" + OUT)
+    # passes the token straight through to the child, polluting sys.argv.
+    # Our binary routes sys.stderr through the same console stream as
+    # stdout, so tracebacks still get captured.
+    amiga.execute("micropython " + name + " >" + OUT)
 
 
 def is_skip_output():
@@ -134,6 +147,12 @@ def check_exp(test_path):
     does for tests_with_regex_output isn't reproduced here, but in
     practice the .exp files only use literal text plus the wildcard.
 
+    The actual output is also stripped of the cwd-absolute prefix
+    before comparison -- CPython produces an absolute __file__ for
+    imported modules, our gen-exp strips the host prefix off, and we
+    do the same for the Amiga prefix here so the two halves agree
+    (see import/import_file.py).
+
     Both files are loaded into a list of rstripped lines and the lists
     are trimmed of leading/trailing blank lines before matching (which
     is the same edge-stripping the original _norm's .strip() did). The
@@ -154,7 +173,19 @@ def check_exp(test_path):
         return False
     _trim_blanks(exp_lines)
     _trim_blanks(act_lines)
+    _strip_cwd_prefix(act_lines)
     return _match_lines(act_lines, exp_lines)
+
+
+_CWD_PREFIX = None  # set by main(); bytes form of cwd + "/"
+
+
+def _strip_cwd_prefix(lines):
+    if not _CWD_PREFIX:
+        return
+    for i, line in enumerate(lines):
+        if _CWD_PREFIX in line:
+            lines[i] = line.replace(_CWD_PREFIX, b"")
 
 
 def _trim_blanks(lines):
@@ -254,7 +285,10 @@ def _normalise_dir(d):
 
 
 def main():
-    test_dir = sys.argv[1] if len(sys.argv) > 1 else "TESTS:basics"
+    if len(sys.argv) < 2:
+        print("usage: micropython amiga-runtests.py <test_dir> [<result_dir>]")
+        return
+    test_dir = sys.argv[1]
     result_dir = _normalise_dir(
         sys.argv[2] if len(sys.argv) > 2 else RESULT_DIR_DEFAULT
     )
@@ -273,44 +307,59 @@ def main():
     # Change into the test directory so a test that opens a relative path
     # like "data/file1" resolves the same way the host runner expects.
     # Child processes spawned via amiga.execute() inherit our cwd, so a
-    # single chdir up front is enough.
+    # single chdir up front is enough. After this, all tests are
+    # addressed by basename only (e.g. "argv.py"), so neither the
+    # directory nor the volume name leaks into sys.argv[0] / __file__.
     os.chdir(test_dir)
 
-    amiga.execute('List "' + test_dir + '" PAT #?.py LFORMAT "%P%N" >' + LST)
+    # Record the cwd's absolute form (with trailing separator) so
+    # check_exp can strip it from any line in the captured output.
+    # Imported modules' __file__ ends up prefixed with this; the host
+    # gen-exp tool strips the equivalent host prefix off the .exp side.
+    global _CWD_PREFIX
+    cwd = os.getcwd()
+    if cwd:
+        sep = "" if cwd.endswith(":") or cwd.endswith("/") else "/"
+        _CWD_PREFIX = (cwd + sep).encode()
+
+    # List just the basenames in the (now-current) directory; %N is the
+    # filename. We don't want %P here since the path prefix would only
+    # pollute sys.argv / __file__ if it appeared in our invocations.
+    amiga.execute('List "" PAT #?.py LFORMAT "%N" >' + LST)
     try:
         with open(LST) as f:
-            files = [l.strip() for l in f if l.strip()]
+            names = [l.strip() for l in f if l.strip()]
     except OSError:
         print("Cannot list", test_dir)
         return
-    if not files:
+    if not names:
         print("No .py files in", test_dir)
         return
 
     passed = failed = skipped = 0
-    for path in sorted(files):
-        if should_skip(path):
+    for name in sorted(names):
+        if should_skip(name):
             skipped += 1
-            print("skip ", path)
-            clear_stale_result(path, result_dir)
+            print("skip ", name)
+            clear_stale_result(name, result_dir)
             continue
-        run_test(path)
+        run_test(name)
         if is_skip_output():
             skipped += 1
-            print("skip ", path)
-            clear_stale_result(path, result_dir)
+            print("skip ", name)
+            clear_stale_result(name, result_dir)
             continue
-        result = check_exp(path)
+        result = check_exp(name)
         if result is True:
             passed += 1
-            print("pass ", path)
-            clear_stale_result(path, result_dir)
+            print("pass ", name)
+            clear_stale_result(name, result_dir)
         elif result is False:
             failed += 1
-            print("FAIL ", path)
+            print("FAIL ", name)
             for line in output_head():
                 print("      got:", line)
-            save_failure(path, result_dir)
+            save_failure(name, result_dir)
         else:
             # No .exp file — pass if no exception text in output. Most
             # tests should have a .exp file generated by
@@ -318,14 +367,14 @@ def main():
             # handful of cases where CPython itself can't run the test.
             if not output_has_error():
                 passed += 1
-                print("pass ", path)
-                clear_stale_result(path, result_dir)
+                print("pass ", name)
+                clear_stale_result(name, result_dir)
             else:
                 failed += 1
-                print("FAIL ", path)
+                print("FAIL ", name)
                 for line in output_head():
                     print("      got:", line)
-                save_failure(path, result_dir)
+                save_failure(name, result_dir)
 
     total = passed + failed + skipped
     print(
