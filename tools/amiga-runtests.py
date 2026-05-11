@@ -119,68 +119,65 @@ def check_exp(test_path):
     does for tests_with_regex_output isn't reproduced here, but in
     practice the .exp files only use literal text plus the wildcard.
 
-    The .exp file is loaded into memory (small; large files belong to
-    feature-gated tests that we skip up front via _SKIP_*). The actual
-    output is streamed from disk a line at a time."""
+    Both files are loaded into a list of rstripped lines and the lists
+    are trimmed of leading/trailing blank lines before matching (which
+    is the same edge-stripping the original _norm's .strip() did). The
+    on-disk sizes of unskipped .exp files in the test tree top out
+    around 21 KB, so peak memory is well within the 256 KB heap; the
+    huge ones (int_big_mul.py.exp at 74 KB, etc.) belong to feature-
+    gated tests that are skipped up front via _SKIP_*."""
     exp_path = test_path + ".exp"
     try:
-        ef = open(exp_path, "rb")
+        with open(exp_path, "rb") as ef:
+            exp_lines = [l.rstrip() for l in ef]
     except OSError:
         return None
     try:
-        exp_lines = [l.rstrip() for l in ef]
-    finally:
-        ef.close()
-    # Drop leading/trailing blank lines so the original _norm's .strip()
-    # behaviour is preserved.
-    while exp_lines and not exp_lines[-1]:
-        exp_lines.pop()
-    while exp_lines and not exp_lines[0]:
-        del exp_lines[0]
-    try:
-        af = open(OUT, "rb")
+        with open(OUT, "rb") as af:
+            act_lines = [l.rstrip() for l in af]
     except OSError:
         return False
-    try:
-        return _match_exp(af, exp_lines)
-    finally:
-        af.close()
+    _trim_blanks(exp_lines)
+    _trim_blanks(act_lines)
+    return _match_lines(act_lines, exp_lines)
 
 
-def _match_exp(af, exp_lines):
-    n = len(exp_lines)
-    ei = 0
-    while ei < n:
-        e = exp_lines[ei]
+def _trim_blanks(lines):
+    while lines and not lines[-1]:
+        lines.pop()
+    while lines and not lines[0]:
+        del lines[0]
+
+
+def _match_lines(act, exp):
+    """True if act matches exp. '########' in exp is a wildcard meaning
+    'match zero or more act lines'."""
+    la = len(act)
+    le = len(exp)
+    ai = ei = 0
+    while ei < le:
+        e = exp[ei]
         if e == b"########":
-            # Wildcard. Find the next non-wildcard expected line.
+            # Find the next non-wildcard expected line.
             ej = ei + 1
-            while ej < n and exp_lines[ej] == b"########":
+            while ej < le and exp[ej] == b"########":
                 ej += 1
-            if ej == n:
+            if ej == le:
                 # Trailing wildcard(s): accept anything remaining.
                 return True
-            target = exp_lines[ej]
-            # Skip actual lines until one matches the target.
-            while True:
-                line = af.readline()
-                if not line:
-                    return False
-                if line.rstrip() == target:
-                    break
+            target = exp[ej]
+            while ai < la and act[ai] != target:
+                ai += 1
+            if ai >= la:
+                return False
+            ai += 1
             ei = ej + 1
         else:
-            line = af.readline()
-            if not line or line.rstrip() != e:
+            if ai >= la or act[ai] != e:
                 return False
+            ai += 1
             ei += 1
-    # Expected exhausted; any remaining actual must be blank.
-    while True:
-        line = af.readline()
-        if not line:
-            return True
-        if line.rstrip():
-            return False
+    return ai == la
 
 
 def output_has_error():
