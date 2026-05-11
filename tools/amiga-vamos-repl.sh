@@ -22,10 +22,34 @@ if [ ! -t 0 ]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MPY_BIN="$REPO_ROOT/ports/amiga/build/micropython"
 
+# Variant selection — same rules as amiga-vamos-run.sh. Vamos emulates
+# 68020 (soft-float) and 68040 (built-in FPU) but has no 68881/68882
+# emulation, so the 68020fpu variant needs Amiberry or real hardware.
+AMIGA_VARIANT="${AMIGA_VARIANT:-standard}"
+# RAM sized to fit the variant's heap plus headroom — see amiga-vamos-run.sh.
+case "$AMIGA_VARIANT" in
+    standard)       VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
+    a1200)          VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
+    68040)          VAMOS_CPU="68040"; VAMOS_RAM_KIB=4096 ;;
+    68020fpu)
+        echo "amiga-vamos-repl.sh: the '68020fpu' variant builds 68881 FPU instructions" >&2
+        echo "  but vamos has no 68881 emulation. Use Amiberry, FS-UAE, or real" >&2
+        echo "  hardware to test this variant. (For host-side testing of FPU codegen," >&2
+        echo "  use AMIGA_VARIANT=68040 instead — vamos's 68040 has an emulated FPU.)" >&2
+        exit 2
+        ;;
+    *)
+        echo "amiga-vamos-repl.sh: unknown AMIGA_VARIANT='$AMIGA_VARIANT'" >&2
+        echo "  Supported: standard, a1200, 68020fpu (Amiberry only), 68040" >&2
+        exit 2
+        ;;
+esac
+
+MPY_BIN="$REPO_ROOT/ports/amiga/build-$AMIGA_VARIANT/micropython"
 if [ ! -x "$MPY_BIN" ]; then
-    echo "amiga-vamos-repl.sh: $MPY_BIN not built. Run 'make' in ports/amiga first." >&2
+    echo "amiga-vamos-repl.sh: $MPY_BIN not built." >&2
+    echo "  Run: (cd ports/amiga && make VARIANT=$AMIGA_VARIANT)" >&2
     exit 1
 fi
 
@@ -55,6 +79,6 @@ cleanup_vols() {
 trap 'cleanup_vols; restore_tty' EXIT
 
 cd "$HOME/vamos"
-exec pipenv run vamos -q --cpu 68020 -s 32 \
+exec pipenv run vamos -q --cpu "$VAMOS_CPU" -m "$VAMOS_RAM_KIB" -s 32 \
     --vols-base-dir "$VOLS_DIR" \
     -- "$MPY_BIN" "$@"

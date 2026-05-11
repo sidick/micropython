@@ -24,8 +24,40 @@
 set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MPY_BIN="$REPO_ROOT/ports/amiga/build/micropython"
 TESTS_DIR="$REPO_ROOT/tests"
+
+# Variant selection. Pick the build to launch and the matching vamos --cpu
+# flag. Vamos emulates 68020 (soft-float) and 68040 (with built-in FPU);
+# it has no 68881/68882 emulation, so the 68020fpu variant can only be
+# tested under Amiberry or real hardware.
+AMIGA_VARIANT="${AMIGA_VARIANT:-standard}"
+# RAM (KiB) sized for the variant's heap plus headroom for the binary,
+# stack, and AmigaOS overhead. Vamos's default is ~1 MiB which is too
+# small for the 68040 variant's 1 MiB heap.
+case "$AMIGA_VARIANT" in
+    standard)       VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
+    a1200)          VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
+    68040)          VAMOS_CPU="68040"; VAMOS_RAM_KIB=4096 ;;
+    68020fpu)
+        echo "amiga-vamos-run.sh: the '68020fpu' variant builds 68881 FPU instructions" >&2
+        echo "  but vamos has no 68881 emulation. Use Amiberry, FS-UAE, or real" >&2
+        echo "  hardware to test this variant. (For host-side testing of FPU codegen," >&2
+        echo "  use AMIGA_VARIANT=68040 instead — vamos's 68040 has an emulated FPU.)" >&2
+        exit 2
+        ;;
+    *)
+        echo "amiga-vamos-run.sh: unknown AMIGA_VARIANT='$AMIGA_VARIANT'" >&2
+        echo "  Supported: standard, a1200, 68020fpu (Amiberry only), 68040" >&2
+        exit 2
+        ;;
+esac
+
+MPY_BIN="$REPO_ROOT/ports/amiga/build-$AMIGA_VARIANT/micropython"
+if [ ! -x "$MPY_BIN" ]; then
+    echo "amiga-vamos-run.sh: $MPY_BIN not built." >&2
+    echo "  Run: (cd ports/amiga && make VARIANT=$AMIGA_VARIANT)" >&2
+    exit 1
+fi
 
 amiga_args=""
 test_cwd=""
@@ -71,7 +103,7 @@ cd "$HOME/vamos"
 # not for stress/import tests that nest several frames deep. 32 KiB
 # matches a typical "Stack 32768" AmigaDOS environment, which is
 # closer to what users run real MicroPython under.
-exec pipenv run vamos -q --cpu 68020 -s 32 \
+exec pipenv run vamos -q --cpu "$VAMOS_CPU" -m "$VAMOS_RAM_KIB" -s 32 \
     --vols-base-dir "$VOLS_DIR" \
     -V "mp:$TESTS_DIR" \
     --cwd "$AMIGA_CWD" \

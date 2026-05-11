@@ -1,15 +1,24 @@
 #include <stdint.h>
 
+// Variant overrides are pulled in first so the #ifndef-guarded defaults
+// below can be replaced per variant. Each variant ships a mpconfigvariant.h
+// under ports/amiga/variants/<variant>/.
+#include "mpconfigvariant.h"
+
 // Use setjmp-based NLR — no 68k native NLR implementation exists yet.
 // (MicroPython would fall back to this automatically for an unknown arch,
 // but being explicit avoids any future mis-detection.)
 #define MICROPY_NLR_SETJMP                  (1)
 
+#ifndef MICROPY_CONFIG_ROM_LEVEL
 #define MICROPY_CONFIG_ROM_LEVEL            MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
+#endif
 
-// Heap supplied as a static buffer in main.c (no NDK AllocVec yet).
-// Increase once larger Fast RAM configurations are confirmed working.
+// Default heap size; variants tune this for their target hardware
+// (a500 trims it; FPU variants assume an accelerator card with more RAM).
+#ifndef MICROPY_HEAP_SIZE
 #define MICROPY_HEAP_SIZE                   (256 * 1024)
+#endif
 
 #define MICROPY_ENABLE_GC                   (1)
 #define MICROPY_ENABLE_FINALISER            (1)
@@ -91,8 +100,11 @@
 // Scheduler is used by asyncio and ussl callbacks; disable for now.
 #define MICROPY_ENABLE_SCHEDULER            (0)
 
-// Native code emitter for Motorola 68020
+// Native code emitter for Motorola 68020. Variants for low-memory
+// machines (a500) disable this to save flash.
+#ifndef MICROPY_EMIT_68K
 #define MICROPY_EMIT_68K                    (1)
+#endif
 // Loading pre-compiled native .mpy files is not yet supported on this port.
 #define MICROPY_PERSISTENT_CODE_LOAD_NATIVE (0)
 
@@ -110,15 +122,21 @@
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
-// bsdsocket.library networking (optional — silently absent if lib not found)
+// bsdsocket.library networking (optional — silently absent if lib not found).
+// a500 disables this to keep the build small.
+#ifndef MICROPY_PY_AMIGA_SOCKET
 #define MICROPY_PY_AMIGA_SOCKET             (1)
+#endif
 
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
-// Board / MCU identity strings
+// Board / MCU identity strings. MCU name is variant-overridable so
+// `import sys; sys.implementation` reports the actual target CPU.
 #define MICROPY_HW_BOARD_NAME               "Amiga"
+#ifndef MICROPY_HW_MCU_NAME
 #define MICROPY_HW_MCU_NAME                 "68020"
+#endif
 
 // 68k bebbo gcc uses 16-bit alignment for ints inside structs by default,
 // which leaves mp_obj_t pointers (e.g. inside mp_state_ctx) only 2-byte
