@@ -1038,16 +1038,66 @@ mylib = amiga.library_from_signatures(
 
 #### Implementation order within this phase
 
-1. `lib_open` / `lib_close` / `lib_call` with the asm trampoline + a tag-list
-   helper. Smoke test: reopen `intuition.library` and call `DisplayBeep(0)`.
+1. ✅ `lib_open` / `lib_close` / `lib_call` with the asm trampoline.
+   Smoke test: reopen `intuition.library` and call `DisplayBeep(0)`.
 2. Frozen `.fd` table generator (`tools/amiga-fdgen.py`) for NDK libraries.
 3. `amiga.library(name, version)` proxy on top.
-4. Third-party `.fd` search path.
-5. Minimal struct helpers (peek/poke + hand-curated Window/Screen/RastPort).
-6. (Later) callback thunks if anyone actually needs them.
+4. Tag-list helper (`amiga.taglist(WA_Width=640, ...) -> ptr`).
+5. Third-party `.fd` search path.
+6. Minimal struct helpers (peek/poke + hand-curated Window/Screen/RastPort).
+7. (Later) callback thunks if anyone actually needs them.
 
 Steps 1–3 should land as a single deliverable — that's "anything in the NDK,
 callable from Python" for roughly 400 lines of C+asm+Python.
+
+#### Step 1 — trampoline (shipped)
+
+`ports/amiga/amiga_lib_call.S` is a single hand-written 68k routine.
+Its C entry point is
+
+```c
+uint32_t amiga_lib_call_asm(
+    uint32_t base, int32_t offset,
+    uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3,
+    uint32_t d4, uint32_t d5, uint32_t d6, uint32_t d7,
+    uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
+    uint32_t a4, uint32_t a5);
+```
+
+The asm saves the m68k SysV callee-saved set (`d2-d7/a2-a6`), loads
+`a6` with the library base, then loads the 14 register slots from the
+stack. The runtime jump to `base + offset` uses an **RTS-trick**
+rather than a computed `JSR`: with all of `d0`-`d7` / `a0`-`a5`
+already committed to user-supplied values, no scratch register is
+free to hold the call target at the moment of the jump. Pushing the
+target plus a local return label and issuing `rts` transfers control
+to the library; the library's own `rts` pops the local label and
+returns to our cleanup. Effectively a JSR-through-runtime-pointer
+without burning a register.
+
+`modamiga.c` exposes three Python entry points:
+
+- **`amiga.lib_open(name, version=0)`** wraps `OpenLibrary`. Returns
+  the library base as a Python int (matching the existing `alloc_vec`
+  pointer convention); raises `OSError(ENOENT)` on failure.
+- **`amiga.lib_close(base)`** wraps `CloseLibrary`; tolerates a zero
+  base so callers can unconditionally close in a `try/finally`.
+- **`amiga.lib_call(base, offset, **regs, ret="d0")`** drives the
+  trampoline. Register kwargs are `d0`-`d7` and `a0`-`a5`; unspecified
+  registers default to 0. `ret="d0"` interprets the return as a signed
+  32-bit int (default), `ret="d0u"` as unsigned, `ret="void"` returns
+  `None`.
+
+Smoke-tested under Amiberry: `FindTask(NULL)` via the trampoline
+matches `amiga.find_task(None)` (proves A1 + D0 round-trip);
+`AllocVec(64, MEMF_ANY|MEMF_CLEAR)` returns a valid pointer freed by
+a paired `FreeVec` (proves D0/D1/A1 + correct LVO dispatch);
+`DisplayBeep(NULL)` against `intuition.library` returns cleanly;
+`lib_open("nosuch.library", 0)` raises `OSError(ENOENT)`; unknown
+`lib_call` kwargs raise `TypeError`.
+
+Steps 2–6 (the `.fd`-driven proxy and the rest of the design above)
+are still pending.
 
 #### Acceptance
 

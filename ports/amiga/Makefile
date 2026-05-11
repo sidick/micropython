@@ -97,8 +97,12 @@ SRC_C = \
 
 SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modsocket.c sysstdio.c
 
+SRC_S = \
+	amiga_lib_call.S \
+
 OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_S:.S=.o))
 
 all: $(BUILD)/$(PROG)
 
