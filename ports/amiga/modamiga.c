@@ -1,6 +1,7 @@
 #include "py/runtime.h"
 #include "py/obj.h"
 #include "py/objstr.h"
+#include "py/objlist.h"
 #include "py/gc.h"
 
 #include <exec/types.h>
@@ -10,6 +11,9 @@
 #include <dos/dosextens.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <workbench/startup.h>
+#include <workbench/workbench.h>
+#include <proto/icon.h>
 
 #if MICROPY_PY_AMIGA
 
@@ -82,6 +86,84 @@ static mp_obj_t amiga_heap_info(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_heap_info_obj, amiga_heap_info);
 
+// Bebbo crt0 fills _WBenchMsg with the WBStartup pointer on a Workbench
+// launch (or leaves it NULL on CLI). main.c handles its lifecycle; we just
+// dereference it here. amiga_icon_open() / amiga_wb_get_diskobject() are
+// the cached icon.library / DiskObject set up on startup in main.c.
+extern struct WBStartup *_WBenchMsg;
+extern bool amiga_icon_open(void);
+extern struct DiskObject *amiga_wb_get_diskobject(void);
+
+// amiga.launched_from_workbench() -> True if the process was started by
+// double-clicking its icon on the Workbench (or via WBStartup), False if
+// from a Shell. amiga.wb_selected_files() / amiga.tooltype() are only
+// meaningful in the True case.
+static mp_obj_t amiga_launched_from_workbench(void) {
+    return mp_obj_new_bool(_WBenchMsg != NULL);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_launched_from_workbench_obj,
+    amiga_launched_from_workbench);
+
+// amiga.wb_selected_files() -> list[str] of every shift-clicked icon
+// alongside the tool. sm_ArgList[0] is the tool itself and is skipped;
+// the rest carry (wa_Lock, wa_Name) pairs which are converted to absolute
+// paths via NameFromLock + the wa_Name suffix. A wa_Lock of zero
+// (entries given by Workbench from the "Information" requester) is
+// treated as relative to the current directory. Empty list if not WB
+// launched, or only the tool is selected.
+static mp_obj_t amiga_wb_selected_files(void) {
+    mp_obj_t list = mp_obj_new_list(0, NULL);
+    if (_WBenchMsg == NULL) {
+        return list;
+    }
+    char path[512];
+    for (LONG i = 1; i < _WBenchMsg->sm_NumArgs; i++) {
+        struct WBArg *arg = &_WBenchMsg->sm_ArgList[i];
+        path[0] = '\0';
+        if (arg->wa_Lock != 0) {
+            if (!NameFromLock(arg->wa_Lock, (STRPTR)path, sizeof(path))) {
+                path[0] = '\0';
+            }
+        }
+        if (arg->wa_Name != NULL && arg->wa_Name[0] != '\0') {
+            // AddPart appends wa_Name to path, inserting "/" or ":" as
+            // appropriate for AmigaDOS path syntax.
+            if (!AddPart((STRPTR)path, (STRPTR)arg->wa_Name, sizeof(path))) {
+                continue;
+            }
+        }
+        if (path[0] == '\0') {
+            continue;
+        }
+        mp_obj_list_append(list, mp_obj_new_str(path, strlen(path)));
+    }
+    return list;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_wb_selected_files_obj,
+    amiga_wb_selected_files);
+
+// amiga.tooltype(name, default=None) -> str|default. Looks up a tooltype
+// in the executable's .info. Tooltypes are the standard mechanism for
+// configuring a Workbench-launched program ("Information" requester);
+// they're conventionally KEY=VALUE strings stored alongside the icon.
+// Returns the value portion after "=", or "" if the tooltype is present
+// without "=", or the default if absent / no diskobject / no icon.library.
+// Looked up against the cached DiskObject from main.c.
+static mp_obj_t amiga_tooltype(size_t n_args, const mp_obj_t *args) {
+    mp_obj_t default_val = (n_args >= 2) ? args[1] : mp_const_none;
+    const char *name = mp_obj_str_get_str(args[0]);
+    struct DiskObject *dobj = amiga_wb_get_diskobject();
+    if (dobj == NULL || dobj->do_ToolTypes == NULL) {
+        return default_val;
+    }
+    UBYTE *val = FindToolType((CONST_STRPTR *)dobj->do_ToolTypes, (CONST_STRPTR)name);
+    if (val == NULL) {
+        return default_val;
+    }
+    return mp_obj_new_str((const char *)val, strlen((const char *)val));
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_tooltype_obj, 1, 2, amiga_tooltype);
+
 // amiga.exists(path) -> True if the path resolves to a file, directory or
 // volume, False otherwise. Suppresses AmigaDOS auto-requesters around the
 // Lock() so a caller probing a path on an unmounted volume gets a clean
@@ -111,6 +193,11 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_execute),     MP_ROM_PTR(&amiga_execute_obj) },
     { MP_ROM_QSTR(MP_QSTR_exists),      MP_ROM_PTR(&amiga_exists_obj) },
     { MP_ROM_QSTR(MP_QSTR_heap_info),   MP_ROM_PTR(&amiga_heap_info_obj) },
+    { MP_ROM_QSTR(MP_QSTR_launched_from_workbench),
+      MP_ROM_PTR(&amiga_launched_from_workbench_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wb_selected_files),
+      MP_ROM_PTR(&amiga_wb_selected_files_obj) },
+    { MP_ROM_QSTR(MP_QSTR_tooltype),    MP_ROM_PTR(&amiga_tooltype_obj) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },

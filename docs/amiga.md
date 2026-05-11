@@ -25,7 +25,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
 - Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
 - Phase 18 — ARexx integration: inbound `MICROPYTHON.1` port plus outbound `amiga.rexx(port, command)` client via `rexxsyslib.library`
-- Phase 19 — Workbench launch support: handle `WBStartup` message and tooltype-driven configuration via `icon.library`
+- Phase 19 ✅ Workbench launch support: `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype()`, auto-opened CON: window for stdin/stdout, `SCRIPT=` / `HEAP=` / `MAXHEAP=` tooltypes honoured at startup
 - Phase 20 ✅ Env-var integration: `os.getenv` / `os.putenv` / `os.unsetenv` backed by `dos.library` `GetVar`/`SetVar` (local vars, matching Unix semantics; `ENV:` and `ENVARC:` writeable directly for shell-shared / persistent vars)
 - Phase 21 — Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)`
 - Phase 22 — AmigaDOS pattern matching: expose `MatchFirst`/`MatchNext` as `amiga.match("#?.py")`
@@ -1182,50 +1182,71 @@ Workbench's window forward.
 
 ---
 
-### Phase 19 — Workbench launch and tooltypes
+### Phase 19 — Workbench launch and tooltypes ✅
 
-When an Amiga executable is launched from Workbench (by double-clicking its
-`.info` icon) instead of from a Shell, it gets a `WBStartup` message in
-place of `argc`/`argv`, and its configuration comes from tooltypes stored
-in the `.info` file. Today the port treats Workbench launch as "zero args"
-— the script just exits immediately because there's no REPL TTY either.
+When an Amiga executable is launched from Workbench (by double-clicking
+its `.info` icon) instead of from a Shell, it gets a `WBStartup` message
+in place of `argc`/`argv`, and its configuration comes from tooltypes
+stored in the `.info` file. Three things were needed: detect the launch
+type, give the process a console to print into, and read tooltypes.
 
-Two pieces:
+**Detecting the launch type.** Bebbo's `crt0.o` already does the heavy
+lifting: when it sees `pr_CLI == 0` it `WaitPort`'s the process port,
+`GetMsg`'s the `WBStartup`, stashes the pointer in the global `_WBenchMsg`,
+and on exit `Forbid()`s and `ReplyMsg`s it back to Workbench so our segment
+can be unloaded cleanly. From C we just declare it `extern struct WBStartup
+*_WBenchMsg;` and test for null. No `WaitPort`/`ReplyMsg` code in `main.c`.
 
-1. **Detect Workbench launch.** When `pr_CLI == 0`, the process was started
-   from Workbench. The `WBStartup` message arrives on the process's port;
-   it carries the path to the executable plus zero or more "selected" file
-   arguments (icons shift-clicked alongside).
+**Console for stdout/stderr.** A Workbench-launched process has `pr_CIS`
+and `pr_COS` both `NULL`, so any `Write(Output(), ...)` would silently
+drop output. `main.c` opens `CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT`
+and points the process's stdin/stdout/console-task at it. The `/AUTO`
+keyword defers the window's first appearance until something is actually
+written; `/WAIT` keeps it open after `main()` returns so output from a
+short script doesn't flash by and vanish.
 
-2. **Read tooltypes.** `icon.library` `GetDiskObject(exe_name)` returns the
-   parsed `.info`; `FindToolType(do->do_ToolTypes, "SCRIPT")` etc. extract
-   individual settings. Conventional tooltypes: `SCRIPT=Work:scripts/foo.py`,
-   `HEAP=2M`, `DEBUG=1`.
+**Tooltypes.** `icon.library` `GetDiskObject(sm_ArgList[0].wa_Name)`
+returns the parsed `.info` from the directory Workbench has already
+`CurrentDir`'d us to. The handle is cached on the port (`IconBase` +
+`amiga_wb_diskobject` in `main.c`) and exposed via `amiga.tooltype(name,
+default=None)`, which is a thin wrapper around `FindToolType`. Two
+tooltypes are also consumed during startup:
 
-API sketch:
+- `SCRIPT=<path>` — script to run instead of dropping to the REPL
+- `HEAP=<N>[K|M]` / `MAXHEAP=<N>[K|M]` — heap sizing (same parser as
+  `-X heap=` / `MICROPYHEAP`; env vars still win since they're more
+  explicitly user-set)
+
+A `DEBUG=` tooltype is not currently consumed — there's no port-level
+debug flag yet to bind it to.
+
+API:
 
 ```python
 import amiga
 if amiga.launched_from_workbench():
-    script = amiga.tooltype("SCRIPT")
-    heap   = amiga.tooltype("HEAP")
-    for arg in amiga.wb_selected_files():
-        ...
+    # Either inspect tooltypes...
+    extra = amiga.tooltype("EXTRA_PATH", "")
+    # ...or iterate over shift-clicked-alongside icons.
+    for path in amiga.wb_selected_files():
+        process(path)
 ```
 
-Also ship `tools/amiga-mkicon.py` that generates a companion `.info` file
-for a frozen-script binary — drops on the desktop, double-clickable, with
-tooltypes ready for the user to edit.
+`amiga.tooltype()` returns the string after `=` (or `""` for a bare
+tooltype with no `=`), or the supplied default (default `None`) if the
+key is absent. `wb_selected_files()` returns the list of full paths for
+icons shift-clicked alongside the tool — `sm_ArgList[0]` (the tool
+itself) is excluded, and each remaining `WBArg` is rendered with
+`NameFromLock` + `AddPart` so the caller gets ready-to-`open()` paths.
 
-Open question: how should stdout/stderr behave for a Workbench-launched
-script? Two options — open a `CON:` window automatically (so `print()`
-appears somewhere visible), or require the user to call
-`amiga.open_console("CON:0/0/640/200/MicroPython")` explicitly. The former
-is friendlier; the latter is what most Amiga apps do.
-
-Acceptance: double-clicking a `micropython.info` icon on the Workbench
-launches the interpreter; the `SCRIPT=` tooltype gets executed; output
-appears in an auto-opened (or explicitly opened) CON: window.
+**Limitations and what's tested.** Vamos has no Workbench and no
+`icon.library`, so the Phase 19 code paths can only be smoke-tested
+under vamos via their CLI-launch behaviour (`launched_from_workbench()`
+returns `False`, `wb_selected_files()` returns `[]`, `tooltype()` returns
+the default). Full validation requires Amiberry/FS-UAE or real hardware.
+`tools/amiga-mkicon.py` for generating a companion `.info` file isn't
+implemented yet — for now, hand-edit the icon's tooltypes in Workbench's
+"Information" requester.
 
 ---
 
@@ -1896,7 +1917,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |
 | 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |
 | 18 — ARexx integration | Planned | Outbound `amiga.rexx(port, command)` and inbound `MICROPYTHON.1` port via `rexxsyslib.library` |
-| 19 — Workbench launch / tooltypes | Planned | Handle `WBStartup` message, read tooltypes via `icon.library`; ship `tools/amiga-mkicon.py` for companion `.info` files |
+| 19 — Workbench launch / tooltypes | ✅ Done | `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype(name[, default])` in `modamiga.c`; bebbo crt0 does `WaitPort`+`GetMsg`+`ReplyMsg` so `main.c` just reads `_WBenchMsg`; `CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT` opened as stdin/stdout when WB-launched; `SCRIPT=` tooltype runs that path on startup; `HEAP=`/`MAXHEAP=` tooltypes feed the heap-sizing pre-scan (lower priority than env vars / `-X`); cannot be exercised under vamos (no Workbench, no `icon.library`) |
 | 20 — Env-var integration | ✅ Done | `os.getenv`/`os.putenv`/`os.unsetenv` via `GetVar`/`SetVar` (flags=0, local vars; matches Unix `os.putenv` semantics) in `ports/amiga/modos.c` (included via `MICROPY_PY_OS_INCLUDEFILE`); two vamos bugs worked around — see Phase 20 |
 | 21 — Volume / assign introspection | Planned | `amiga.volumes()` / `assigns()` / `disk_info()` via `DosList` and `Info()` |
 | 22 — AmigaDOS pattern matching | Planned | `amiga.match("#?.py")` via `MatchFirst`/`MatchNext` |

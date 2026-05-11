@@ -9,6 +9,9 @@
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 #include <proto/dos.h>
+#include <workbench/startup.h>
+#include <workbench/workbench.h>
+#include <proto/icon.h>
 
 #include "genhdr/mpversion.h"
 #include "py/builtin.h"
@@ -134,6 +137,37 @@ static size_t parse_heap_size(const char *s) {
 // invoking module_fun, so the script gets parsed and compiled but not
 // executed. Provided by every port that defines MICROPY_PYEXEC_COMPILE_ONLY.
 bool mp_compile_only = false;
+
+// Set by bebbo crt0 when our process is launched from Workbench (pr_CLI == 0):
+// the runtime does WaitPort + GetMsg on the process MsgPort and stores the
+// WBStartup pointer here, then Forbid()+ReplyMsg's it on exit. We only have
+// to read it — null means CLI launch. amiga.launched_from_workbench() and
+// amiga.wb_selected_files() in modamiga.c go through this same pointer.
+extern struct WBStartup *_WBenchMsg;
+
+// icon.library state. Opened on demand when the script (or our startup
+// code) first looks at a tooltype; closed at shutdown. icon.library may
+// genuinely be absent on stripped-down systems and is absent under vamos,
+// so callers treat NULL IconBase as "no tooltypes available". The Workbench
+// disk object is GetDiskObject'd from sm_ArgList[0] on WB launch so the
+// "SCRIPT=" tooltype is available before mp_init().
+struct Library *IconBase = NULL;
+static struct DiskObject *amiga_wb_diskobject = NULL;
+
+bool amiga_icon_open(void) {
+    if (IconBase == NULL) {
+        IconBase = OpenLibrary((STRPTR)"icon.library", 33);
+    }
+    return IconBase != NULL;
+}
+
+struct DiskObject *amiga_wb_get_diskobject(void) {
+    return amiga_wb_diskobject;
+}
+
+// CON: stream opened for stdout/stderr when launched from Workbench (where
+// pr_CIS / pr_COS are NULL). Kept here so we can Close() it at shutdown.
+static BPTR amiga_wb_console = 0;
 
 // Stack ceiling captured at main() entry. Used by gc_collect when
 // task->tc_SPUpper is unavailable (vamos leaves it zero) to bound the
@@ -325,16 +359,67 @@ int main(int argc_unused, char **argv_unused) {
     int stack_top_marker;
     gc_stack_top = &stack_top_marker;
 
+    // Workbench launch: bebbo crt0 has already done WaitPort+GetMsg and put
+    // the WBStartup pointer in _WBenchMsg. There's no shell, so pr_CIS /
+    // pr_COS are NULL and any later Write(Output(), ...) would silently
+    // drop output. Open a CON: window and point pr_CIS/pr_COS at it so
+    // print(), input() and traceback printing all work normally. The CON:
+    // spec uses /AUTO so the window only pops when something is written,
+    // /CLOSE so it closes on the close gadget, /WAIT so the window stays
+    // open after main() returns until the user clicks close (otherwise any
+    // output from a short script would flash by and vanish).
+    //
+    // Also load the executable's .info icon now so tooltypes (SCRIPT=,
+    // HEAP=, MAXHEAP=) are available before the heap is sized below.
+    // sm_ArgList[0] is the tool itself (the icon the user double-clicked);
+    // its wa_Lock is already our pr_CurrentDir thanks to Workbench's
+    // pre-launch CurrentDir setup, so wa_Name resolves correctly.
+    const char *wb_tt_script = NULL;
+    if (_WBenchMsg != NULL) {
+        amiga_wb_console = Open(
+            (STRPTR)"CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT",
+            MODE_NEWFILE);
+        if (amiga_wb_console) {
+            struct Process *me = (struct Process *)FindTask(NULL);
+            me->pr_CIS = amiga_wb_console;
+            me->pr_COS = amiga_wb_console;
+            // pr_ConsoleTask drives Open("*", ...) and the readline raw-mode
+            // SetMode() path; point it at the new console's underlying task.
+            struct FileHandle *fh = (struct FileHandle *)BADDR(amiga_wb_console);
+            me->pr_ConsoleTask = (APTR)fh->fh_Type;
+        }
+        if (_WBenchMsg->sm_NumArgs > 0 && amiga_icon_open()) {
+            // GetDiskObject finds <wa_Name>.info relative to the current
+            // directory. wa_Lock points at the directory holding the icon
+            // and Workbench has already CurrentDir'd us there.
+            amiga_wb_diskobject = GetDiskObject(_WBenchMsg->sm_ArgList[0].wa_Name);
+            if (amiga_wb_diskobject != NULL && amiga_wb_diskobject->do_ToolTypes != NULL) {
+                wb_tt_script = (const char *)FindToolType(
+                    (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes,
+                    (CONST_STRPTR)"SCRIPT");
+            }
+        }
+    }
+
     // Parse arguments ourselves from pr_Arguments; the bebbo C runtime
-    // produces broken argv pointers under vamos.
+    // produces broken argv pointers under vamos. WB launch has no
+    // pr_Arguments (sm_ArgList carries selected files instead, exposed
+    // via amiga.wb_selected_files()), so skip the parse there.
     char **argv = NULL;
     char *argv_buf = NULL;
-    int argc = amiga_parse_args(&argv, &argv_buf);
-    if (argc == 0) {
-        // Parse failed (out of memory); fall back to a single dummy argv.
-        static char *fallback_argv[] = {"micropython", NULL};
-        argv = fallback_argv;
+    static char *wb_fallback_argv[] = {"micropython", NULL};
+    int argc;
+    if (_WBenchMsg != NULL) {
+        argv = wb_fallback_argv;
         argc = 1;
+    } else {
+        argc = amiga_parse_args(&argv, &argv_buf);
+        if (argc == 0) {
+            // Parse failed (out of memory); fall back to a single dummy argv.
+            static char *fallback_argv[] = {"micropython", NULL};
+            argv = fallback_argv;
+            argc = 1;
+        }
     }
 
     // Resolve initial heap size and growth cap before the first alloc.
@@ -359,6 +444,26 @@ int main(int argc_unused, char **argv_unused) {
             if (v != 0) initial_heap = v;
         } else if (strncmp(argv[a + 1], "maxheap=", 8) == 0) {
             size_t v = parse_heap_size(argv[a + 1] + 8);
+            if (v != 0) amiga_heap_max_bytes = v;
+        }
+    }
+    // Workbench tooltypes can also drive heap sizing; this is the only way
+    // for a Workbench-launched user to override the default since there's
+    // no command line. Tooltype priority is below env vars but above the
+    // compiled default, matching the documented "edit tooltypes to tune"
+    // expectation. FindToolType returns a pointer just past "HEAP=" so it
+    // can be passed straight to parse_heap_size.
+    if (amiga_wb_diskobject != NULL && amiga_wb_diskobject->do_ToolTypes != NULL) {
+        UBYTE *tt_heap = FindToolType(
+            (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes, (CONST_STRPTR)"HEAP");
+        if (tt_heap != NULL) {
+            size_t v = parse_heap_size((const char *)tt_heap);
+            if (v != 0) initial_heap = v;
+        }
+        UBYTE *tt_max = FindToolType(
+            (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes, (CONST_STRPTR)"MAXHEAP");
+        if (tt_max != NULL) {
+            size_t v = parse_heap_size((const char *)tt_max);
             if (v != 0) amiga_heap_max_bytes = v;
         }
     }
@@ -588,6 +693,29 @@ int main(int argc_unused, char **argv_unused) {
         }
     }
 
+    if (!ran_something && wb_tt_script != NULL && wb_tt_script[0] != '\0') {
+        // Workbench launch with SCRIPT=<path> tooltype. Run that script as
+        // if it had been given on the command line. The argv loop above
+        // doesn't see it because we never inject a positional, so we mirror
+        // its behaviour here. sys.argv ends up as ["micropython"] (no
+        // user-supplied script args — selected files come back via
+        // amiga.wb_selected_files()).
+        char dir[256];
+        path_dir(wb_tt_script, dir, sizeof(dir));
+        if (!dir[0]) {
+            struct Process *me_p = (struct Process *)FindTask(NULL);
+            if (!NameFromLock(me_p->pr_CurrentDir, (STRPTR)dir, sizeof(dir))) {
+                dir[0] = '\0';
+            }
+        }
+        if (dir[0]) {
+            mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
+                mp_obj_new_str(dir, strlen(dir)));
+        }
+        exit_code = pyexec_file(wb_tt_script);
+        ran_something = true;
+    }
+
     if (!ran_something) {
         // No script or command: start the interactive REPL.
         // Switch console to raw mode so readline gets characters immediately
@@ -634,6 +762,27 @@ int main(int argc_unused, char **argv_unused) {
     if (argv_buf) {
         FreeVec(argv_buf);
         FreeVec(argv);
+    }
+
+    // Tear down Workbench-launch resources. The WBStartup message itself
+    // is Forbid()+ReplyMsg'd by bebbo crt0 just before our task exits, so
+    // we don't touch it here; only the icon-library bits and CON: are ours.
+    if (amiga_wb_diskobject != NULL) {
+        FreeDiskObject(amiga_wb_diskobject);
+        amiga_wb_diskobject = NULL;
+    }
+    if (IconBase != NULL) {
+        CloseLibrary(IconBase);
+        IconBase = NULL;
+    }
+    if (amiga_wb_console != 0) {
+        // Detach from the process before Close() so the trailing FreeVec
+        // / library-close path doesn't try to write into a freed handle.
+        struct Process *me = (struct Process *)FindTask(NULL);
+        me->pr_CIS = 0;
+        me->pr_COS = 0;
+        Close(amiga_wb_console);
+        amiga_wb_console = 0;
     }
     return exit_code & 0xff;
 }
