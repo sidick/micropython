@@ -43,7 +43,9 @@ def run_test(path):
 
 
 def check_exp(test_path, actual):
-    exp_path = test_path[:-3] + ".exp"  # replace .py with .exp
+    # Upstream convention is <test>.py.exp (i.e. just append .exp to the
+    # full filename), which is what tools/amiga-gen-exp.py produces.
+    exp_path = test_path + ".exp"
     try:
         with open(exp_path) as f:
             return _norm(actual) == _norm(f.read())
