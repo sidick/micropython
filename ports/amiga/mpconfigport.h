@@ -119,6 +119,14 @@
         amiga_check_ctrl_c(); \
     }
 
+// os.getenv / os.putenv / os.unsetenv backed by dos.library
+// GetVar / SetVar / DeleteVar. Function bodies live in ports/amiga/modos.c
+// and are pulled in by extmod/modos.c via MICROPY_PY_OS_INCLUDEFILE. This
+// gives MicroPython and the AmigaShell a single shared env-var store
+// (ENV: / GVF_GLOBAL_ONLY).
+#define MICROPY_PY_OS_GETENV_PUTENV_UNSETENV (1)
+#define MICROPY_PY_OS_INCLUDEFILE           "ports/amiga/modos.c"
+
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
