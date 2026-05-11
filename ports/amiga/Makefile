@@ -1,3 +1,19 @@
+# Select the variant to build for.
+ifdef VARIANT_DIR
+VARIANT ?= $(notdir $(VARIANT_DIR:/=))
+else
+VARIANT ?= standard
+VARIANT_DIR ?= variants/$(VARIANT)
+endif
+
+ifeq ($(wildcard $(VARIANT_DIR)/.),)
+$(error Invalid VARIANT specified: $(VARIANT_DIR))
+endif
+
+# Build directory tracks the variant name unless overridden.
+BUILD ?= build-$(VARIANT)
+PROG  = micropython
+
 include ../../py/mkenv.mk
 
 # Cross-compile with bebbo GCC (https://franke.ms/git/bebbo/amiga-gcc).
@@ -7,26 +23,30 @@ CROSS_COMPILE = m68k-amigaos-
 
 # qstr definitions (must come before including py.mk)
 QSTR_DEFS = qstrdefsport.h
+QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
+
+# Variant-supplied knobs. Each variant's mpconfigvariant.mk defines:
+#   AMIGA_CPU_FLAGS    — CPU/FPU selection, e.g. '-m68020 -msoft-float'
+#   AMIGA_FLOAT_WRAPS  — soft-float libgcc wraps (empty for FPU variants)
+# The libm wraps below apply unconditionally — those are clib2/libnix
+# math-lib bugs that aren't FPU-related.
+include $(VARIANT_DIR)/mpconfigvariant.mk
 
 # include py core make definitions
 include $(TOP)/py/py.mk
 include $(TOP)/extmod/extmod.mk
 
-BUILD ?= build-standard
-PROG  = micropython
-
-# Target 68020 minimum; soft-float (no FPU on most Amigas).
 # Note: bebbo gcc 6.5 ICEs on -malign-int (its global 32-bit alignment
 # flag), so struct alignment for mp_obj_t (which requires 4-byte alignment
 # for the tagged-pointer encoding) is enforced via MICROPY_OBJ_BASE_ALIGNMENT
 # in mpconfigport.h.
-CFLAGS_AMIGA = -m68020 -msoft-float
 
 INC += -I.
 INC += -I$(TOP)
 INC += -I$(BUILD)
+INC += -I$(VARIANT_DIR)
 
-CFLAGS += $(INC) $(CFLAGS_AMIGA) -Wall -Wextra -Wno-unused-parameter -std=gnu99
+CFLAGS += $(INC) $(AMIGA_CPU_FLAGS) -Wall -Wextra -Wno-unused-parameter -std=gnu99
 
 CFLAGS += -g
 ifeq ($(DEBUG), 1)
@@ -35,7 +55,7 @@ else
 CFLAGS += -Os -DNDEBUG -fdata-sections -ffunction-sections
 endif
 
-LDFLAGS += -m68020 -lm
+LDFLAGS += $(AMIGA_CPU_FLAGS) -lm
 
 # clib2's __eqdf2.o packs every double-comparison helper together with
 # __muldf3 / __floatsidf / etc, so we can't simply redefine the broken
@@ -43,9 +63,11 @@ LDFLAGS += -m68020 -lm
 # clib2 pulls in __eqdf2.o for __muldf3). --wrap diverts the calls to
 # our amiga_dbl_* implementations without us having to take over the
 # rest of the object. See ports/amiga/floatconv.c for the why.
-LDFLAGS += -Wl,--wrap=__eqdf2,--wrap=__nedf2,--wrap=__ltdf2,--wrap=__ledf2,--wrap=__gtdf2,--wrap=__gedf2
+# FPU variants skip this (gcc emits FPU compare instructions directly).
+LDFLAGS += $(AMIGA_FLOAT_WRAPS)
 # libnix pow(-1, NaN) returns 1.0 (CPython expects NaN) and tgamma(-inf)
-# returns +inf (CPython raises ValueError). See floatconv.c.
+# returns +inf (CPython raises ValueError). See floatconv.c. These are
+# math-library bugs, not soft-float bugs — applies to all variants.
 LDFLAGS += -Wl,--wrap=pow,--wrap=tgamma
 
 # shared/libc/printf.c uses __attribute__((alias)) which bebbo GCC doesn't
