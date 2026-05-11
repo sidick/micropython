@@ -21,6 +21,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
 - Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
 - Phase 14 — Dynamic heap growth via `gc_add()` + runtime-configurable initial heap size
+- Phase 15 — Expose AmigaOS memory-pool API (`CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool`) in the `amiga` module
 
 ### Non-goals (initially)
 
@@ -743,6 +744,97 @@ multiple arenas; rebooting after the run frees all chunks cleanly
 
 ---
 
+### Phase 15 — AmigaOS memory-pool API in the `amiga` module
+
+`exec.library` provides a memory-pool allocator (`CreatePool`,
+`AllocPooled`, `FreePooled`, `DeletePool`) that's well suited to
+workloads with many small short-lived allocations sharing a lifetime
+— parser AST nodes, per-request scratch buffers, level-loaded game
+state, etc. The pool grows in "puddles" of a configurable size and
+`DeletePool` reclaims everything in one call without needing to
+track individual pointers. We already expose `AllocVec` /
+`FreeVec` (Phase 4); this phase rounds out the resource module with
+the pool API.
+
+Goals for this phase:
+
+1. **C bindings in `ports/amiga/modamiga.c`.** Mirror the existing
+   `alloc_vec` / `free_vec` style:
+
+   ```python
+   pool = amiga.create_pool(flags=amiga.MEMF_ANY,
+                            puddle_size=4096,
+                            threshold_size=1024)
+   addr = amiga.alloc_pooled(pool, size)
+   amiga.free_pooled(pool, addr, size)
+   amiga.delete_pool(pool)
+   ```
+
+   Pool handles are returned as Python ints (matching `alloc_vec`'s
+   integer-address convention) since `BPTR`-style opaque handles
+   would require a new type and finaliser for cleanup. Users keep
+   the int in a variable and pass it back; on `MemoryError` from
+   `CreatePool` we raise the standard exception.
+
+2. **Defaults that match common AmigaOS usage.**
+     - `flags` defaults to `MEMF_ANY` (matches `alloc_vec`).
+     - `puddle_size` defaults to 4 KB — large enough for many small
+       allocs without wasting a lot on the first puddle.
+     - `threshold_size`: any single request ≥ this bypasses the
+       pool and goes straight to `AllocVec`. AmigaOS docs recommend
+       setting this to roughly half the puddle size; default 2 KB.
+
+3. **Light Python-level wrapper (optional).** A small
+   `class MemoryPool` in `ports/amiga/modamiga.c` (or shipped as a
+   frozen Python module) that wraps the four C calls in a context
+   manager so `with amiga.MemoryPool() as p: ...` auto-deletes on
+   exit. This keeps the low-level functions exposed for users who
+   want them while making the common case easier.
+
+4. **Documentation in the `Phase 4 — amiga module API` table.**
+   Extend the API summary in this doc and the inline qstr table
+   with the new symbols (`Q(create_pool)`, `Q(alloc_pooled)`,
+   `Q(free_pooled)`, `Q(delete_pool)`, `Q(MemoryPool)` if we ship
+   the wrapper class). `MEMF_*` constants are already exported.
+
+Implementation notes:
+
+- `CreatePool` etc. were added in OS 3.0 (`exec.library` v37); the
+  port already requires `-m68020` + clib2 / NDK from bebbo so this
+  is a no-op compatibility-wise. Add a runtime guard via
+  `SysBase->LibNode.lib_Version >= 39` just in case (matches the
+  pattern used for `GetProgramName` in `main.c`).
+- Pool handles are opaque void pointers; we cast to `mp_int_t` for
+  Python and back to `APTR` for `Alloc/FreePooled`. The Phase 4
+  pattern for `alloc_vec` does the same with `AllocVec` results.
+- `FreePooled` requires the original `size` argument (AmigaOS pools
+  don't track per-allocation sizes); make this a hard parameter
+  on the Python side rather than trying to remember it ourselves.
+- The optional `MemoryPool` wrapper class should call
+  `delete_pool` in `__del__` (`MICROPY_ENABLE_FINALISER` is already
+  on for Phase 2's file handles), with a `closed` flag so an
+  explicit `delete_pool()` followed by GC doesn't double-free.
+
+Open questions to settle before starting:
+
+- Do we add bounds-checking on `alloc_pooled` returns / `free_pooled`
+  args, or trust the user? The existing `alloc_vec` / `free_vec`
+  trust the user; pools should match for consistency. The cost of
+  a stray `FreePooled` is a crash, but that's already true of the
+  current `free_vec`.
+- Should pool handles be registered as GC roots so a forgotten
+  pool gets collected? Probably not — pools are an *explicit*
+  resource, and the optional `MemoryPool` wrapper covers the
+  common "I forgot to free" case via its finaliser.
+
+Acceptance: a script can create a pool, allocate from it a few
+thousand times, optionally `free_pooled` some entries, and
+`delete_pool` cleanly with no memory leak under vamos's
+orphan-memory check. The wrapper class also works as a
+`with`-statement context manager.
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
@@ -1091,3 +1183,4 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
 | 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
 | 14 — Dynamic heap / runtime sizing | Planned | Replace fixed 256 KB heap with `-X heap=<N>`/`MICROPYHEAP` initial size plus `gc_add()`-based growth on demand, capped by `-X maxheap=<N>`; `amiga.heap_info()` for introspection |
+| 15 — Memory-pool API | Planned | Expose `CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool` on the `amiga` module; optional `MemoryPool` context-manager wrapper for `with`-statement use |
