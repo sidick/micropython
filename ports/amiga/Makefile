@@ -63,8 +63,7 @@ SRC_C = \
 	mphalport.c \
 	modjson.c \
 	modamiga.c \
-	amigafile.c \
-	amigaio.c \
+	vfs_amiga.c \
 	modsocket.c \
 	sysstdio.c \
 	floatconv.c \
@@ -73,7 +72,7 @@ SRC_C = \
 	shared/runtime/stdout_helpers.c \
 	shared/runtime/interrupt_char.c \
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c amigaio.c modjson.c modamiga.c modsocket.c sysstdio.c
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modsocket.c sysstdio.c
 
 OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))

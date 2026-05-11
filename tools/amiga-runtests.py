@@ -26,6 +26,7 @@
 # allocated on top of it.
 
 import sys
+import os
 import amiga
 
 OUT = "T:__mp_test_out"
@@ -100,7 +101,12 @@ def should_skip(path):
 
 def run_test(path):
     """Run a test; captured output ends up at OUT."""
-    amiga.execute("micropython " + path + " >" + OUT + " 2>" + OUT)
+    # Only redirect stdout. AmigaDOS shell doesn't parse `2>file` -- it
+    # passes the token straight through to the child, polluting sys.argv
+    # (e.g. io/argv.py would see "2>T:..." as argv[1]). Our binary
+    # routes sys.stderr through the same console stream as stdout, so
+    # tracebacks still get captured.
+    amiga.execute("micropython " + path + " >" + OUT)
 
 
 def is_skip_output():
@@ -263,6 +269,12 @@ def main():
     # Ensure the result dir exists. MakeDir ALL creates parents; >NIL:
     # discards the "directory already exists" warning when it's a re-run.
     amiga.execute("MakeDir >NIL: " + result_dir + " ALL")
+
+    # Change into the test directory so a test that opens a relative path
+    # like "data/file1" resolves the same way the host runner expects.
+    # Child processes spawned via amiga.execute() inherit our cwd, so a
+    # single chdir up front is enough.
+    os.chdir(test_dir)
 
     amiga.execute('List "' + test_dir + '" PAT #?.py LFORMAT "%P%N" >' + LST)
     try:
