@@ -26,7 +26,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
 - Phase 18 — ARexx integration: inbound `MICROPYTHON.1` port plus outbound `amiga.rexx(port, command)` client via `rexxsyslib.library`
 - Phase 19 — Workbench launch support: handle `WBStartup` message and tooltype-driven configuration via `icon.library`
-- Phase 20 — `os.environ` ↔ `ENV:` integration: back the standard env-var dict with `GetVar`/`SetVar` so MicroPython and the shell share one store
+- Phase 20 ✅ Env-var integration: `os.getenv` / `os.putenv` / `os.unsetenv` backed by `dos.library` `GetVar`/`SetVar` (local vars, matching Unix semantics; `ENV:` and `ENVARC:` writeable directly for shell-shared / persistent vars)
 - Phase 21 — Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)`
 - Phase 22 — AmigaDOS pattern matching: expose `MatchFirst`/`MatchNext` as `amiga.match("#?.py")`
 - Phase 23 — `timer.device`-backed timing: replace newlib `clock()` with MICROHZ-accurate `mp_hal_delay_us` / `ticks_us`
@@ -1197,36 +1197,87 @@ appears in an auto-opened (or explicitly opened) CON: window.
 
 ---
 
-### Phase 20 — `os.environ` ↔ `ENV:` integration
+### Phase 20 — env-var integration via `os.getenv`/`os.putenv`/`os.unsetenv` ✅
 
 AmigaDOS environment variables live in a real shared store: `ENV:` is a
 filesystem assign, every variable is a file under it, and `SetVar` /
-`GetVar` / `DeleteVar` from `dos.library` are the API. Crucially, this is
-the *same* store the shell uses — a `SetVar` from Python is visible at the
-AmigaShell prompt afterwards. That's not true on Unix (child processes
+`GetVar` / `DeleteVar` from `dos.library` are the API. Crucially this is
+the *same* store the shell uses — that's not true on Unix (child processes
 inherit copies of the parent's environment).
 
-Today `os.environ` is unimplemented. This phase backs it with `GetVar` /
-`SetVar` / `DeleteVar` plus iterating over `ENV:`.
+MicroPython doesn't expose a CPython-style `os.environ` dict; the actual
+API surface is the three functions `os.getenv` / `os.putenv` /
+`os.unsetenv`, gated by `MICROPY_PY_OS_GETENV_PUTENV_UNSETENV`. The port
+enables that flag and supplies the three function bodies in
+`ports/amiga/modos.c`, included by `extmod/modos.c` via
+`MICROPY_PY_OS_INCLUDEFILE`. The end result:
 
 ```python
 import os
-os.environ["EDITOR"] = "Ed"       # → SetVar("EDITOR", "Ed", GVF_GLOBAL_ONLY)
-print(os.environ["EDITOR"])       # → GetVar("EDITOR", ...)
-del os.environ["EDITOR"]          # → DeleteVar("EDITOR", ...)
-for k in os.environ:              # → iterate ENV:
-    ...
+os.putenv("EDITOR", "Ed")
+print(os.getenv("EDITOR"))            # 'Ed'
+print(os.getenv("MISSING", "n/a"))    # 'n/a' default
+os.unsetenv("EDITOR")
+print(os.getenv("EDITOR"))            # None
 ```
 
-Implementation: enable `MICROPY_PY_OS_ENVIRON (1)` and supply a port-local
-backend in `modamiga.c` (or `vfs_amiga.c`) that delegates to `dos.library`.
-Optionally an `ENVARC:`-persistent variant
-(`amiga.setvar(name, value, persistent=True)`) that writes to disk too —
-the standard pattern for variables the user wants surviving across reboots.
+#### Local vs global
 
-Acceptance: from MicroPython, `os.environ["X"] = "1"`; back at the shell,
-`echo $X` prints `1`. Conversely, `setenv X 42` in the shell makes
-`os.environ["X"] == "42"` from a freshly launched script.
+All three calls pass `flags=0` (no `GVF_GLOBAL_ONLY` / `GVF_LOCAL_ONLY`).
+On real AmigaOS this means:
+
+- `getenv` looks up local CLI vars first, falling through to global
+  (`ENV:`).
+- `putenv` creates or replaces a *local* CLI variable. Inherited by
+  child processes launched via `amiga.execute()`; not visible to other
+  unrelated shells.
+- `unsetenv` removes the local variable.
+
+This matches Unix `os.putenv` semantics ("affects this process and its
+children"). Users wanting a system-wide variable visible to *all* shells
+can write directly to `ENV:` (it's just a filesystem assign), and for
+persistence across reboots also write the same value to `ENVARC:`:
+
+```python
+with open("ENV:MY_VAR", "w") as f:        # visible to other shells now
+    f.write("value")
+with open("ENVARC:MY_VAR", "w") as f:     # restored on reboot
+    f.write("value")
+```
+
+#### Vamos workarounds
+
+Two bugs in `amitools.vamos.lib.DosLibrary` had to be worked around:
+
+1. **`GetVar` returns 0 (instead of -1) for a missing variable.** That
+   makes the return value alone unable to distinguish *missing* from
+   *empty value*. We treat `len <= 0` as missing — correct on vamos for
+   the common case, but on real AmigaOS this misreports a genuine
+   empty-string variable as missing. (`FindVar` would be the obvious
+   existence test, but vamos's `FindVar` hits an `AttributeError`
+   `'AccessStruct' object has no attribute 'struct_addr'` in its
+   success-path logging.)
+
+2. **`DeleteVar` reads the `flags` argument from `D4`** but the NDK fd
+   (`/opt/amiga/m68k-amigaos/ndk/lib/fd/dos_lib.fd`) specifies `D2`.
+   With stale data in `D4`, vamos can spuriously take the
+   `GVF_GLOBAL_ONLY` branch and silently skip the deletion. We use the
+   V36-documented "`SetVar` with `NULL` buffer deletes the variable"
+   form instead — vamos reads `SetVar`'s registers correctly.
+
+Both worth fixing upstream in vamos eventually; both behave correctly
+on real AmigaOS where `DeleteVar` and `GetVar` follow the documented
+contract.
+
+Implementation: `ports/amiga/modos.c` (three function bodies);
+`mpconfigport.h` adds `MICROPY_PY_OS_GETENV_PUTENV_UNSETENV (1)` and
+`MICROPY_PY_OS_INCLUDEFILE "ports/amiga/modos.c"`. No Makefile changes —
+the file is `#include`d by `extmod/modos.c`, not compiled separately.
+
+Acceptance: round-trip `putenv` → `getenv` → `unsetenv` works under
+vamos; the `basics/` test suite still passes 490/491 (same as the
+pre-Phase-20 baseline — the one `struct1.py` failure is pre-existing
+and unrelated).
 
 ---
 
@@ -1814,7 +1865,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |
 | 18 — ARexx integration | Planned | Outbound `amiga.rexx(port, command)` and inbound `MICROPYTHON.1` port via `rexxsyslib.library` |
 | 19 — Workbench launch / tooltypes | Planned | Handle `WBStartup` message, read tooltypes via `icon.library`; ship `tools/amiga-mkicon.py` for companion `.info` files |
-| 20 — `os.environ` ↔ `ENV:` | Planned | Back `os.environ` with `GetVar`/`SetVar`/`DeleteVar`; shared store with the AmigaShell |
+| 20 — Env-var integration | ✅ Done | `os.getenv`/`os.putenv`/`os.unsetenv` via `GetVar`/`SetVar` (flags=0, local vars; matches Unix `os.putenv` semantics) in `ports/amiga/modos.c` (included via `MICROPY_PY_OS_INCLUDEFILE`); two vamos bugs worked around — see Phase 20 |
 | 21 — Volume / assign introspection | Planned | `amiga.volumes()` / `assigns()` / `disk_info()` via `DosList` and `Info()` |
 | 22 — AmigaDOS pattern matching | Planned | `amiga.match("#?.py")` via `MatchFirst`/`MatchNext` |
 | 23 — `timer.device` timing | Planned | Replace newlib `clock()` in `mp_hal_delay_us` / `ticks_*` with MICROHZ unit + `ReadEClock()` |
