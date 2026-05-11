@@ -23,6 +23,7 @@
 #include "py/stackctrl.h"
 #include "shared/readline/readline.h"
 #include "shared/runtime/pyexec.h"
+#include "extmod/vfs.h"
 
 static void *heap_ptr;
 
@@ -285,6 +286,26 @@ int main(int argc_unused, char **argv_unused) {
 
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
+
+    #if MICROPY_VFS
+    // Mount the VfsAmiga at "/" so os.chdir/os.listdir/os.stat/open() etc.
+    // all flow through dos.library via vfs_amiga.c. AmigaOS paths don't
+    // start with "/" (they look like "volume:dir/file" or are relative);
+    // the VFS layer's lookup_path treats anything without a leading "/"
+    // as a relative-path-on-current-VFS, which routes straight to us.
+    {
+        extern const mp_obj_type_t mp_type_vfs_amiga;
+        mp_obj_t args[2] = {
+            MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_amiga, make_new)(&mp_type_vfs_amiga, 0, 0, NULL),
+            MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
+        };
+        mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
+        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
+        while (MP_STATE_VM(vfs_cur)->next != NULL) {
+            MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_cur)->next;
+        }
+    }
+    #endif
 
     #if MICROPY_PY_AMIGA_SOCKET
     extern bool amiga_socket_open(void);
