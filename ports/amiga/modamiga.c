@@ -564,6 +564,77 @@ static mp_obj_t amiga_lib_call(size_t n_args, const mp_obj_t *args, mp_map_t *kw
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_lib_call_obj, 2, amiga_lib_call);
 
+// ---------- Phase 17 step 4: memory peek/poke primitives ----------
+//
+// These are the minimum surface needed for the Python-side TagList
+// helper (which assembles a `struct TagItem[]` from kwargs) and for
+// users who want to inspect or fill structs by hand.  All operations
+// are big-endian 32-/16-bit and 8-bit — matching the m68k native
+// representation; no endian swapping is needed.  The user is
+// responsible for the address validity.
+
+static mp_obj_t amiga_peek_b(mp_obj_t addr_obj) {
+    volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    return MP_OBJ_NEW_SMALL_INT(*p);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_peek_b_obj, amiga_peek_b);
+
+static mp_obj_t amiga_peek_w(mp_obj_t addr_obj) {
+    volatile uint16_t *p = (volatile uint16_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    return MP_OBJ_NEW_SMALL_INT(*p);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_peek_w_obj, amiga_peek_w);
+
+static mp_obj_t amiga_peek_l(mp_obj_t addr_obj) {
+    volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    return mp_obj_new_int_from_uint(*p);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_peek_l_obj, amiga_peek_l);
+
+// amiga.peek_bytes(addr, length) -> bytes
+static mp_obj_t amiga_peek_bytes(mp_obj_t addr_obj, mp_obj_t len_obj) {
+    const uint8_t *p = (const uint8_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    mp_int_t n = mp_obj_get_int(len_obj);
+    if (n < 0) {
+        mp_raise_ValueError(MP_ERROR_TEXT("negative length"));
+    }
+    return mp_obj_new_bytes(p, (size_t)n);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_peek_bytes_obj, amiga_peek_bytes);
+
+static mp_obj_t amiga_poke_b(mp_obj_t addr_obj, mp_obj_t val_obj) {
+    volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    *p = (uint8_t)mp_obj_get_int_truncated(val_obj);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_b_obj, amiga_poke_b);
+
+static mp_obj_t amiga_poke_w(mp_obj_t addr_obj, mp_obj_t val_obj) {
+    volatile uint16_t *p = (volatile uint16_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    *p = (uint16_t)mp_obj_get_int_truncated(val_obj);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_w_obj, amiga_poke_w);
+
+static mp_obj_t amiga_poke_l(mp_obj_t addr_obj, mp_obj_t val_obj) {
+    volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    *p = (uint32_t)mp_obj_get_int_truncated(val_obj);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_l_obj, amiga_poke_l);
+
+// amiga.poke_bytes(addr, data) — memcpy data (bytes/str/buffer) at addr.
+// No NUL is appended automatically; for C strings the caller must
+// include a trailing 0 byte.
+static mp_obj_t amiga_poke_bytes(mp_obj_t addr_obj, mp_obj_t data_obj) {
+    uint8_t *p = (uint8_t *)(uintptr_t)mp_obj_get_int(addr_obj);
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(data_obj, &bi, MP_BUFFER_READ);
+    memcpy(p, bi.buf, bi.len);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_bytes_obj, amiga_poke_bytes);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -586,6 +657,14 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_lib_open),    MP_ROM_PTR(&amiga_lib_open_obj) },
     { MP_ROM_QSTR(MP_QSTR_lib_close),   MP_ROM_PTR(&amiga_lib_close_obj) },
     { MP_ROM_QSTR(MP_QSTR_lib_call),    MP_ROM_PTR(&amiga_lib_call_obj) },
+    { MP_ROM_QSTR(MP_QSTR_peek_b),      MP_ROM_PTR(&amiga_peek_b_obj) },
+    { MP_ROM_QSTR(MP_QSTR_peek_w),      MP_ROM_PTR(&amiga_peek_w_obj) },
+    { MP_ROM_QSTR(MP_QSTR_peek_l),      MP_ROM_PTR(&amiga_peek_l_obj) },
+    { MP_ROM_QSTR(MP_QSTR_peek_bytes),  MP_ROM_PTR(&amiga_peek_bytes_obj) },
+    { MP_ROM_QSTR(MP_QSTR_poke_b),      MP_ROM_PTR(&amiga_poke_b_obj) },
+    { MP_ROM_QSTR(MP_QSTR_poke_w),      MP_ROM_PTR(&amiga_poke_w_obj) },
+    { MP_ROM_QSTR(MP_QSTR_poke_l),      MP_ROM_PTR(&amiga_poke_l_obj) },
+    { MP_ROM_QSTR(MP_QSTR_poke_bytes),  MP_ROM_PTR(&amiga_poke_bytes_obj) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },

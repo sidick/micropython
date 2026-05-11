@@ -17,6 +17,7 @@ Typical use:
 from _amiga import *  # noqa: F401,F403  (the underscore module is the source of truth)
 import _amiga as _c
 import _amiga_fd
+import _amiga_tags
 
 
 class Library:
@@ -99,7 +100,15 @@ class Library:
                 )
             if not lib._base:
                 raise ValueError("%s: closed" % lib._name)
-            kw = {regs[i]: args[i] for i in range(nargs)}
+            # Anything that defines __int__ (e.g. TagList) is unwrapped to
+            # its address transparently — this is what makes
+            #   intuition.OpenWindowTagList(0, taglist) work.
+            kw = {}
+            for i in range(nargs):
+                v = args[i]
+                if not isinstance(v, int):
+                    v = int(v)
+                kw[regs[i]] = v
             return _c.lib_call(lib._base, lvo, **kw)
 
         # MicroPython closures don't support `__name__` assignment, so
@@ -112,3 +121,144 @@ class Library:
 def library(name, version=0):
     """Convenience factory equivalent to `Library(name, version)`."""
     return Library(name, version)
+
+
+class TagList:
+    """A `TAG_DONE`-terminated array of AmigaOS TagItems.
+
+    Built from a sequence of `(tag_id, value)` pairs:
+
+        tags = TagList([(WA_Width, 640), (WA_Height, 400), (WA_Title, "hi")])
+        amiga.lib_call(intuition_base, -610,
+                       a0=newWindow_ptr, a1=tags.addr)
+
+    Integer values go straight into the TagItem's `ti_Data` field;
+    bytes / str values are copied into a per-string buffer that
+    `TagList` owns, with the buffer's address stored as `ti_Data`.
+    All allocations are released when the object is closed (`close()`,
+    `__exit__`, or `__del__`).
+
+    Passing a `TagList` directly to a `Library` proxy call works
+    transparently — the proxy unwraps it via `__int__` (which returns
+    the head address of the TagItem array).
+    """
+
+    # Each TagItem is two ULONGs (ti_Tag, ti_Data) = 8 bytes; the
+    # array is terminated by a TAG_DONE-marker pair.
+    _ITEM_SIZE = 8
+
+    def __init__(self, items):
+        items = list(items)
+        n = len(items)
+        self._main = _c.alloc_vec(
+            (n + 1) * self._ITEM_SIZE,
+            _c.MEMF_ANY | _c.MEMF_CLEAR,
+        )
+        self._buffers = []
+        try:
+            for i, pair in enumerate(items):
+                tag, val = pair
+                slot = self._main + i * self._ITEM_SIZE
+                _c.poke_l(slot, int(tag))
+                if isinstance(val, str):
+                    payload = val.encode("ascii") + b"\x00"
+                elif isinstance(val, (bytes, bytearray)):
+                    payload = bytes(val)
+                    if not payload.endswith(b"\x00"):
+                        payload = payload + b"\x00"
+                else:
+                    payload = None
+                if payload is None:
+                    _c.poke_l(slot + 4, int(val))
+                else:
+                    buf = _c.alloc_vec(len(payload), _c.MEMF_ANY)
+                    _c.poke_bytes(buf, payload)
+                    _c.poke_l(slot + 4, buf)
+                    self._buffers.append(buf)
+            # TAG_DONE terminator (alloc_vec returned a CLEARed array
+            # so the terminator slot is already zero, but be explicit).
+            term = self._main + n * self._ITEM_SIZE
+            _c.poke_l(term, 0)
+            _c.poke_l(term + 4, 0)
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def addr(self):
+        """Address of the head of the TagItem array."""
+        return self._main
+
+    def __int__(self):
+        return self._main
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def close(self):
+        if self._buffers:
+            for b in self._buffers:
+                _c.free_vec(b)
+            self._buffers = []
+        if self._main:
+            _c.free_vec(self._main)
+            self._main = 0
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __repr__(self):
+        state = "closed" if not self._main else hex(self._main)
+        return "<TagList @ %s>" % state
+
+
+def taglist(*pairs, **named):
+    """Build a `TagList` from kwargs and/or positional pairs.
+
+    Kwargs are looked up by name in `_amiga_tags.TAGS`; unknown names
+    raise `KeyError`.  Positional args can be either a single iterable
+    of `(tag, value)` pairs or an alternating sequence of `tag, value,
+    tag, value, ...`.  Tag values may be ints, `bytes`, or `str`; the
+    last two cause a buffer to be allocated and the pointer stored.
+
+        with amiga.taglist(WA_Width=640, WA_Height=480, WA_Title="hi") as tl:
+            intuition.OpenWindowTagList(0, tl)
+
+        # Or with literal IDs (handy for tags not in _amiga_tags.TAGS):
+        tl = amiga.taglist((0x80000063 + 0x03, 640), (0x80000063 + 0x04, 480))
+    """
+    items = []
+    if not pairs:
+        pass
+    elif len(pairs) == 1 and not isinstance(pairs[0], int):
+        # One arg, an iterable of (tag, value) pairs:
+        #   taglist([(WA_Width, 640), (WA_Height, 480)])
+        for pair in pairs[0]:
+            items.append((pair[0], pair[1]))
+    elif isinstance(pairs[0], int):
+        # Alternating tag, value, tag, value, ...
+        #   taglist(WA_Width, 640, WA_Height, 480)
+        if len(pairs) % 2 != 0:
+            raise ValueError(
+                "taglist alternating positional args must be in (tag, value) pairs"
+            )
+        for i in range(0, len(pairs), 2):
+            items.append((pairs[i], pairs[i + 1]))
+    else:
+        # Multiple positional (tag, value) tuples:
+        #   taglist((WA_Width, 640), (WA_Height, 480))
+        for pair in pairs:
+            items.append((pair[0], pair[1]))
+    for name, val in named.items():
+        tag_id = _amiga_tags.TAGS.get(name)
+        if tag_id is None:
+            raise KeyError("unknown tag name: %r" % name)
+        items.append((tag_id, val))
+    return TagList(items)
