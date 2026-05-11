@@ -139,97 +139,103 @@ def is_skip_output():
     return not extra and head.strip() == b"SKIP"
 
 
+_CWD_PREFIX = None  # set by main(); bytes form of cwd + "/"
+
+
 def check_exp(test_path):
     """Compare OUT to test_path + '.exp'. Returns True/False/None (None
     means no .exp file was found). Upstream convention is <test>.py.exp
     (full filename + .exp), which is what tools/amiga-gen-exp.py produces.
 
     The .exp format supports '########' on a line by itself as a wildcard
-    meaning 'match zero or more lines'. This is used by a handful of
-    upstream .exp files (e.g. builtin_help.py, bytes_compare3.py) where
-    the test output isn't fully deterministic but has stable anchor
-    lines around the variable parts. Non-wildcard lines are compared
+    meaning 'match zero or more lines'. Non-wildcard lines are compared
     literally after rstrip(); the full regex matching that run-tests.py
-    does for tests_with_regex_output isn't reproduced here, but in
-    practice the .exp files only use literal text plus the wildcard.
+    does for tests_with_regex_output isn't reproduced here, but the .exp
+    files only use literal text plus the wildcard in practice.
 
-    The actual output is also stripped of the cwd-absolute prefix
-    before comparison -- CPython produces an absolute __file__ for
-    imported modules, our gen-exp strips the host prefix off, and we
-    do the same for the Amiga prefix here so the two halves agree
-    (see import/import_file.py).
+    The actual output has its cwd-absolute prefix stripped before
+    comparison so an imported module's __file__ matches what gen-exp
+    records on the host side (see import/import_file.py).
 
-    Both files are loaded into a list of rstripped lines and the lists
-    are trimmed of leading/trailing blank lines before matching (which
-    is the same edge-stripping the original _norm's .strip() did). The
-    on-disk sizes of unskipped .exp files in the test tree top out
-    around 21 KB, so peak memory is well within the 256 KB heap; the
-    huge ones (int_big_mul.py.exp at 74 KB, etc.) belong to feature-
-    gated tests that are skipped up front via _SKIP_*."""
+    Both files are streamed line by line. Peak memory is one line per
+    side, which keeps tests with large .exp output (float_divmod.py at
+    38 KB, etc.) from exhausting the 256 KB heap during a run."""
     exp_path = test_path + ".exp"
     try:
-        with open(exp_path, "rb") as ef:
-            exp_lines = [l.rstrip() for l in ef]
+        ef = open(exp_path, "rb")
     except OSError:
         return None
     try:
-        with open(OUT, "rb") as af:
-            act_lines = [l.rstrip() for l in af]
-    except OSError:
-        return False
-    _trim_blanks(exp_lines)
-    _trim_blanks(act_lines)
-    _strip_cwd_prefix(act_lines)
-    return _match_lines(act_lines, exp_lines)
+        try:
+            af = open(OUT, "rb")
+        except OSError:
+            return False
+        try:
+            return _stream_match(af, ef)
+        finally:
+            af.close()
+    finally:
+        ef.close()
 
 
-_CWD_PREFIX = None  # set by main(); bytes form of cwd + "/"
+def _read_rstripped(f):
+    """Read one line from f and rstrip it. Returns None on EOF,
+    otherwise bytes (possibly empty for a blank line)."""
+    line = f.readline()
+    if not line:
+        return None
+    return line.rstrip()
 
 
-def _strip_cwd_prefix(lines):
-    if not _CWD_PREFIX:
-        return
-    for i, line in enumerate(lines):
-        if _CWD_PREFIX in line:
-            lines[i] = line.replace(_CWD_PREFIX, b"")
+def _strip_cwd(line):
+    if _CWD_PREFIX and _CWD_PREFIX in line:
+        return line.replace(_CWD_PREFIX, b"")
+    return line
 
 
-def _trim_blanks(lines):
-    while lines and not lines[-1]:
-        lines.pop()
-    while lines and not lines[0]:
-        del lines[0]
+def _stream_match(af, ef):
+    """Streaming comparison of actual vs expected. '########' in
+    expected is a wildcard matching zero or more actual lines.
+    Leading and trailing blank lines on both sides are ignored
+    (matches the original behaviour when both files were loaded
+    into lists and edge-trimmed)."""
+    # Skip leading blanks on both sides.
+    e = _read_rstripped(ef)
+    while e == b"":
+        e = _read_rstripped(ef)
+    a = _read_rstripped(af)
+    while a == b"":
+        a = _read_rstripped(af)
 
-
-def _match_lines(act, exp):
-    """True if act matches exp. '########' in exp is a wildcard meaning
-    'match zero or more act lines'."""
-    la = len(act)
-    le = len(exp)
-    ai = ei = 0
-    while ei < le:
-        e = exp[ei]
+    while e is not None:
         if e == b"########":
-            # Find the next non-wildcard expected line.
-            ej = ei + 1
-            while ej < le and exp[ej] == b"########":
-                ej += 1
-            if ej == le:
-                # Trailing wildcard(s): accept anything remaining.
-                return True
-            target = exp[ej]
-            while ai < la and act[ai] != target:
-                ai += 1
-            if ai >= la:
+            # Find the next non-wildcard expected line as anchor.
+            while True:
+                e = _read_rstripped(ef)
+                if e is None:
+                    return True  # trailing wildcard(s): accept remaining
+                if e != b"########":
+                    break
+            target = e
+            # Skip actual lines (including blanks) until match.
+            while a is not None and _strip_cwd(a) != target:
+                a = _read_rstripped(af)
+            if a is None:
                 return False
-            ai += 1
-            ei = ej + 1
+            e = _read_rstripped(ef)
+            a = _read_rstripped(af)
         else:
-            if ai >= la or act[ai] != e:
+            if a is None or _strip_cwd(a) != e:
                 return False
-            ai += 1
-            ei += 1
-    return ai == la
+            e = _read_rstripped(ef)
+            a = _read_rstripped(af)
+
+    # Expected exhausted; remaining actual lines must all be blank.
+    while a is not None:
+        if a:
+            return False
+        a = _read_rstripped(af)
+    return True
 
 
 def output_has_error():
