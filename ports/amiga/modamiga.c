@@ -6,6 +6,7 @@
 #include <exec/execbase.h>
 #include <exec/memory.h>
 #include <exec/tasks.h>
+#include <dos/dosextens.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 
@@ -63,6 +64,26 @@ static mp_obj_t amiga_execute(mp_obj_t cmd_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_execute_obj, amiga_execute);
 
+// amiga.exists(path) -> True if the path resolves to a file, directory or
+// volume, False otherwise. Suppresses AmigaDOS auto-requesters around the
+// Lock() so a caller probing a path on an unmounted volume gets a clean
+// False back instead of a "Please insert volume X: in any drive" dialog.
+// pr_WindowPtr is restored on exit so the rest of the binary is unaffected.
+static mp_obj_t amiga_exists(mp_obj_t path_obj) {
+    const char *path = mp_obj_str_get_str(path_obj);
+    struct Process *me = (struct Process *)FindTask(NULL);
+    APTR saved_wp = me->pr_WindowPtr;
+    me->pr_WindowPtr = (APTR)-1;
+    BPTR lock = Lock((STRPTR)path, SHARED_LOCK);
+    me->pr_WindowPtr = saved_wp;
+    if (lock) {
+        UnLock(lock);
+        return mp_const_true;
+    }
+    return mp_const_false;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_exists_obj, amiga_exists);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -70,6 +91,7 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_alloc_vec),   MP_ROM_PTR(&amiga_alloc_vec_obj) },
     { MP_ROM_QSTR(MP_QSTR_free_vec),    MP_ROM_PTR(&amiga_free_vec_obj) },
     { MP_ROM_QSTR(MP_QSTR_execute),     MP_ROM_PTR(&amiga_execute_obj) },
+    { MP_ROM_QSTR(MP_QSTR_exists),      MP_ROM_PTR(&amiga_exists_obj) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },
