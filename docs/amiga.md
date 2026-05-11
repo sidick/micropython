@@ -353,6 +353,8 @@ amiga.find_task(name=None)  # → int address of named task, or current task if 
 amiga.alloc_vec(size, flags=amiga.MEMF_ANY)  # → int address; raises MemoryError on failure
 amiga.free_vec(addr)        # → None
 amiga.execute(cmd)          # → int return code (0=OK, 5=WARN, 10=ERROR, 20=FAILURE, -1=failed to start)
+amiga.exists(path)          # → bool; does this file/dir/volume exist? Suppresses
+                            #   AmigaDOS volume requesters around the Lock()
 
 # Memory flags
 amiga.MEMF_ANY              # 0
@@ -368,6 +370,10 @@ amiga.MEMF_CLEAR            # 0x10000
   an AmigaOS BOOL where TRUE = -1, giving no indication of the command's exit code.
   `SystemTagList()` returns the actual CLI return code.
 - `amiga.find_task(None)` calls `FindTask(NULL)` which returns the current task pointer.
+- `amiga.exists()` wraps `Lock(SHARED_LOCK)` / `UnLock()` with `pr_WindowPtr`
+  saved and temporarily set to `-1`, so probing a path on an unmounted volume
+  returns `False` instead of stalling on a "Please insert volume X:" requester.
+  The requester suppression is scoped to just the `Lock` call.
 
 ### Deliverable
 
