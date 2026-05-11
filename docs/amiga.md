@@ -20,7 +20,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 11 — CI build workflow
 - Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
 - Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
-- Phase 14 — Dynamic heap growth via `gc_add()` + runtime-configurable initial heap size
+- Phase 14 ✅ Dynamic heap growth via `MICROPY_GC_SPLIT_HEAP_AUTO`; initial size from `-X heap=<N>` / `MICROPYHEAP`; total bounded by `-X maxheap=<N>` / `MICROPYHEAPMAX`; `amiga.heap_info()` for introspection
 - Phase 15 — Expose AmigaOS memory-pool API (`CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool`) in the `amiga` module
 - Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
 - Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
@@ -704,77 +704,109 @@ wrapper, because pipes never get cooked-mode line buffering.
 
 ---
 
-### Phase 14 — Dynamic heap growth and runtime sizing
+### Phase 14 — Dynamic heap growth and runtime sizing ✅
 
-Today the GC heap is a single 256 KB chunk allocated once at startup in
-`main.c` via `AllocVec(MICROPY_HEAP_SIZE, MEMF_FAST|MEMF_PUBLIC)` (with
-`MEMF_ANY` fallback). That's fine for a 1 MB chip-RAM A500, but on a
-machine with 16+ MB of Fast RAM we leave most of it on the table; once
-the 256 KB is full the port raises `MemoryError` instead of expanding.
-Goals for this phase:
+The GC heap is no longer a fixed `MICROPY_HEAP_SIZE` block: the port
+allocates an initial chunk at startup whose size comes from
+(in priority order) `-X heap=<N>[K|M]`, the `MICROPYHEAP` env var
+(`GetVar` from `dos.library`), or the compile-time `MICROPY_HEAP_SIZE`
+default. When that chunk fills up MicroPython grows the heap on demand
+by allocating further `AllocVec` chunks and feeding them to the GC via
+`gc_add` — this is the upstream `MICROPY_GC_SPLIT_HEAP_AUTO` machinery.
+A `-X maxheap=<N>` cap (or the `MICROPYHEAPMAX` env var) bounds total
+growth so a runaway script can't exhaust system RAM.
 
-> Note on allocation flags: use `MEMF_ANY|MEMF_PUBLIC|MEMF_CLEAR` for
-> both the initial alloc and any subsequent growth chunks. AmigaOS's
-> free memory list is ordered fastest-first, so `MEMF_ANY` already
-> prefers Fast RAM when it's available and degrades gracefully to
-> Chip RAM on a stock A500/A1000/A2000 that has no Fast at all.
-> `MEMF_CLEAR` zeroes the chunk so neither `gc_init()` nor `gc_add()`
-> can see stale bits from a previous task. The existing main.c heap
-> allocation switched to this combination on 2026-05-11 to match.
+#### Implementation
 
-1. **Runtime initial heap size.** Replace the compile-time
-   `MICROPY_HEAP_SIZE` with a value derived at startup. Sources, in
-   priority order:
-     - `-X heap=<N>[K|M]` on the command line (matches what other ports
-       accept; `main.c` already parses `-X` for `compile-only` etc.).
-     - `MICROPYHEAP` env var (read via `GetVar()` from dos.library).
-     - A sensible default (probably still 256 KB) so out-of-the-box
-       behaviour is unchanged for users not configuring anything.
+Three small pieces:
 
-2. **Dynamic growth via `gc_add()`.** When `gc_alloc` can't satisfy a
-   request after a collection, ask `AllocVec` for another chunk
-   (typically 128–256 KB) and feed it to the GC via `gc_add(start,
-   end)`. MicroPython supports multiple non-contiguous GC arenas
-   natively, so this is just plumbing.
-   Track each chunk in a small linked list of `BPTR`s so we can
-   `FreeVec` them all in `mp_deinit()` at exit.
+**`mpconfigport.h`** enables `MICROPY_GC_SPLIT_HEAP=1` and
+`MICROPY_GC_SPLIT_HEAP_AUTO=1`, and points
+`MP_PLAT_ALLOC_HEAP`/`MP_PLAT_FREE_HEAP` at `amiga_alloc_heap` /
+`amiga_free_heap` in `main.c`. The compile-time `MICROPY_HEAP_SIZE`
+becomes the default *initial* size only.
 
-3. **Growth policy.** Don't grow on every collection — only after a
-   full collection still leaves the heap above some occupancy
-   threshold (e.g. >80 %). Cap the total via a `-X maxheap=<N>`
-   option so a runaway script can still be stopped without thrashing
-   the system. On the failure to grow (out of Fast RAM, hit the cap)
-   fall back to the standard `MemoryError` path.
+**`main.c`** owns the tracking array, the size-string parser, and
+`gc_get_max_new_split()`:
 
-4. **Reporting.** Extend `amiga.os_version()`-style introspection with
-   `amiga.heap_info()` returning a tuple of `(total_bytes,
-   free_bytes, num_arenas)`. Useful for the user to tune `-X heap` /
-   `-X maxheap` for their workload.
+- `amiga_heap_chunks[16]` records every still-live chunk
+  (`(ptr, bytes)` pairs). `amiga_alloc_heap` slots a new chunk in;
+  `amiga_free_heap` clears one. Tracking is essential: AmigaOS does
+  *not* automatically reclaim `AllocVec`'d memory when the task exits,
+  so at shutdown we walk the array and `FreeVec` everything still
+  recorded.
+- `parse_heap_size("256K"|"2M"|"524288")` parses size strings into
+  byte counts. Accepts unsuffixed decimals, `K` / `k`, `M` / `m`.
+- A pre-scan over `argv` for `-X heap=` and `-X maxheap=` runs *before*
+  the initial allocation, so the chosen size is in effect for
+  `gc_init()`. The same loop also consults `GetVar(MICROPYHEAP)` and
+  `GetVar(MICROPYHEAPMAX)` (lower priority than `-X` flags). The
+  existing `-X` handler later in `main()` accepts the same flags as
+  no-ops since the pre-scan has already consumed them.
+- `gc_get_max_new_split()` reports the largest `AllocVec`-able block
+  via `AvailMem(MEMF_ANY|MEMF_PUBLIC|MEMF_LARGEST)` minus a small
+  exec.library bookkeeping headroom, clamped further to the
+  `-X maxheap` cap.
+- At shutdown, the chunks array is walked and every live entry is
+  `FreeVec`'d. The GC's own `gc_sweep_free_blocks` already auto-releases
+  empty grown chunks during normal operation, so most of the time only
+  the initial chunk is still live at exit anyway.
 
-Implementation lives in `main.c` (parsing, initial allocation, the
-chunk list, `mp_deinit` cleanup) and a small helper hook from
-`gc.c`-callers — MicroPython already calls a port-provided
-`gc_helper_get_regs_and_sp` etc., but the natural extension hook is
-`gc_collect_root_with_alloc_fail` or similar; failing that, the port
-overrides `mp_alloc_failed_oom` via a port-local wrapper.
+**`modamiga.c`** adds `amiga.heap_info()` returning
+`(total_bytes, free_bytes, num_arenas)`:
 
-Open questions to settle before starting:
+```python
+>>> import amiga
+>>> amiga.heap_info()
+(256000, 248000, 1)              # 256 KB initial, mostly free, one chunk
+>>> data = [bytearray(32*1024) for _ in range(20)]   # ~640 KB live
+>>> amiga.heap_info()
+(1024000, 366000, 3)             # grew to ~1 MB across three chunks
+>>> data = None
+>>> import gc; gc.collect()
+>>> amiga.heap_info()
+(256000, 248000, 1)              # back to one chunk; grown chunks released
+```
 
-- Should chunks be released when the heap drops back below some low-
-  water mark? Probably not — `FreeVec` on a `gc_add`'d region needs
-  the region to be empty of live objects, which the GC can't guarantee.
-  Just keep grown chunks until exit.
-- What `MEMF_*` mask should grown chunks use? `MEMF_ANY|MEMF_PUBLIC`,
-  same as the initial allocation under this plan. AmigaOS already
-  hands out the fastest available region first; chip-RAM-only
-  machines (stock A500/A1000/A2000) simply can't satisfy `MEMF_FAST`
-  so insisting on it would close those configurations off entirely.
+`gc_info()` (in `py/gc.c`) is the source for total/free; the arena
+count comes from the port-side tracker.
 
-Acceptance: a build with `MICROPY_HEAP_SIZE` at its default plus
-`-X heap=2M` can compile and execute a script that allocates well
-beyond 256 KB; `amiga.heap_info()` shows the heap growing across
-multiple arenas; rebooting after the run frees all chunks cleanly
-(verified under vamos's orphan-memory check).
+#### Flags choice
+
+All allocations use `MEMF_ANY|MEMF_PUBLIC|MEMF_CLEAR`. AmigaOS's free
+list is ordered fastest-first, so `MEMF_ANY` already prefers Fast RAM
+when available; chip-RAM-only machines (stock A500/A1000/A2000) get
+served from Chip without needing a fallback path. `MEMF_CLEAR` zeroes
+each chunk so `gc_init`/`gc_add` don't see stale bits from a previous
+task or from `AllocVec`'s freelist.
+
+#### Decisions captured
+
+- **Don't release chunks below a low-water mark.** The GC already
+  releases empty grown chunks during sweep (per
+  `MICROPY_GC_SPLIT_HEAP_AUTO`); we don't need additional policy.
+  Eager release of chunks that still hold live objects is unsafe.
+- **No artificial growth throttle.** Upstream's growth heuristic
+  (double-the-total-heap-size each grow, clamped to "what AmigaOS can
+  give us") is sensible; adding our own occupancy threshold on top
+  would just delay growth to the point of needless GC churn.
+- **`MICROPYHEAP` / `MICROPYHEAPMAX` are checked before `-X` flags
+  but command-line flags win.** Lets a user pin a workload's size in
+  the shell environment yet override per-invocation when scripting.
+
+#### Acceptance
+
+Verified end-to-end under vamos: `-X heap=512K` and `-X heap=128K` set
+the initial chunk size correctly; an in-script allocation of 640 KB
+grows the heap from 256 KB / 1 arena to ~1 MB / 3 arenas; freeing the
+data and calling `gc.collect()` shrinks back to the initial 256 KB / 1
+arena (the GC's own chunk-release path); `-X maxheap=512K` produces a
+clean `MemoryError` when the cap is hit rather than crashing or
+ignoring the cap. The `basics/` regression remains at 490/491.
+`MICROPYHEAP` env-var lookup uses the same `GetVar(flags=0)` path that
+Phase 20 validated; testing the env-var read end-to-end requires real
+AmigaOS / Amiberry because vamos doesn't propagate ENV: assigns into
+the local-var lookup path.
 
 ---
 
@@ -1474,9 +1506,9 @@ Open items deferred to later phases:
   (handled by emulation in `cpu060.library` on real hardware) so the
   variant has to set `-mno-unaligned-access` for portions of generated
   code. Punt until someone with the hardware confirms.
-- Once Phase 14 (dynamic heap) lands, the per-variant `MICROPY_HEAP_SIZE`
-  default becomes the *initial* size and users can override via
-  `-X heap=...` at runtime.
+- With Phase 14 in place, the per-variant `MICROPY_HEAP_SIZE` is the
+  *initial* size only; users can override per invocation with
+  `-X heap=<N>[K|M]` and cap growth with `-X maxheap=<N>[K|M]`.
 
 ---
 
@@ -1859,7 +1891,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 11 — CI | Planned | `.github/workflows/ports_amiga.yml` cross-compile check |
 | 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
 | 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
-| 14 — Dynamic heap / runtime sizing | Planned | Replace fixed 256 KB heap with `-X heap=<N>`/`MICROPYHEAP` initial size plus `gc_add()`-based growth on demand, capped by `-X maxheap=<N>`; `amiga.heap_info()` for introspection |
+| 14 — Dynamic heap / runtime sizing | ✅ Done | `MICROPY_GC_SPLIT_HEAP_AUTO` enabled; initial size from `-X heap=<N>[K\|M]` or `MICROPYHEAP` env, default `MICROPY_HEAP_SIZE`; growth via `AllocVec` chunks tracked port-side and `FreeVec`'d at exit; `-X maxheap=<N>`/`MICROPYHEAPMAX` cap; `amiga.heap_info()` reports `(total, free, num_arenas)` |
 | 15 — Memory-pool API | Planned | Expose `CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool` on the `amiga` module; optional `MemoryPool` context-manager wrapper for `with`-statement use |
 | 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |
 | 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |

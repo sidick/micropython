@@ -1,6 +1,7 @@
 #include "py/runtime.h"
 #include "py/obj.h"
 #include "py/objstr.h"
+#include "py/gc.h"
 
 #include <exec/types.h>
 #include <exec/execbase.h>
@@ -64,6 +65,23 @@ static mp_obj_t amiga_execute(mp_obj_t cmd_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_execute_obj, amiga_execute);
 
+// amiga.heap_info() -> (total_bytes, free_bytes, num_arenas).
+// Wraps gc_info() (live total/free) and the port-local chunk-count
+// tracker in main.c. Useful for tuning -X heap / -X maxheap to a
+// workload, or for monitoring how aggressively the heap has grown.
+extern size_t amiga_heap_chunk_count(void);
+static mp_obj_t amiga_heap_info(void) {
+    gc_info_t info;
+    gc_info(&info);
+    mp_obj_t items[3] = {
+        mp_obj_new_int_from_uint(info.total),
+        mp_obj_new_int_from_uint(info.free),
+        mp_obj_new_int_from_uint((mp_uint_t)amiga_heap_chunk_count()),
+    };
+    return mp_obj_new_tuple(3, items);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_heap_info_obj, amiga_heap_info);
+
 // amiga.exists(path) -> True if the path resolves to a file, directory or
 // volume, False otherwise. Suppresses AmigaDOS auto-requesters around the
 // Lock() so a caller probing a path on an unmounted volume gets a clean
@@ -92,6 +110,7 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_free_vec),    MP_ROM_PTR(&amiga_free_vec_obj) },
     { MP_ROM_QSTR(MP_QSTR_execute),     MP_ROM_PTR(&amiga_execute_obj) },
     { MP_ROM_QSTR(MP_QSTR_exists),      MP_ROM_PTR(&amiga_exists_obj) },
+    { MP_ROM_QSTR(MP_QSTR_heap_info),   MP_ROM_PTR(&amiga_heap_info_obj) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },

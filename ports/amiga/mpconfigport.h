@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stddef.h>
 
 // Variant overrides are pulled in first so the #ifndef-guarded defaults
 // below can be replaced per variant. Each variant ships a mpconfigvariant.h
@@ -14,11 +15,26 @@
 #define MICROPY_CONFIG_ROM_LEVEL            MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
 #endif
 
-// Default heap size; variants tune this for their target hardware
+// Default initial heap size; variants tune this for their target hardware
 // (a500 trims it; FPU variants assume an accelerator card with more RAM).
+// At runtime, -X heap=<N>[K|M] or the MICROPYHEAP env var override this
+// for the initial AllocVec. The heap grows on demand beyond the initial
+// size via MICROPY_GC_SPLIT_HEAP_AUTO (see below).
 #ifndef MICROPY_HEAP_SIZE
 #define MICROPY_HEAP_SIZE                   (256 * 1024)
 #endif
+
+// Allow the GC heap to span multiple non-contiguous AllocVec chunks,
+// growing automatically when an allocation fails. amiga_alloc_heap()
+// / amiga_free_heap() in main.c wrap AllocVec/FreeVec and track grown
+// chunks so they can be released at exit (exec.library does NOT
+// auto-reclaim AllocVec'd memory when a task ends).
+#define MICROPY_GC_SPLIT_HEAP               (1)
+#define MICROPY_GC_SPLIT_HEAP_AUTO          (1)
+void *amiga_alloc_heap(size_t n);
+void amiga_free_heap(void *p);
+#define MP_PLAT_ALLOC_HEAP(n)               amiga_alloc_heap(n)
+#define MP_PLAT_FREE_HEAP(p)                amiga_free_heap(p)
 
 #define MICROPY_ENABLE_GC                   (1)
 #define MICROPY_ENABLE_FINALISER            (1)

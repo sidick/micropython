@@ -25,7 +25,110 @@
 #include "shared/runtime/pyexec.h"
 #include "extmod/vfs.h"
 
-static void *heap_ptr;
+// Tracked AllocVec chunks backing the GC heap. The first slot is the
+// initial heap; further slots fill as the GC grows via gc_try_add_heap.
+// 16 slots * 4 MiB each comfortably covers any realistic Amiga; the cap
+// is here mainly to put a bound on the tracking array. AmigaOS doesn't
+// reclaim AllocVec'd memory when the task exits, so we walk this list at
+// shutdown and FreeVec each chunk.
+#define AMIGA_HEAP_MAX_CHUNKS 16
+static struct {
+    void *ptr;
+    size_t bytes;
+} amiga_heap_chunks[AMIGA_HEAP_MAX_CHUNKS];
+static size_t amiga_heap_total_bytes;        // sum of all chunk sizes
+static size_t amiga_heap_max_bytes;          // -X maxheap=... cap (0 = unlimited)
+
+void *amiga_alloc_heap(size_t n) {
+    // Honour the -X maxheap cap. gc_get_max_new_split() also clamps to
+    // this, but the GC may still call us at the exact limit; double-check.
+    if (amiga_heap_max_bytes != 0 &&
+        amiga_heap_total_bytes + n > amiga_heap_max_bytes) {
+        return NULL;
+    }
+    void *p = AllocVec((ULONG)n, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR);
+    if (!p) {
+        return NULL;
+    }
+    for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
+        if (amiga_heap_chunks[i].ptr == NULL) {
+            amiga_heap_chunks[i].ptr = p;
+            amiga_heap_chunks[i].bytes = n;
+            amiga_heap_total_bytes += n;
+            return p;
+        }
+    }
+    // Tracking array full -- shouldn't happen in practice. Leak rather
+    // than refuse the allocation: the GC will still work; we just won't
+    // FreeVec this chunk at exit. The next chunk will fit again.
+    return p;
+}
+
+void amiga_free_heap(void *p) {
+    for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
+        if (amiga_heap_chunks[i].ptr == p) {
+            amiga_heap_total_bytes -= amiga_heap_chunks[i].bytes;
+            amiga_heap_chunks[i].ptr = NULL;
+            amiga_heap_chunks[i].bytes = 0;
+            break;
+        }
+    }
+    FreeVec(p);
+}
+
+#if MICROPY_GC_SPLIT_HEAP_AUTO
+size_t gc_get_max_new_split(void) {
+    // Largest contiguous AllocVec'able block, less a small headroom for
+    // exec.library's per-allocation bookkeeping. Clamped to -X maxheap=
+    // if the user set one.
+    ULONG largest = AvailMem(MEMF_ANY | MEMF_PUBLIC | MEMF_LARGEST);
+    if (largest < 256) {
+        return 0;
+    }
+    largest -= 64;
+    if (amiga_heap_max_bytes != 0) {
+        if (amiga_heap_total_bytes >= amiga_heap_max_bytes) {
+            return 0;
+        }
+        size_t remaining = amiga_heap_max_bytes - amiga_heap_total_bytes;
+        if ((size_t)largest > remaining) {
+            largest = (ULONG)remaining;
+        }
+    }
+    return (size_t)largest;
+}
+#endif
+
+// amiga.heap_info() needs to know how many distinct AllocVec chunks the
+// GC is currently using. Walking the slot array is the canonical source.
+size_t amiga_heap_chunk_count(void) {
+    size_t n = 0;
+    for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
+        if (amiga_heap_chunks[i].ptr != NULL) n++;
+    }
+    return n;
+}
+
+// Parse a heap-size string like "256K" / "2M" / "524288" into bytes.
+// Returns 0 on parse failure or non-positive input.
+static size_t parse_heap_size(const char *s) {
+    size_t v = 0;
+    const char *p = s;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (size_t)(*p - '0');
+        p++;
+    }
+    if (p == s) return 0;
+    if (*p == 'K' || *p == 'k') {
+        v *= 1024;
+        p++;
+    } else if (*p == 'M' || *p == 'm') {
+        v *= 1024 * 1024;
+        p++;
+    }
+    if (*p != '\0') return 0;
+    return v;
+}
 
 // Set by `-X compile-only`. shared/runtime/pyexec.c checks this before
 // invoking module_fun, so the script gets parsed and compiled but not
@@ -234,14 +337,51 @@ int main(int argc_unused, char **argv_unused) {
         argc = 1;
     }
 
-    // Allocate the GC heap. AmigaOS hands out the fastest available
-    // memory first when MEMF_ANY is set, so we don't need a separate
-    // MEMF_FAST-then-fallback dance; on chip-only machines (stock
-    // A500/A1000/A2000) MEMF_FAST would never succeed anyway. MEMF_CLEAR
-    // zeroes the region before gc_init() sets up its bookkeeping so
-    // there's no chance of reading stale bits from a previous task.
-    heap_ptr = AllocVec(MICROPY_HEAP_SIZE, MEMF_ANY | MEMF_PUBLIC | MEMF_CLEAR);
-    if (!heap_ptr) {
+    // Resolve initial heap size and growth cap before the first alloc.
+    // Priority: command-line -X heap=<N> > MICROPYHEAP env var > default.
+    // Same priority for -X maxheap=<N> > MICROPYHEAPMAX env var > unlimited.
+    // Pre-scan argv for the -X heap=/-X maxheap= forms so the heap is
+    // sized correctly *before* gc_init().
+    size_t initial_heap = MICROPY_HEAP_SIZE;
+    char envbuf[32];
+    if (GetVar((STRPTR)"MICROPYHEAP", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
+        size_t v = parse_heap_size(envbuf);
+        if (v != 0) initial_heap = v;
+    }
+    if (GetVar((STRPTR)"MICROPYHEAPMAX", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
+        size_t v = parse_heap_size(envbuf);
+        if (v != 0) amiga_heap_max_bytes = v;
+    }
+    for (int a = 1; a + 1 < argc; a++) {
+        if (strcmp(argv[a], "-X") != 0) continue;
+        if (strncmp(argv[a + 1], "heap=", 5) == 0) {
+            size_t v = parse_heap_size(argv[a + 1] + 5);
+            if (v != 0) initial_heap = v;
+        } else if (strncmp(argv[a + 1], "maxheap=", 8) == 0) {
+            size_t v = parse_heap_size(argv[a + 1] + 8);
+            if (v != 0) amiga_heap_max_bytes = v;
+        }
+    }
+    // If maxheap is set and smaller than initial, raise it to fit the
+    // initial heap rather than refusing the allocation outright. The
+    // user's intent for maxheap is "cap on growth"; honouring it strictly
+    // against the initial alloc would just fail confusingly.
+    if (amiga_heap_max_bytes != 0 && amiga_heap_max_bytes < initial_heap) {
+        amiga_heap_max_bytes = initial_heap;
+    }
+
+    // Allocate the initial GC heap. AmigaOS hands out the fastest
+    // available memory first when MEMF_ANY is set, so we don't need a
+    // separate MEMF_FAST-then-fallback dance; on chip-only machines
+    // (stock A500/A1000/A2000) MEMF_FAST would never succeed anyway.
+    // MEMF_CLEAR zeroes the region before gc_init() sets up its
+    // bookkeeping so there's no chance of reading stale bits from a
+    // previous task. Goes through amiga_alloc_heap so it's recorded in
+    // the chunk tracking array; gc_init takes care of teaching the GC
+    // about it. Subsequent growth via MICROPY_GC_SPLIT_HEAP_AUTO routes
+    // through the same wrapper.
+    void *initial_ptr = amiga_alloc_heap(initial_heap);
+    if (!initial_ptr) {
         return 1;
     }
 
@@ -273,7 +413,7 @@ int main(int argc_unused, char **argv_unused) {
     #endif
 
     #if MICROPY_ENABLE_GC
-    gc_init(heap_ptr, (char *)heap_ptr + MICROPY_HEAP_SIZE);
+    gc_init(initial_ptr, (char *)initial_ptr + initial_heap);
     #endif
 
     #if MICROPY_ENABLE_PYSTACK
@@ -344,7 +484,9 @@ int main(int argc_unused, char **argv_unused) {
                 // -X <impl-option>. tests/run-tests.py emits -X emit=bytecode
                 // (and on macOS -X realtime); we accept those silently. Honour
                 // -X compile-only so the cmd_compile_only test can verify
-                // parse-but-don't-execute behaviour.
+                // parse-but-don't-execute behaviour. -X heap= / -X maxheap=
+                // were already consumed by the pre-scan above the alloc and
+                // are accepted silently here.
                 if (a + 1 < argc) {
                     if (strcmp(argv[a + 1], "compile-only") == 0) {
                         mp_compile_only = true;
@@ -476,7 +618,19 @@ int main(int argc_unused, char **argv_unused) {
     #endif
 
     mp_deinit();
-    FreeVec(heap_ptr);
+    // Free every still-tracked heap chunk. The GC's sweep auto-frees
+    // empty grown areas during normal operation (see gc_sweep_free_blocks
+    // under MICROPY_GC_SPLIT_HEAP_AUTO), so the only chunks left here are
+    // the initial one plus any grown chunks still holding live data at
+    // shutdown. amiga_free_heap() goes through FreeVec().
+    for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
+        if (amiga_heap_chunks[i].ptr != NULL) {
+            FreeVec(amiga_heap_chunks[i].ptr);
+            amiga_heap_chunks[i].ptr = NULL;
+            amiga_heap_chunks[i].bytes = 0;
+        }
+    }
+    amiga_heap_total_bytes = 0;
     if (argv_buf) {
         FreeVec(argv_buf);
         FreeVec(argv);
