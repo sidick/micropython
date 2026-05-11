@@ -1046,9 +1046,11 @@ mylib = amiga.library_from_signatures(
 3. ✅ `amiga.library(name, version)` proxy on top of the trampoline,
    driven by the frozen FD table — the headline deliverable for the
    phase, "anything in the NDK callable from Python".
-4. Tag-list helper (`amiga.taglist(WA_Width=640, ...) -> ptr`).
+4. ✅ Tag-list helper (`amiga.taglist(WA_Width=640, ...) -> TagList`)
+   plus low-level peek/poke primitives.
 5. Third-party `.fd` search path.
-6. Minimal struct helpers (peek/poke + hand-curated Window/Screen/RastPort).
+6. Minimal struct helpers on top of the peek/poke primitives
+   (hand-curated Window/Screen/RastPort accessors).
 7. (Later) callback thunks if anyone actually needs them.
 
 #### Step 1 — trampoline (shipped)
@@ -1185,8 +1187,77 @@ Smoke-tested under Amiberry:
 - The closure is cached via `setattr(self, fnname, call)` after first
   use; verified by `'FindTask' in ex.__dict__` after the first call.
 
-Steps 4–6 (tag-list helper, third-party `.fd` search path, struct
-helpers) are still pending.
+#### Step 4 — peek/poke + TagList (shipped)
+
+Tag lists are pervasive on OS3.x — `OpenWindowTagList`,
+`OpenScreenTagList`, `EasyRequestArgs`, `NewObject`, and most of
+gadtools all consume a `TAG_DONE`-terminated `TagItem[]` array.
+Building one from Python needs three pieces.
+
+**Low-level memory primitives (in `modamiga.c`).** A small set of
+read/write helpers on raw addresses:
+
+- `amiga.peek_b(addr)` / `peek_w(addr)` / `peek_l(addr)` — read
+  unsigned 8 / 16 / 32-bit value at `addr`.
+- `amiga.peek_bytes(addr, n)` — copy `n` bytes out as a `bytes`.
+- `amiga.poke_b(addr, v)` / `poke_w(addr, v)` / `poke_l(addr, v)` —
+  write the corresponding-size value.
+- `amiga.poke_bytes(addr, data)` — `memcpy` the buffer at `addr`.
+
+These are the same primitives Phase 17 step 6 will use for struct
+helpers, so they're now in place ahead of time.
+
+**`TagList` class (in frozen `amiga.py`).** Wraps an `AllocVec`'d
+`TagItem[]` array.  Each `(tag, value)` slot is two ULONGs (8 bytes);
+ints go straight into `ti_Data`, while `bytes` and `str` values get
+their own `AllocVec`'d buffer (NUL-terminated for C interop) with the
+buffer's address stored as `ti_Data`.  All allocations — main array
+plus per-string buffers — are released by `close()`, by `__exit__`
+on a `with`-block, or as a GC fallback in `__del__`.  The class
+defines `__int__` returning the head address so callers can pass a
+`TagList` directly to a `Library` proxy call.
+
+**`amiga.taglist(...)` factory.** Builds a `TagList` from kwargs
+and/or positional args.  Kwargs are resolved against the hand-curated
+table in `_amiga_tags.TAGS` (universal `TAG_*` markers plus the
+common `WA_*` and `SA_*` IDs computed from
+`intuition/intuition.h` and `intuition/screens.h`).  Positional args
+support three forms: a single iterable of `(tag, value)` pairs;
+multiple `(tag, value)` tuples; or alternating `tag, value, tag,
+value, ...`.  Unknown tag names raise `KeyError`.
+
+```python
+with amiga.taglist(WA_Width=640, WA_Height=480, WA_Title="hi") as tags:
+    with amiga.library("intuition.library", 37) as intuition:
+        intuition.OpenWindowTagList(0, tags)   # auto-unwraps via __int__
+```
+
+**Library proxy transparency.** `Library.__getattr__`'s generated
+closure now runs `int(v)` on any non-int argument, so a `TagList`
+passes through cleanly without the caller having to write
+`tags.addr` or `int(tags)`.
+
+Smoke-tested under Amiberry:
+
+- `peek_b/w/l/bytes` and `poke_b/w/l/bytes` round-trip the expected
+  values on an `AllocVec`'d buffer (big-endian, native m68k).
+- `TagList([(WA_Width, 640), (WA_Height, 400)])` produces a 24-byte
+  layout `[80 00 00 66] [00 00 02 80] [80 00 00 67] [00 00 01 90]
+  [00 00 00 00] [00 00 00 00]` (TAG_DONE terminator), confirmed via
+  `peek_l` at each offset.
+- A `TagList` containing `WA_Title="hi"` allocates a separate
+  3-byte buffer (`b"hi\x00"`); `peek_bytes` at the `ti_Data` pointer
+  reads back the correct bytes.  `close()` zeros the buffer count.
+- `amiga.taglist(WA_Width=640, WA_Title="hi")` resolves both kwargs
+  from `_amiga_tags.TAGS`; `amiga.taglist(NoSuchTag=1)` raises
+  `KeyError`.
+- Passing the `TagList` directly to a `Library` call
+  (`ex.FindTask(tl)`) reaches the trampoline without `TypeError` —
+  the proxy unwrapped via `int()` and the trampoline forwarded the
+  address into A1.
+
+Steps 5 and 6 (third-party `.fd` search path, struct helpers on top
+of these peek/poke primitives) are still pending.
 
 #### Acceptance
 
