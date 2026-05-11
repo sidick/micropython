@@ -33,7 +33,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
 - Phase 25 — Extra break signals: expose `SIGBREAKF_CTRL_D/E/F` and `amiga.signal()` / `amiga.wait_signal()`
 - Phase 26 — `PROGDIR:` on `sys.path`: automatic per the standard Amiga "next-to-executable" convention
-- Phase 27 ✅ Additional build variants: `a1200` (stock unaccelerated A1200), `68020fpu` (68020/68030 with 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants drop the libgcc soft-float wraps
+- Phase 27 ✅ Additional build variants: `minimal` (stock unaccelerated A1200), `68020fpu` (68020/68030 with 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants drop the libgcc soft-float wraps
 
 ### Non-goals (initially)
 
@@ -691,7 +691,7 @@ tools/amiga-vamos-repl.sh script.py # run a script (host TTY stays raw,
                                     # so any input() prompts get raw mode too)
 
 AMIGA_VARIANT=68040 tools/amiga-vamos-repl.sh   # FPU-capable build
-AMIGA_VARIANT=a1200 tools/amiga-vamos-repl.sh   # minimal build
+AMIGA_VARIANT=minimal tools/amiga-vamos-repl.sh   # minimal build
 ```
 
 `AMIGA_VARIANT` picks which `build-<variant>/micropython` to launch and
@@ -1453,7 +1453,7 @@ Four variants ship:
 | Variant | CPU | Heap | Notes |
 |---------|-----|------|-------|
 | `standard` (default) | `-m68020 -msoft-float` | 256 KB | Current behaviour preserved; runs on any 68020+ Amiga. |
-| `a1200` | `-m68020 -msoft-float` | 128 KB | Stock unaccelerated A1200 (68EC020, 2 MB Chip, no Fast). Strips `bsdsocket` module and `MICROPY_EMIT_68K`. Note: A500 isn't a target — its 68000 lacks unaligned access. |
+| `minimal` | `-m68020 -msoft-float` | 128 KB | Stock unaccelerated A1200 (68EC020, 2 MB Chip, no Fast). Strips `bsdsocket` module and `MICROPY_EMIT_68K`. Note: A500 isn't a target — its 68000 lacks unaligned access. |
 | `68020fpu` | `-m68020 -m68881` | 512 KB | 68020/68030 with 68881/68882 FPU coprocessor (A2620/A2630, A3000). FPU compares and conversions are emitted directly, so the libgcc soft-float wraps from `floatconv.c` aren't applied. |
 | `68040` | `-m68040` | 1 MB | 68040 with built-in FPU (A3640, A4000/040, Blizzard 1240). Same float-wrap story as `68020fpu`. |
 
@@ -1465,7 +1465,7 @@ Build sizes (text segment, `size` output):
 
 ```
 standard   355 848 bytes
-a1200      327 080 bytes   (-29 KB: no socket, no native emitter)
+minimal    327 080 bytes   (-29 KB: no socket, no native emitter)
 68020fpu   329 740 bytes   (-26 KB: no libgcc soft-float helpers)
 68040      339 012 bytes
 ```
@@ -1642,7 +1642,7 @@ wrapper launches and selects the matching vamos `--cpu` flag and RAM
 size:
 
 ```sh
-AMIGA_VARIANT=a1200 ./run-tests.py -d basics    # --cpu 68020,  2 MiB RAM
+AMIGA_VARIANT=minimal ./run-tests.py -d basics    # --cpu 68020,  2 MiB RAM
 AMIGA_VARIANT=68040 ./run-tests.py -d basics    # --cpu 68040,  4 MiB RAM
                                                 # (vamos's 68040 has an FPU)
 ```
@@ -1904,4 +1904,4 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
 | 25 — Extra break signals | Planned | Expose `SIGBREAKF_CTRL_D/E/F`, `amiga.signal()`, `amiga.wait_signal()` (Ctrl+C-safe) |
 | 26 — `PROGDIR:` on `sys.path` | Planned | One-line `main.c` change so scripts next to the binary are importable |
-| 27 — Build variants | ✅ Done | `make VARIANT=<name>` with `build-<name>` output dir; `standard` (default, 68020 soft-float), `a1200` (trimmed for stock unaccelerated A1200), `68020fpu` (68020 + 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants skip libgcc soft-float wraps |
+| 27 — Build variants | ✅ Done | `make VARIANT=<name>` with `build-<name>` output dir; `standard` (default, 68020 soft-float), `minimal` (trimmed for stock unaccelerated A1200), `68020fpu` (68020 + 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants skip libgcc soft-float wraps |
