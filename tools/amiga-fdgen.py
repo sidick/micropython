@@ -18,10 +18,15 @@ To pull data from multiple NDK releases, repeat `--fd-dir`:
         --fd-dir 3.5=/path/to/ndk35/lib/fd \\
         --fd-dir 3.9=/path/to/ndk39/lib/fd
 
-Sources are merged in ascending-version order; each function's `since`
-records the lowest version that listed it.  AmigaOS LVOs are append-only
-(libraries never renumber existing entries), so any cross-version drift
-in offset or register list is reported as a hard warning.
+Sources are merged in **chronological release order** (see
+AMIGA_OS_RELEASE_ORDER below) — *not* numeric-version order.  AmigaOS
+went 3.1 (1994) → 3.5 (1999) → 3.9 (2001) → 3.1.4 (2018, Hyperion)
+→ 3.2 (2021, Hyperion), so a lexical or `tuple(int(p))` sort would put
+3.2 ahead of 3.9, the opposite of the truth.  Each function's `since`
+records the oldest release that listed it.  AmigaOS LVOs are
+append-only (libraries never renumber existing entries), so any
+cross-version drift in offset or register list is reported as a hard
+warning.
 
 The `.fd` syntax (see http://aminet.net/package/dev/misc/fd2pragma):
 
@@ -201,18 +206,56 @@ def emit_python(libraries, out, sources):
     out.write("}\n")
 
 
+AMIGA_OS_RELEASE_ORDER = (
+    "1.0", "1.1", "1.2", "1.3",
+    "2.0", "2.04", "2.1",
+    "3.0", "3.1",
+    "3.5",          # Haage & Partner, 1999
+    "3.9",          # Haage & Partner, 2001 — last of the original line
+    # AmigaOS development resumed under Hyperion / AmigaOS Foundation
+    # several years later, restarting from 3.1.4.  Calendar-wise these
+    # are NEWER than 3.9, but numeric-wise they're older — the source
+    # of the sort-order trap this table is here to fix.
+    "3.1.4", "3.1.4.1",
+    "3.2", "3.2.1", "3.2.2", "3.2.2.1",
+)
+
+# Lookup table: version -> 0-based chronological position.
+_RELEASE_POSITION = {v: i for i, v in enumerate(AMIGA_OS_RELEASE_ORDER)}
+
+# Warn each unknown version exactly once.
+_warned_unknown_versions = set()
+
+
 def version_sortkey(version):
-    """Numeric sort key for AmigaOS version strings (e.g. '3.1', '2.04')."""
+    """Chronological sort key for an AmigaOS version string.
+
+    Empty string sorts before every release (the "untagged baseline"
+    used when --fd-dir is given without a `VERSION=` prefix).  Known
+    releases sort by their position in AMIGA_OS_RELEASE_ORDER.  Unknown
+    versions emit a one-time warning and sort *after* every known
+    release, ordered amongst themselves by numeric tuple.
+    """
     if not version:
-        return ()
-    out = []
+        return (0, 0)
+    pos = _RELEASE_POSITION.get(version)
+    if pos is not None:
+        return (1, pos)
+    if version not in _warned_unknown_versions:
+        _warned_unknown_versions.add(version)
+        print(
+            f"warning: unknown AmigaOS version {version!r}; sorting after "
+            f"all known releases.  Known: "
+            f"{', '.join(AMIGA_OS_RELEASE_ORDER)}",
+            file=sys.stderr,
+        )
+    numeric = []
     for part in version.split("."):
         try:
-            out.append(int(part))
+            numeric.append(int(part))
         except ValueError:
-            # Non-numeric component — push to end of its component slot.
-            out.append((1 << 31, part))
-    return tuple(out)
+            numeric.append((1 << 31, part))
+    return (2, tuple(numeric), version)
 
 
 def parse_source_spec(spec):
