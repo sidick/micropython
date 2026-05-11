@@ -217,7 +217,8 @@ AMIGA_OS_RELEASE_ORDER = (
     # are NEWER than 3.9, but numeric-wise they're older — the source
     # of the sort-order trap this table is here to fix.
     "3.1.4", "3.1.4.1",
-    "3.2", "3.2.1", "3.2.2", "3.2.2.1",
+    "3.2", "3.2.1", "3.2.2", "3.2.2.1", "3.2.3",
+    "3.3",          # forthcoming Hyperion release at time of writing
 )
 
 # Lookup table: version -> 0-based chronological position.
