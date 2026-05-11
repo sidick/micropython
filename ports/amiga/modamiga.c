@@ -453,6 +453,117 @@ static mp_obj_t amiga_imatch(mp_obj_t pattern_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_imatch_obj, amiga_imatch);
 
+// ---------- Phase 17: generic AmigaOS library-call trampoline ----------
+
+// Implemented in amiga_lib_call.S.  Loads A6 with `base`, D0-D7 / A0-A5
+// from the explicit per-register slots, then JSRs to base+offset.  D0
+// at return is the library function's result.
+extern uint32_t amiga_lib_call_asm(
+    uint32_t base, int32_t offset,
+    uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3,
+    uint32_t d4, uint32_t d5, uint32_t d6, uint32_t d7,
+    uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
+    uint32_t a4, uint32_t a5);
+
+// amiga.lib_open(name, version=0) -> int base.
+// Wraps `OpenLibrary("name.library", version)`.  Returns the library
+// base as a Python int; raises OSError(ENOENT) if the library isn't
+// available at the requested (or higher) version.  Callers must pair
+// every successful open with amiga.lib_close.
+static mp_obj_t amiga_lib_open(size_t n_args, const mp_obj_t *args) {
+    const char *name = mp_obj_str_get_str(args[0]);
+    ULONG version = (n_args >= 2) ? (ULONG)mp_obj_get_int(args[1]) : 0;
+    struct Library *base = OpenLibrary((STRPTR)name, version);
+    if (base == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    return mp_obj_new_int_from_uint((uintptr_t)base);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_lib_open_obj, 1, 2, amiga_lib_open);
+
+// amiga.lib_close(base) -> None.  Tolerates a zero base (no-op) so
+// callers can `lib_close(base)` unconditionally in a try/finally without
+// having to remember whether the open succeeded.
+static mp_obj_t amiga_lib_close(mp_obj_t base_obj) {
+    struct Library *base = (struct Library *)(uintptr_t)mp_obj_get_int(base_obj);
+    if (base != NULL) {
+        CloseLibrary(base);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_lib_close_obj, amiga_lib_close);
+
+// Table of (kwarg-name → register-slot-index) for the 14 user-loadable
+// registers.  Matches the order of the regs[] array passed to the asm
+// trampoline.
+static const struct {
+    qstr key;
+    uint8_t idx;
+} amiga_lib_call_regmap[] = {
+    { MP_QSTR_d0, 0 },  { MP_QSTR_d1, 1 },  { MP_QSTR_d2, 2 },  { MP_QSTR_d3, 3 },
+    { MP_QSTR_d4, 4 },  { MP_QSTR_d5, 5 },  { MP_QSTR_d6, 6 },  { MP_QSTR_d7, 7 },
+    { MP_QSTR_a0, 8 },  { MP_QSTR_a1, 9 },  { MP_QSTR_a2, 10 }, { MP_QSTR_a3, 11 },
+    { MP_QSTR_a4, 12 }, { MP_QSTR_a5, 13 },
+};
+
+// amiga.lib_call(base, offset, *, d0=0, ..., a5=0, ret="d0") -> value.
+// Calls the library function at the given signed LVO offset (e.g. -96
+// for DisplayBeep).  Registers not passed default to 0.  Return value
+// interpretation:
+//   ret="d0"   (default) — signed 32-bit int
+//   ret="d0u"            — unsigned 32-bit int
+//   ret="void"           — return None
+// The trampoline (in amiga_lib_call.S) preserves the m68k SysV
+// callee-saved register set, so the library is free to clobber any
+// register per the AmigaOS ABI.
+static mp_obj_t amiga_lib_call(size_t n_args, const mp_obj_t *args, mp_map_t *kw_args) {
+    (void)n_args;
+    uint32_t base = (uint32_t)(uintptr_t)mp_obj_get_int(args[0]);
+    int32_t offset = (int32_t)mp_obj_get_int(args[1]);
+    uint32_t regs[14] = {0};
+    const char *ret_mode = "d0";
+
+    for (size_t i = 0; i < kw_args->alloc; i++) {
+        mp_map_elem_t *e = &kw_args->table[i];
+        if (e->key == MP_OBJ_NULL) {
+            continue;
+        }
+        bool matched = false;
+        for (size_t r = 0; r < MP_ARRAY_SIZE(amiga_lib_call_regmap); r++) {
+            if (e->key == MP_OBJ_NEW_QSTR(amiga_lib_call_regmap[r].key)) {
+                regs[amiga_lib_call_regmap[r].idx] =
+                    (uint32_t)mp_obj_get_int_truncated(e->value);
+                matched = true;
+                break;
+            }
+        }
+        if (matched) {
+            continue;
+        }
+        if (e->key == MP_OBJ_NEW_QSTR(MP_QSTR_ret)) {
+            ret_mode = mp_obj_str_get_str(e->value);
+            continue;
+        }
+        mp_raise_TypeError(MP_ERROR_TEXT("lib_call: unknown keyword"));
+    }
+
+    uint32_t result = amiga_lib_call_asm(
+        base, offset,
+        regs[0], regs[1], regs[2], regs[3],
+        regs[4], regs[5], regs[6], regs[7],
+        regs[8], regs[9], regs[10], regs[11],
+        regs[12], regs[13]);
+
+    if (strcmp(ret_mode, "void") == 0) {
+        return mp_const_none;
+    }
+    if (strcmp(ret_mode, "d0u") == 0) {
+        return mp_obj_new_int_from_uint(result);
+    }
+    return mp_obj_new_int((mp_int_t)(int32_t)result);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_lib_call_obj, 2, amiga_lib_call);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR_amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -472,6 +583,9 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_disk_info),   MP_ROM_PTR(&amiga_disk_info_obj) },
     { MP_ROM_QSTR(MP_QSTR_match),       MP_ROM_PTR(&amiga_match_obj) },
     { MP_ROM_QSTR(MP_QSTR_imatch),      MP_ROM_PTR(&amiga_imatch_obj) },
+    { MP_ROM_QSTR(MP_QSTR_lib_open),    MP_ROM_PTR(&amiga_lib_open_obj) },
+    { MP_ROM_QSTR(MP_QSTR_lib_close),   MP_ROM_PTR(&amiga_lib_close_obj) },
+    { MP_ROM_QSTR(MP_QSTR_lib_call),    MP_ROM_PTR(&amiga_lib_call_obj) },
     // Memory flags
     { MP_ROM_QSTR(MP_QSTR_MEMF_ANY),    MP_ROM_INT(MEMF_ANY) },
     { MP_ROM_QSTR(MP_QSTR_MEMF_PUBLIC), MP_ROM_INT(MEMF_PUBLIC) },
