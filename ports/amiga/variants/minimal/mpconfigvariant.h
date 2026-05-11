@@ -1,4 +1,4 @@
-// a1200 variant: stock unaccelerated A1200 (68EC020, 2 MB Chip, no FPU).
+// minimal variant: stock unaccelerated A1200 (68EC020, 2 MB Chip, no FPU).
 // Same CPU target as the standard variant but trimmed for a chip-RAM-only
 // configuration with no Fast RAM expansion.
 

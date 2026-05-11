@@ -36,7 +36,7 @@ AMIGA_VARIANT="${AMIGA_VARIANT:-standard}"
 # small for the 68040 variant's 1 MiB heap.
 case "$AMIGA_VARIANT" in
     standard)       VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
-    a1200)          VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
+    minimal)        VAMOS_CPU="68020"; VAMOS_RAM_KIB=2048 ;;
     68040)          VAMOS_CPU="68040"; VAMOS_RAM_KIB=4096 ;;
     68020fpu)
         echo "amiga-vamos-run.sh: the '68020fpu' variant builds 68881 FPU instructions" >&2
@@ -47,7 +47,7 @@ case "$AMIGA_VARIANT" in
         ;;
     *)
         echo "amiga-vamos-run.sh: unknown AMIGA_VARIANT='$AMIGA_VARIANT'" >&2
-        echo "  Supported: standard, a1200, 68020fpu (Amiberry only), 68040" >&2
+        echo "  Supported: standard, minimal, 68020fpu (Amiberry only), 68040" >&2
         exit 2
         ;;
 esac
