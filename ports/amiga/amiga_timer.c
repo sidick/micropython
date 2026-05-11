@@ -38,6 +38,15 @@ static struct MsgPort      *timer_port = NULL;
 static struct timerequest  *timer_req  = NULL;
 static ULONG                eclock_freq = 0;
 
+// Separate async timer.device IORequest for amiga.wait_signal() (Phase 25).
+// Kept distinct from `timer_req` so a SendIO request pending for a
+// timeout-Wait can't collide with the next synchronous mp_hal_delay_us
+// the script issues from a signal handler.  Both ports share the same
+// `timer.device` open (the OS reference-counts it).
+static struct MsgPort      *async_timer_port = NULL;
+static struct timerequest  *async_timer_req  = NULL;
+static bool                 async_timer_inflight = false;
+
 // IO request round-trip overhead is several microseconds (msgport reply,
 // task wake, signal poll). For delays below this we busy-wait against the
 // E-Clock instead: same effective accuracy, no scheduler hop.
@@ -70,13 +79,48 @@ bool amiga_timer_open(void) {
     // is worth the 8 bytes.
     struct EClockVal ev;
     eclock_freq = ReadEClock(&ev);
+
+    // Async timer port for amiga.wait_signal() timeouts.  Best-effort: if
+    // any of these allocations fail, wait_signal() falls back to an
+    // untimed Wait().  The base timer (above) is the only essential one.
+    async_timer_port = CreateMsgPort();
+    if (async_timer_port != NULL) {
+        async_timer_req = (struct timerequest *)CreateIORequest(
+            async_timer_port, sizeof(*async_timer_req));
+        if (async_timer_req != NULL) {
+            if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
+                           (struct IORequest *)async_timer_req, 0) != 0) {
+                DeleteIORequest((struct IORequest *)async_timer_req);
+                async_timer_req = NULL;
+                DeleteMsgPort(async_timer_port);
+                async_timer_port = NULL;
+            }
+        } else {
+            DeleteMsgPort(async_timer_port);
+            async_timer_port = NULL;
+        }
+    }
     return true;
 }
 
 void amiga_timer_close(void) {
+    if (async_timer_req != NULL) {
+        if (async_timer_inflight) {
+            AbortIO((struct IORequest *)async_timer_req);
+            WaitIO((struct IORequest *)async_timer_req);
+            async_timer_inflight = false;
+        }
+        CloseDevice((struct IORequest *)async_timer_req);
+        DeleteIORequest((struct IORequest *)async_timer_req);
+        async_timer_req = NULL;
+    }
+    if (async_timer_port != NULL) {
+        DeleteMsgPort(async_timer_port);
+        async_timer_port = NULL;
+    }
     if (timer_req != NULL) {
-        // All TR_ADDREQUEST traffic goes through DoIO (synchronous), so
-        // there's never an in-flight request to abort here.
+        // All TR_ADDREQUEST traffic on the primary timer goes through DoIO
+        // (synchronous), so there's never an in-flight request to abort here.
         CloseDevice((struct IORequest *)timer_req);
         DeleteIORequest((struct IORequest *)timer_req);
         timer_req = NULL;
@@ -87,6 +131,37 @@ void amiga_timer_close(void) {
     }
     TimerBase = NULL;
     eclock_freq = 0;
+}
+
+// Start an async TR_ADDREQUEST for `ms` milliseconds.  Returns the signal
+// bit (already shifted into a mask) that the MsgPort will set on
+// completion, or 0 if no async port is available — in which case the
+// caller should fall back to an untimed Wait().  Pair every successful
+// call with amiga_async_timer_abort() once the Wait has returned.
+ULONG amiga_async_timer_send(ULONG ms) {
+    if (async_timer_req == NULL || async_timer_inflight) {
+        return 0;
+    }
+    async_timer_req->tr_node.io_Command = TR_ADDREQUEST;
+    async_timer_req->tr_time.tv_secs    = ms / 1000U;
+    async_timer_req->tr_time.tv_micro   = (ms % 1000U) * 1000U;
+    SendIO((struct IORequest *)async_timer_req);
+    async_timer_inflight = true;
+    return 1UL << async_timer_port->mp_SigBit;
+}
+
+// Abort the pending async request and drain its reply so the IORequest
+// is reusable.  Safe to call after Wait() regardless of whether the
+// timer was what woke us.
+void amiga_async_timer_abort(void) {
+    if (async_timer_req == NULL || !async_timer_inflight) {
+        return;
+    }
+    if (!CheckIO((struct IORequest *)async_timer_req)) {
+        AbortIO((struct IORequest *)async_timer_req);
+    }
+    WaitIO((struct IORequest *)async_timer_req);
+    async_timer_inflight = false;
 }
 
 static inline uint64_t eclock_ticks(void) {

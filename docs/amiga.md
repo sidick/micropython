@@ -30,8 +30,8 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 22 ✅ AmigaDOS pattern matching: `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator with finaliser) via `MatchFirst`/`MatchNext`/`MatchEnd`
 - Phase 23 ✅ `timer.device`-backed timing: MICROHZ-accurate `mp_hal_delay_us` / `ticks_us` via `timer.device` + cached-frequency `ReadEClock()`
 - Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
-- Phase 25 — Extra break signals: expose `SIGBREAKF_CTRL_D/E/F` and `amiga.signal()` / `amiga.wait_signal()`
-- Phase 26 — `PROGDIR:` on `sys.path`: automatic per the standard Amiga "next-to-executable" convention
+- Phase 25 ✅ Extra break signals: `SIGBREAKF_CTRL_D/E/F` constants plus `amiga.signal()` / `amiga.wait_signal(mask, timeout_ms=N)` (Ctrl+C-safe; timeout backed by a dedicated `timer.device` async port)
+- Phase 26 ✅ `PROGDIR:` appended to `sys.path` after `mp_init()` so modules dropped next to the binary import without setup
 - Phase 27 ✅ Additional build variants: `minimal` (stock unaccelerated A1200), `68020fpu` (68020/68030 with 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants drop the libgcc soft-float wraps
 
 ### Non-goals (initially)
@@ -1729,12 +1729,13 @@ to 32 alongside this phase since disk storage costs nothing.
 
 ---
 
-### Phase 25 — Extra break signals
+### Phase 25 — Extra break signals ✅
 
-AmigaOS gives every task four user-defined break signals: `SIGBREAKF_CTRL_C`,
-`_D`, `_E`, `_F`. Today only Ctrl+C is wired up. Exposing the others gives
-Python scripts a cheap cooperative IPC primitive — one task signals
-another's task pointer, no port / message setup needed.
+AmigaOS gives every task four user-defined break signals
+(`SIGBREAKF_CTRL_C/D/E/F`); Ctrl+C is already wired to the
+KeyboardInterrupt handler in `mphalport.c`.  This phase exposes the
+remaining three as a cheap cooperative-IPC primitive — one task
+signals another's task pointer, no port / message setup needed:
 
 ```python
 import amiga
@@ -1743,30 +1744,70 @@ mask = amiga.wait_signal(amiga.SIGBREAKF_CTRL_D | amiga.SIGBREAKF_CTRL_E,
                          timeout_ms=5000)
 ```
 
-Implementation: `exec.library` `Signal()` / `Wait()` / `SetSignal()` —
-small enough to bind directly in `modamiga.c`, no need to wait on
-Phase 17. Combine with `amiga.find_task(name)` (already exposed) for
-named-task signalling.
+Two new C bindings in `modamiga.c`:
 
-The wait wrapper has to be careful with Ctrl+C: any `Wait()` must OR in
-`SIGBREAKF_CTRL_C`, and a returned mask containing Ctrl+C should raise
-`KeyboardInterrupt` rather than being delivered to the script. Otherwise
-a script blocked in `wait_signal` becomes uninterruptible from the
-console.
+- **`amiga.signal(task_addr, sigmask)`** wraps `exec.library` `Signal()`
+  directly.  A NULL task pointer raises `ValueError` (cheap guard against
+  signalling a freshly-`Removed` task).
+- **`amiga.wait_signal(mask, timeout_ms=None)`** wraps `Wait()`, with
+  three guarantees: `SIGBREAKF_CTRL_C` is **always** ORed into the
+  internal mask (so the user can break out of an otherwise-infinite
+  wait) but is **always** stripped from the returned value (so Ctrl+C
+  never spuriously satisfies a user's signal); if Ctrl+C does fire,
+  `KeyboardInterrupt` is raised instead of being returned.
+
+The `timeout_ms` path is the only non-trivial bit.  AmigaOS `Wait()`
+doesn't take a timeout, so `amiga_timer.c` now also opens a **second,
+async** `timer.device` IORequest dedicated to this purpose (kept
+separate from the Phase 23 synchronous IORequest so a pending Wait can't
+collide with an in-flight `mp_hal_delay_us` call).  `wait_signal` arms
+the async timer via `SendIO`, ORs the MsgPort's signal bit into the
+Wait mask, then aborts/drains the request on return.  If the second
+timer port can't be opened at startup, `wait_signal` falls back to an
+untimed Wait — documented best-effort.
+
+Smoke-tested under Amiberry:
+
+- Self-signal round-trip: `signal(me, CTRL_E)` followed by
+  `wait_signal(CTRL_E)` returns `0x4000` in ~1 ms.
+- Two-signal OR: `signal(me, CTRL_F)` + `wait_signal(CTRL_E | CTRL_F)`
+  returns `0x8000` (the bit that actually fired).
+- Pure timeout: `wait_signal(CTRL_D, timeout_ms=120)` returns 0 after
+  ~121 ms (timer.device-accurate).
+- Early wake: pre-signal CTRL_E then `wait_signal(CTRL_E, timeout_ms=5000)`
+  returns immediately (~1 ms) with the right mask — confirms the async
+  IORequest is correctly aborted on the fast path.
+- Ctrl+C filtering: even if the caller passes `SIGBREAKF_CTRL_C` in
+  their mask, the returned value has bit 12 cleared.
 
 ---
 
-### Phase 26 — `PROGDIR:` on `sys.path`
+### Phase 26 — `PROGDIR:` on `sys.path` ✅
 
 Standard Amiga pattern: the executable's own directory is referenced as
-`PROGDIR:` (an automatic assign created by AmigaDOS at launch and unique
-per process). Put `PROGDIR:` on `sys.path` automatically at startup so a
-user can drop `.py` / `.mpy` files next to the `micropython` binary and
-import them with no path setup.
+`PROGDIR:`, an automatic assign created by AmigaDOS at launch and
+unique per process.  After `mp_init()` populates `sys.path = [""]`, the
+port appends `"PROGDIR:"`, so a user can drop `.py` / `.mpy` files next
+to the `micropython` binary and import them without further setup.
 
-One-line change in `main.c`'s `sys.path` initialization: insert
-`"PROGDIR:"` before the existing `""` entry. AmigaDOS resolves the assign
-itself, so the rest of the import path stack just works.
+```c
+mp_init();
+// ...
+mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("PROGDIR:")));
+```
+
+Implementation note: the original plan called for *prepending*
+PROGDIR: to `sys.path`, but the existing positional-script handling
+already replaces `sys.path[0]` with the script's directory (matching
+CPython's `sys.path[0] = abs_script_dir` convention).  Prepending
+PROGDIR: would lose it on every script run.  Appending puts it after
+the cwd/script-dir + `.frozen` placeholder, which is the correct
+import priority anyway: a same-directory script wins, with PROGDIR:
+as a final fallback.
+
+Smoke-tested under Amiberry: after launching `py0:phase2526_test.py`,
+`sys.path` is `['py0:', '.frozen', 'PROGDIR:']` — script dir first,
+frozen-modules placeholder second, PROGDIR: appended last.
 
 ---
 
@@ -2233,6 +2274,6 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 22 — AmigaDOS pattern matching | ✅ Done | `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator) in `modamiga.c` via `MatchFirst`/`MatchNext`/`MatchEnd`; iterator uses `mp_type_polymorph_iter_with_finaliser` so an abandoned loop cleans up the `AnchorPath` on GC |
 | 23 — `timer.device` timing | ✅ Done | `mp_hal_delay_us` uses `timer.device` MICROHZ (`DoIO`) for ≥200 µs and a tight `ReadEClock()` loop below; `mp_hal_ticks_us/ms` read EClock with a cached frequency; `mp_hal_delay_ms` no longer goes via `dos.library Delay()` (20 ms granularity); setup/teardown in `amiga_timer.c` around `mp_init/deinit` |
 | 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
-| 25 — Extra break signals | Planned | Expose `SIGBREAKF_CTRL_D/E/F`, `amiga.signal()`, `amiga.wait_signal()` (Ctrl+C-safe) |
-| 26 — `PROGDIR:` on `sys.path` | Planned | One-line `main.c` change so scripts next to the binary are importable |
+| 25 — Extra break signals | ✅ Done | `amiga.signal` + `amiga.wait_signal(mask, timeout_ms=N)` in `modamiga.c`; timeout uses a dedicated async `timer.device` port set up in `amiga_timer.c`; Ctrl+C always ORed into Wait mask but stripped from the return — never satisfies a user signal — and raises KeyboardInterrupt when it fires |
+| 26 — `PROGDIR:` on `sys.path` | ✅ Done | `main.c` appends `"PROGDIR:"` to `sys.path` after `mp_init()`; appended (not prepended) so the existing script-dir-at-[0] machinery still works |
 | 27 — Build variants | ✅ Done | `make VARIANT=<name>` with `build-<name>` output dir; `standard` (default, 68020 soft-float), `minimal` (trimmed for stock unaccelerated A1200), `68020fpu` (68020 + 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants skip libgcc soft-float wraps |

@@ -538,6 +538,14 @@ int main(int argc_unused, char **argv_unused) {
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
+    // Phase 26: append `PROGDIR:` to sys.path so users can drop modules
+    // next to the binary and `import` them without extra setup.
+    // AmigaDOS auto-assigns PROGDIR: to the directory of the running
+    // executable, so the assign-resolution machinery takes care of the
+    // path lookup.  Appended (not prepended) so the cwd-or-script-dir
+    // entry that lives at index 0 keeps its expected import priority.
+    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("PROGDIR:")));
+
     #if MICROPY_VFS
     // Mount the VfsAmiga at "/" so os.chdir/os.listdir/os.stat/open() etc.
     // all flow through dos.library via vfs_amiga.c. AmigaOS paths don't
