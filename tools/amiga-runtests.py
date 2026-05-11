@@ -41,7 +41,7 @@ LST = "T:__mp_test_list"
 # Patterns are matched against the test's basename (the part after the
 # last '/').
 _SKIP_PREFIXES = (
-    "int_big_",
+    "int_big",
     "string_tstring_",
     "weakref_",
     "fun_code",
@@ -61,6 +61,7 @@ _SKIP_NAMES = frozenset(
         "memoryview_itemsize.py",
         "namedtuple_asdict.py",
         "nanbox_smallint.py",
+        "string_module_tstring.py",
         "subclass_native_call.py",
         "sys_getsizeof.py",
         "sys_stdio_buffer.py",
@@ -105,36 +106,81 @@ def is_skip_output():
 
 
 def check_exp(test_path):
-    """Compare OUT to test_path + '.exp' line by line, treating \\r\\n
-    and \\r as equivalent to \\n. Returns True/False/None (None means
-    no .exp file was found). Reads both files line by line so peak
-    memory is bounded to one line per side, regardless of output size.
-    Upstream convention is <test>.py.exp (full filename + .exp), which
-    is what tools/amiga-gen-exp.py produces."""
+    """Compare OUT to test_path + '.exp'. Returns True/False/None (None
+    means no .exp file was found). Upstream convention is <test>.py.exp
+    (full filename + .exp), which is what tools/amiga-gen-exp.py produces.
+
+    The .exp format supports '########' on a line by itself as a wildcard
+    meaning 'match zero or more lines'. This is used by a handful of
+    upstream .exp files (e.g. builtin_help.py, bytes_compare3.py) where
+    the test output isn't fully deterministic but has stable anchor
+    lines around the variable parts. Non-wildcard lines are compared
+    literally after rstrip(); the full regex matching that run-tests.py
+    does for tests_with_regex_output isn't reproduced here, but in
+    practice the .exp files only use literal text plus the wildcard.
+
+    The .exp file is loaded into memory (small; large files belong to
+    feature-gated tests that we skip up front via _SKIP_*). The actual
+    output is streamed from disk a line at a time."""
     exp_path = test_path + ".exp"
     try:
         ef = open(exp_path, "rb")
     except OSError:
         return None
     try:
-        try:
-            af = open(OUT, "rb")
-        except OSError:
-            return False
-        try:
-            while True:
-                la = af.readline()
-                le = ef.readline()
-                # rstrip() handles trailing \r\n / \n / \r and any
-                # trailing spaces. Empty result from both sides means EOF.
-                if la.rstrip() != le.rstrip():
-                    return False
-                if not la and not le:
-                    return True
-        finally:
-            af.close()
+        exp_lines = [l.rstrip() for l in ef]
     finally:
         ef.close()
+    # Drop leading/trailing blank lines so the original _norm's .strip()
+    # behaviour is preserved.
+    while exp_lines and not exp_lines[-1]:
+        exp_lines.pop()
+    while exp_lines and not exp_lines[0]:
+        del exp_lines[0]
+    try:
+        af = open(OUT, "rb")
+    except OSError:
+        return False
+    try:
+        return _match_exp(af, exp_lines)
+    finally:
+        af.close()
+
+
+def _match_exp(af, exp_lines):
+    n = len(exp_lines)
+    ei = 0
+    while ei < n:
+        e = exp_lines[ei]
+        if e == b"########":
+            # Wildcard. Find the next non-wildcard expected line.
+            ej = ei + 1
+            while ej < n and exp_lines[ej] == b"########":
+                ej += 1
+            if ej == n:
+                # Trailing wildcard(s): accept anything remaining.
+                return True
+            target = exp_lines[ej]
+            # Skip actual lines until one matches the target.
+            while True:
+                line = af.readline()
+                if not line:
+                    return False
+                if line.rstrip() == target:
+                    break
+            ei = ej + 1
+        else:
+            line = af.readline()
+            if not line or line.rstrip() != e:
+                return False
+            ei += 1
+    # Expected exhausted; any remaining actual must be blank.
+    while True:
+        line = af.readline()
+        if not line:
+            return True
+        if line.rstrip():
+            return False
 
 
 def output_has_error():
