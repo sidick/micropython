@@ -22,6 +22,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
 - Phase 14 — Dynamic heap growth via `gc_add()` + runtime-configurable initial heap size
 - Phase 15 — Expose AmigaOS memory-pool API (`CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool`) in the `amiga` module
+- Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
 
 ### Non-goals (initially)
 
@@ -127,8 +128,7 @@ ports/amiga/
 ├── mphalport.h           # Inline HAL stubs (ticks, interrupt char)
 ├── mphalport.c           # Console I/O HAL
 ├── main.c                # Entry point, gc_collect(), required stubs
-├── amigafile.c           # mp_lexer_new_from_file(), mp_import_stat()
-├── amigaio.c             # mp_builtin_open_obj (FileIO / TextIOWrapper)
+├── vfs_amiga.c           # VfsAmiga + FileIO/TextIOWrapper (Phase 16; replaces amigafile.c + amigaio.c)
 ├── sysstdio.c            # mp_sys_stdin/stdout/stderr stream objects
 ├── floatconv.c           # bebbo soft-float library bug fixes
 ├── modjson.c             # Port-local json module (json.loads bypass for 68k)
@@ -850,6 +850,73 @@ orphan-memory check. The wrapper class also works as a
 
 ---
 
+### Phase 16 — Pythonic file I/O via MicroPython VFS ✅
+
+Phases 2 and 8 wired up file I/O via `dos.library` directly: a
+port-local `mp_builtin_open` in `amigaio.c` returned `FileIO` /
+`TextIOWrapper` stream objects, and `amigafile.c` implemented
+`mp_lexer_new_from_file` + `mp_import_stat` from the same primitives.
+This worked for `open()` and `import`, but the standard `os.*` file
+operations (`os.chdir`, `os.getcwd`, `os.listdir`, `os.stat`,
+`os.mkdir`, `os.remove`, `os.rename`, `os.rmdir`) were unavailable
+because those route through MicroPython's VFS layer when
+`MICROPY_VFS=1`, and the port didn't enable it.
+
+Phase 16 enables `MICROPY_VFS=1` and `MICROPY_READER_VFS=1`, and
+ships a port-local `VfsAmiga` type in `ports/amiga/vfs_amiga.c` that
+implements every VFS method by wrapping the corresponding
+`dos.library` call. The VFS object itself is stateless — AmigaDOS
+keeps the cwd in `pr_CurrentDir`, so the VFS just dispatches into
+`Lock` / `Examine` / `CurrentDir` / `Open` / `Read` / `Write` /
+`CreateDir` / `DeleteFile` / `Rename`. `main.c` mounts a single
+`VfsAmiga` instance at `/` at startup; the VFS lookup treats
+AmigaOS-style paths ("`volume:dir/file`" or relative) as
+"relative-on-current-VFS" and routes them straight to us.
+
+Files moved or removed:
+
+| File | Status |
+|------|--------|
+| `vfs_amiga.c` | **New.** Houses the `VfsAmiga` type, the `FileIO`/`TextIOWrapper` stream objects (previously in `amigaio.c`), the VFS `import_stat` protocol callback, and an `ilistdir` iterator with a finaliser so abandoned `for f in os.listdir(...)` loops don't leak the directory `Lock`. |
+| `amigafile.c` | **Deleted.** `mp_lexer_new_from_file` is now provided by `extmod/vfs_reader.c` (via `MICROPY_READER_VFS`); `mp_import_stat` is an inline in `py/builtin.h` that delegates to `mp_vfs_import_stat`. |
+| `amigaio.c` | **Deleted.** File-type definitions and `mp_builtin_open` moved into `vfs_amiga.c`. With `MICROPY_VFS=1`, `mp_builtin_open_obj` is aliased to `mp_vfs_open_obj`, which dispatches to `VfsAmiga.open`. |
+
+The `dos.library` requester suppression pattern from `amiga.exists`
+(save `pr_WindowPtr`, set to `-1`, do the `Lock`, restore) is reused
+around every `Lock` call so a path on an unmounted volume reports a
+clean `OSError(ENOENT)` instead of stalling on a `"Please insert
+volume X:"` dialog.
+
+`os.chdir` keeps the first inherited cwd lock around (the one
+returned by `CurrentDir` on the first call — it's the shell's lock,
+not ours to free) and `UnLock`s any subsequent ones it gets back as
+we walk between directories. Children spawned via `amiga.execute()`
+inherit cwd from `pr_CurrentDir`, so the test runner can `os.chdir`
+once into the test directory and every spawned `micropython`
+subprocess sees relative `open("data/file")` paths resolve correctly.
+
+`tools/amiga-runtests.py` switched to `os.chdir(test_dir)` instead
+of the previously-considered `amiga.chdir` shim — same effect, but
+uses the standard Python idiom. The previously-failing `io/*` tests
+that all opened `data/file1` relative to cwd now pass.
+
+Verified under vamos:
+
+- `os.getcwd()` returns the volume-prefixed cwd string.
+- `os.chdir("tests:")` changes cwd; `os.listdir("basics")` lists 600+ entries.
+- `os.stat("basics/bool1.py")` returns a 10-tuple with mode/size set.
+- `open("nonexistent", "r+b")` raises `OSError(ENOENT)` — Python's "r+"
+  semantic (fail if missing) is correctly mapped to AmigaOS
+  `MODE_OLDFILE` rather than `MODE_READWRITE` (which would
+  create-on-missing).
+- Full `basics/` regression: 490 / 1 / 83 unchanged from the
+  pre-Phase-16 baseline.
+- Full `io/` regression: 14 pass / 1 skip / 1 fail (the known
+  `io/argv.py` vamos host-path-rewriting issue), up from the pre-
+  Phase-16 12 pass / 3 skip / 1 fail.
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
@@ -1199,3 +1266,4 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
 | 14 — Dynamic heap / runtime sizing | Planned | Replace fixed 256 KB heap with `-X heap=<N>`/`MICROPYHEAP` initial size plus `gc_add()`-based growth on demand, capped by `-X maxheap=<N>`; `amiga.heap_info()` for introspection |
 | 15 — Memory-pool API | Planned | Expose `CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool` on the `amiga` module; optional `MemoryPool` context-manager wrapper for `with`-statement use |
+| 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |

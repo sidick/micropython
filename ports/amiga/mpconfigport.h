@@ -18,6 +18,15 @@
 #define MICROPY_REPL_AUTO_INDENT            (1)
 #define MICROPY_ENABLE_EXTERNAL_IMPORT      (1)
 
+// VFS layer. Drives os.chdir / os.getcwd / os.listdir / os.stat / etc.
+// via a port-local VfsAmiga in vfs_amiga.c that wraps dos.library
+// (Lock/Examine/CurrentDir/...). MICROPY_READER_VFS routes
+// mp_lexer_new_from_file through the VFS so the import machinery uses
+// the same file-open path as the rest of the binary, replacing the
+// direct dos.library reads that used to live in amigafile.c.
+#define MICROPY_VFS                         (1)
+#define MICROPY_READER_VFS                  (1)
+
 #define MICROPY_ALLOC_PATH_MAX              (256)
 #define MICROPY_ALLOC_PARSE_CHUNK_INIT      (16)
 
