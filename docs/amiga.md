@@ -23,6 +23,17 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 14 — Dynamic heap growth via `gc_add()` + runtime-configurable initial heap size
 - Phase 15 — Expose AmigaOS memory-pool API (`CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool`) in the `amiga` module
 - Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
+- Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
+- Phase 18 — ARexx integration: inbound `MICROPYTHON.1` port plus outbound `amiga.rexx(port, command)` client via `rexxsyslib.library`
+- Phase 19 — Workbench launch support: handle `WBStartup` message and tooltype-driven configuration via `icon.library`
+- Phase 20 — `os.environ` ↔ `ENV:` integration: back the standard env-var dict with `GetVar`/`SetVar` so MicroPython and the shell share one store
+- Phase 21 — Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)`
+- Phase 22 — AmigaDOS pattern matching: expose `MatchFirst`/`MatchNext` as `amiga.match("#?.py")`
+- Phase 23 — `timer.device`-backed timing: replace newlib `clock()` with MICROHZ-accurate `mp_hal_delay_us` / `ticks_us`
+- Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
+- Phase 25 — Extra break signals: expose `SIGBREAKF_CTRL_D/E/F` and `amiga.signal()` / `amiga.wait_signal()`
+- Phase 26 — `PROGDIR:` on `sys.path`: automatic per the standard Amiga "next-to-executable" convention
+- Phase 27 ✅ Additional build variants: `a1200` (stock unaccelerated A1200), `68020fpu` (68020/68030 with 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants drop the libgcc soft-float wraps
 
 ### Non-goals (initially)
 
@@ -675,10 +686,18 @@ let the binary handle ^C/^D itself) for the duration of the run and
 restores the original mode on exit:
 
 ```sh
-tools/amiga-vamos-repl.sh           # start the REPL
+tools/amiga-vamos-repl.sh           # start the REPL (standard variant)
 tools/amiga-vamos-repl.sh script.py # run a script (host TTY stays raw,
                                     # so any input() prompts get raw mode too)
+
+AMIGA_VARIANT=68040 tools/amiga-vamos-repl.sh   # FPU-capable build
+AMIGA_VARIANT=a1200 tools/amiga-vamos-repl.sh   # minimal build
 ```
+
+`AMIGA_VARIANT` picks which `build-<variant>/micropython` to launch and
+the appropriate vamos `--cpu` flag (same mapping as
+`amiga-vamos-run.sh` — see the testing section). `68020fpu` can't run
+under vamos because vamos has no 68881 emulation.
 
 Pipe input (`printf ... | vamos ...`) is unaffected and doesn't need the
 wrapper, because pipes never get cooked-mode line buffering.
@@ -922,6 +941,494 @@ Verified under vamos:
 
 ---
 
+### Phase 17 — Native AmigaOS library access
+
+Today the only way to call a system library from Python is for the port to
+hand-roll a C wrapper in `modamiga.c` (current set: `os_version`, `find_task`,
+`alloc_vec`, `free_vec`, `execute`, `exists`). That's fine for a handful of
+bindings, but it doesn't scale to the dozens of system libraries that make
+AmigaOS *AmigaOS* — let alone third-party libraries. This phase adds a generic
+library-call mechanism that exposes any AmigaOS library function — system or
+third-party — to Python with no port-side C changes per library.
+
+#### Why this is tractable on AmigaOS
+
+The AmigaOS calling convention is unusually regular:
+
+- Every library function lives at a negative offset (LVO) from the library
+  base pointer.
+- Args go in a fixed set of D/A registers — never on the stack.
+- Return value is always in D0.
+- The library base must be in A6 before the call.
+- No struct-in-register passing, no varargs at the ABI level, all values are
+  32-bit.
+
+So one small 68k assembly trampoline can call any function in any library,
+given a register descriptor.
+
+The signature data already exists in machine-readable form: the NDK ships
+a `.fd` (Function Definition) file for every library at
+`/opt/amiga/m68k-amigaos/ndk-include/fd/*.fd`:
+
+```
+##base _IntuitionBase
+##bias 30
+OpenWindow(newWindow)(A0)
+CloseWindow(window)(A0)
+...
+##end
+```
+
+That's enough to mechanically look up call signatures (the bias is added to
+each function's index × 6 to compute the LVO). Vamos's `amitools` already
+parses these in Python — there's prior art to borrow.
+
+#### Two-layer design
+
+**Layer 1 — low-level trampoline (in `modamiga.c` + inline asm)**
+
+```python
+base = amiga.lib_open("intuition.library", 39)    # OpenLibrary
+addr = amiga.lib_call(base, -204,                 # OpenWindow's LVO
+                     a0=newwin_ptr,
+                     ret="d0")
+amiga.lib_close(base)                             # CloseLibrary
+```
+
+The trampoline takes the library base, an offset, and a register descriptor
+(which Dn/An registers to load and with what value). It saves A6, loads the
+base into A6, loads the requested registers, executes `jsr (offset, a6)`,
+restores A6, returns D0. Roughly 30 lines of inline 68k assembly. This
+layer alone unlocks every library on the system.
+
+API:
+
+- `amiga.lib_open(name, version)` → `OpenLibrary(name, version)`, returns
+  int base or raises `OSError(ENOENT)` on failure.
+- `amiga.lib_close(base)` → `CloseLibrary(base)`.
+- `amiga.lib_call(base, offset, **regs, ret="d0")` → set up registers, call,
+  return D0 (interpreted per `ret=`: `"d0"` signed int, `"d0u"` unsigned,
+  `"void"` to ignore).
+- Register kwargs: `d0`–`d7`, `a0`–`a5` (A6 is reserved for the base; A7 is SP).
+
+**Layer 2 — `.fd`-driven proxy (pure Python, frozen module)**
+
+```python
+intuition = amiga.library("intuition.library", 39)
+win = intuition.OpenWindow(nw)                   # signature looked up from .fd
+intuition.CloseWindow(win)
+```
+
+`amiga.library(name, version)` opens the library, looks up its `.fd`
+signature table, and returns a `LibraryProxy` whose `__getattr__` builds the
+right `lib_call` invocation. Frozen Python module on top of layer 1; no
+port-side C beyond what layer 1 already provides.
+
+#### Shipping `.fd` data
+
+**System libraries.** A build-time tool (`tools/amiga-fdgen.py`) parses every
+`.fd` in the NDK and emits a compact frozen Python dict mapping
+`library_name → {function_name: (offset, regs_in, ret_type)}`. The result is
+frozen into the binary so there's no startup parse cost and no runtime
+dependency on the NDK being installed at the target.
+
+**Third-party libraries.** At runtime, `amiga.library(name)` falls back to
+parsing `.fd` files from a search path: `PROGDIR:fd/`, `LIBS:fd/`,
+`mp_lib_fd/`. User drops `mylibrary.fd` next to their script and
+`amiga.library("mylibrary.library", 1)` finds it. Zero rebuild required.
+
+Or programmatically, when no `.fd` is available:
+
+```python
+mylib = amiga.library_from_signatures(
+    "mylibrary.library", 1,
+    {"DoStuff": (-30, "a0,d0", "d0")})
+```
+
+#### Things to deal with
+
+1. **Type marshalling.** Most arg slots are LONG (int → register, free).
+   Strings need `bytes`/`str` → `char *`: encode to latin-1 (Amiga charset),
+   ensure NUL-termination, hand over the buffer pointer. MicroPython's GC is
+   non-moving, so we don't need to pin the buffer during the call. Pointers
+   are Python ints (matches the `alloc_vec` convention).
+
+2. **Tag lists.** Pervasive on OS3.x (`OpenWindowTagList`, `EasyRequestArgs`,
+   `OpenScreenTagList`...). Helper:
+   `tags = amiga.taglist(WA_Width=640, WA_Height=400, WA_Title="hi")` returns
+   a pointer to a `TAG_DONE`-terminated array allocated from a per-call
+   arena. Lifetime tied to the next library call.
+
+3. **Structures.** Two layers: `amiga.peek_l(addr, offset)` / `peek_w` /
+   `peek_b` / `poke_*` as the dumb primitive, then a tiny ctypes-lite for
+   users who want `Window(ptr).Width`. The struct layouts live in `clib/*.h`
+   — much harder to mechanically parse than `.fd`, so hand-curate the common
+   ones (Window, Screen, RastPort, IntuiMessage, Process, Task, DateStamp,
+   FileInfoBlock) and let users define their own with a layout DSL.
+
+4. **Callback hooks.** Some library functions (`CreateNewProc`, hook-driven
+   blits, ARexx command dispatchers) want a C function pointer the library
+   will call back. Hard: needs executable memory and a per-callable thunk.
+   Defer this; most OS3.x scripting doesn't need it, and the few cases that
+   do (ARexx ports being the main one) are better served by a dedicated
+   module (see Phase 18).
+
+#### Implementation order within this phase
+
+1. `lib_open` / `lib_close` / `lib_call` with the asm trampoline + a tag-list
+   helper. Smoke test: reopen `intuition.library` and call `DisplayBeep(0)`.
+2. Frozen `.fd` table generator (`tools/amiga-fdgen.py`) for NDK libraries.
+3. `amiga.library(name, version)` proxy on top.
+4. Third-party `.fd` search path.
+5. Minimal struct helpers (peek/poke + hand-curated Window/Screen/RastPort).
+6. (Later) callback thunks if anyone actually needs them.
+
+Steps 1–3 should land as a single deliverable — that's "anything in the NDK,
+callable from Python" for roughly 400 lines of C+asm+Python.
+
+#### Acceptance
+
+```python
+import amiga
+intuition = amiga.library("intuition.library", 39)
+intuition.DisplayBeep(0)         # screen flashes / speaker beeps
+```
+
+Equivalent works for `exec.library`, `dos.library`, `graphics.library`,
+`gadtools.library`, `asl.library`, `icon.library` without any port-side code
+changes. A user-supplied `mylibrary.fd` dropped in `PROGDIR:fd/` makes its
+functions callable the same way.
+
+Note: once Phase 17 lands, several later phases collapse to small pure-Python
+wrappers — Phase 21 (volumes/assigns) and Phase 22 (pattern matching) become
+trivial `amiga.library("dos.library", ...)` calls, and an `EasyRequest`
+helper drops to a one-liner instead of a port-side C binding. Land Phase 17
+first if any of these are on the immediate horizon.
+
+---
+
+### Phase 18 — ARexx integration
+
+ARexx is *the* Amiga IPC mechanism: every well-behaved Amiga application
+exposes an ARexx port that external scripts can drive. Without one,
+MicroPython feels foreign on AmigaOS. Two halves:
+
+1. **Outbound client.** `amiga.rexx("DOPUS.1", "lister new")` posts a
+   command to another app's ARexx port and waits for the result. Pure
+   send-and-wait; doesn't require an inbound port. Implemented via
+   `rexxsyslib.library` `CreateRexxMsg` / `FillRexxMsg` / `PutMsg` to the
+   target port plus a wait on the reply.
+
+2. **Inbound port.** Open `MICROPYTHON.1` (or `.2`, `.3`... if multiple
+   instances are running) via `CreateMsgPort` + `AddPort`. External scripts
+   can send eval-this-string commands and get results back. The interpreter
+   services the port between bytecode batches (the existing
+   `MICROPY_VM_HOOK_LOOP` is the right hook, alongside the Ctrl+C poll).
+
+API sketch:
+
+```python
+import amiga
+
+# Outbound
+result = amiga.rexx("PPAINT.1", "ScreenToFront")
+
+# Inbound (cooperative; in the REPL or a long-running script)
+amiga.rexx_open("MICROPYTHON")    # opens MICROPYTHON.1
+# external 'rx "address MICROPYTHON.1; ..."' commands get eval'd in this
+# interpreter's globals, with their result returned to the caller
+amiga.rexx_close()
+```
+
+Outbound is the easier and more broadly useful half — every Amiga app
+becomes scriptable from a Python one-liner. Inbound is what makes
+MicroPython itself a good Amiga citizen.
+
+Acceptance: from the AmigaShell, `rx "address MICROPYTHON.1; '2 + 2'"`
+returns 4. From Python, `amiga.rexx("WORKBENCH", "WINDOWTOFRONT")` brings
+Workbench's window forward.
+
+---
+
+### Phase 19 — Workbench launch and tooltypes
+
+When an Amiga executable is launched from Workbench (by double-clicking its
+`.info` icon) instead of from a Shell, it gets a `WBStartup` message in
+place of `argc`/`argv`, and its configuration comes from tooltypes stored
+in the `.info` file. Today the port treats Workbench launch as "zero args"
+— the script just exits immediately because there's no REPL TTY either.
+
+Two pieces:
+
+1. **Detect Workbench launch.** When `pr_CLI == 0`, the process was started
+   from Workbench. The `WBStartup` message arrives on the process's port;
+   it carries the path to the executable plus zero or more "selected" file
+   arguments (icons shift-clicked alongside).
+
+2. **Read tooltypes.** `icon.library` `GetDiskObject(exe_name)` returns the
+   parsed `.info`; `FindToolType(do->do_ToolTypes, "SCRIPT")` etc. extract
+   individual settings. Conventional tooltypes: `SCRIPT=Work:scripts/foo.py`,
+   `HEAP=2M`, `DEBUG=1`.
+
+API sketch:
+
+```python
+import amiga
+if amiga.launched_from_workbench():
+    script = amiga.tooltype("SCRIPT")
+    heap   = amiga.tooltype("HEAP")
+    for arg in amiga.wb_selected_files():
+        ...
+```
+
+Also ship `tools/amiga-mkicon.py` that generates a companion `.info` file
+for a frozen-script binary — drops on the desktop, double-clickable, with
+tooltypes ready for the user to edit.
+
+Open question: how should stdout/stderr behave for a Workbench-launched
+script? Two options — open a `CON:` window automatically (so `print()`
+appears somewhere visible), or require the user to call
+`amiga.open_console("CON:0/0/640/200/MicroPython")` explicitly. The former
+is friendlier; the latter is what most Amiga apps do.
+
+Acceptance: double-clicking a `micropython.info` icon on the Workbench
+launches the interpreter; the `SCRIPT=` tooltype gets executed; output
+appears in an auto-opened (or explicitly opened) CON: window.
+
+---
+
+### Phase 20 — `os.environ` ↔ `ENV:` integration
+
+AmigaDOS environment variables live in a real shared store: `ENV:` is a
+filesystem assign, every variable is a file under it, and `SetVar` /
+`GetVar` / `DeleteVar` from `dos.library` are the API. Crucially, this is
+the *same* store the shell uses — a `SetVar` from Python is visible at the
+AmigaShell prompt afterwards. That's not true on Unix (child processes
+inherit copies of the parent's environment).
+
+Today `os.environ` is unimplemented. This phase backs it with `GetVar` /
+`SetVar` / `DeleteVar` plus iterating over `ENV:`.
+
+```python
+import os
+os.environ["EDITOR"] = "Ed"       # → SetVar("EDITOR", "Ed", GVF_GLOBAL_ONLY)
+print(os.environ["EDITOR"])       # → GetVar("EDITOR", ...)
+del os.environ["EDITOR"]          # → DeleteVar("EDITOR", ...)
+for k in os.environ:              # → iterate ENV:
+    ...
+```
+
+Implementation: enable `MICROPY_PY_OS_ENVIRON (1)` and supply a port-local
+backend in `modamiga.c` (or `vfs_amiga.c`) that delegates to `dos.library`.
+Optionally an `ENVARC:`-persistent variant
+(`amiga.setvar(name, value, persistent=True)`) that writes to disk too —
+the standard pattern for variables the user wants surviving across reboots.
+
+Acceptance: from MicroPython, `os.environ["X"] = "1"`; back at the shell,
+`echo $X` prints `1`. Conversely, `setenv X 42` in the shell makes
+`os.environ["X"] == "42"` from a freshly launched script.
+
+---
+
+### Phase 21 — Volume and assign introspection
+
+Surface the AmigaDOS device list — mounted volumes, assigns, and free-space
+info — to Python. Walks `DosList` via `dos.library` `LockDosList` /
+`NextDosEntry` / `UnLockDosList`, and `Info()` for per-volume stats.
+
+```python
+import amiga
+amiga.volumes()         # → ['Work:', 'Workbench:', 'RAM:']
+amiga.assigns()         # → {'LIBS:': 'Workbench:Libs',
+                        #    'C:':    'Workbench:C', ...}
+amiga.disk_info("Work:")
+# → (free_bytes, total_bytes, block_size)
+```
+
+Trivial on top of Phase 17 (a handful of `dos.library` calls), or hand-written
+as port-side C if Phase 17 isn't there yet — but the post-Phase-17 version is
+a ~50-line frozen Python module.
+
+---
+
+### Phase 22 — AmigaDOS pattern matching
+
+AmigaDOS patterns (`#?.py`, `~(#?.bak)`, `[a-z]#?`) are richer than POSIX
+glob and what users at the AmigaShell already know. Expose `dos.library`
+`ParsePattern` / `MatchFirst` / `MatchNext` / `MatchEnd`:
+
+```python
+import amiga
+for path in amiga.match("Work:src/#?.py"):
+    print(path)
+```
+
+Generator form (`amiga.imatch`) for memory-efficient iteration over large
+match sets — useful since `MatchFirst` builds an `AnchorPath` that holds
+real file `Lock`s during iteration.
+
+Also trivial post-Phase-17 — pure-Python wrapper around `dos.library` calls.
+
+---
+
+### Phase 23 — `timer.device`-backed timing
+
+The Phase 8 section notes that `mp_hal_delay_us` and `mp_hal_ticks_*` still
+use newlib `clock()` — busy-wait, millisecond-ish resolution. AmigaOS's
+`timer.device` MICROHZ unit gives microsecond accuracy and doesn't
+busy-wait. Replace the `clock()`-based path with `timer.device` for:
+
+- `mp_hal_delay_us(n)` → `timer.device` `TR_ADDREQUEST` with
+  `tv_secs=0, tv_micro=n` (or a tight busy-loop for `<100µs`, where the
+  IORequest setup overhead dominates).
+- `mp_hal_ticks_us()` / `mp_hal_ticks_ms()` → `ReadEClock()` (uses the
+  EClock hardware counter — sub-microsecond, monotonic, cheap to read).
+- `time.sleep_ms` / `sleep_us` get accuracy as a side effect since they
+  route through these HAL hooks.
+
+Setup: `CreateMsgPort` + `CreateIORequest` + `OpenDevice("timer.device",
+UNIT_MICROHZ, ...)` once at startup; teardown in `mp_deinit`. The
+IORequest object goes in a port-local static; not thread-safe but the port
+is single-threaded.
+
+Acceptance: `time.sleep_us(500)` actually waits ~500 µs (not 0 or 1000);
+`time.ticks_diff` between two `ticks_us()` calls returns a stable
+microsecond delta; the CPU isn't pinned at 100% during a long
+`time.sleep`.
+
+---
+
+### Phase 24 — Persistent REPL history
+
+Phase 13 explicitly punted persistent history. The implementation is
+small: at startup, read `ENVARC:MICROPYTHON_HISTORY` (one line per entry,
+oldest first) and `readline_push_history()` each line in turn; at shutdown,
+walk the history ring and write it back out.
+
+`mp_sys_atexit` (`MICROPY_PY_SYS_ATEXIT = 1`, already on) is the natural
+hook for the write side. `MICROPY_READLINE_HISTORY_SIZE` is 8 today; bump
+to 32 alongside this phase since disk storage costs nothing.
+
+`ENVARC:` rather than `ENV:` so history survives a reboot —
+`copy ENVARC: ENV: all` at startup is the standard AmigaOS pattern and
+`ENVARC:` is what the user's S-S preferences for other apps already live in.
+
+---
+
+### Phase 25 — Extra break signals
+
+AmigaOS gives every task four user-defined break signals: `SIGBREAKF_CTRL_C`,
+`_D`, `_E`, `_F`. Today only Ctrl+C is wired up. Exposing the others gives
+Python scripts a cheap cooperative IPC primitive — one task signals
+another's task pointer, no port / message setup needed.
+
+```python
+import amiga
+amiga.signal(other_task_addr, amiga.SIGBREAKF_CTRL_E)
+mask = amiga.wait_signal(amiga.SIGBREAKF_CTRL_D | amiga.SIGBREAKF_CTRL_E,
+                         timeout_ms=5000)
+```
+
+Implementation: `exec.library` `Signal()` / `Wait()` / `SetSignal()` —
+small enough to bind directly in `modamiga.c`, no need to wait on
+Phase 17. Combine with `amiga.find_task(name)` (already exposed) for
+named-task signalling.
+
+The wait wrapper has to be careful with Ctrl+C: any `Wait()` must OR in
+`SIGBREAKF_CTRL_C`, and a returned mask containing Ctrl+C should raise
+`KeyboardInterrupt` rather than being delivered to the script. Otherwise
+a script blocked in `wait_signal` becomes uninterruptible from the
+console.
+
+---
+
+### Phase 26 — `PROGDIR:` on `sys.path`
+
+Standard Amiga pattern: the executable's own directory is referenced as
+`PROGDIR:` (an automatic assign created by AmigaDOS at launch and unique
+per process). Put `PROGDIR:` on `sys.path` automatically at startup so a
+user can drop `.py` / `.mpy` files next to the `micropython` binary and
+import them with no path setup.
+
+One-line change in `main.c`'s `sys.path` initialization: insert
+`"PROGDIR:"` before the existing `""` entry. AmigaDOS resolves the assign
+itself, so the rest of the import path stack just works.
+
+---
+
+### Phase 27 — Build variants (low-memory + FPU) ✅
+
+The Makefile honours `VARIANT=<name>`, with the build directory named
+`build-<variant>`. Each variant lives under `ports/amiga/variants/<name>/`
+and supplies an `mpconfigvariant.h` (overrides like MCU name, heap size,
+disabled modules) plus an `mpconfigvariant.mk` (CPU flags, soft-float
+linker wraps). `mpconfigport.h` includes `mpconfigvariant.h` early and
+`#ifndef`-guards the overridable defaults.
+
+Four variants ship:
+
+| Variant | CPU | Heap | Notes |
+|---------|-----|------|-------|
+| `standard` (default) | `-m68020 -msoft-float` | 256 KB | Current behaviour preserved; runs on any 68020+ Amiga. |
+| `a1200` | `-m68020 -msoft-float` | 128 KB | Stock unaccelerated A1200 (68EC020, 2 MB Chip, no Fast). Strips `bsdsocket` module and `MICROPY_EMIT_68K`. Note: A500 isn't a target — its 68000 lacks unaligned access. |
+| `68020fpu` | `-m68020 -m68881` | 512 KB | 68020/68030 with 68881/68882 FPU coprocessor (A2620/A2630, A3000). FPU compares and conversions are emitted directly, so the libgcc soft-float wraps from `floatconv.c` aren't applied. |
+| `68040` | `-m68040` | 1 MB | 68040 with built-in FPU (A3640, A4000/040, Blizzard 1240). Same float-wrap story as `68020fpu`. |
+
+The libm `pow` / `tgamma` wraps in `floatconv.c` apply unconditionally on
+all variants — those are math-library bugs in clib2/libnix, unrelated to
+FPU codegen.
+
+Build sizes (text segment, `size` output):
+
+```
+standard   355 848 bytes
+a1200      327 080 bytes   (-29 KB: no socket, no native emitter)
+68020fpu   329 740 bytes   (-26 KB: no libgcc soft-float helpers)
+68040      339 012 bytes
+```
+
+FPU variants require the bebbo toolchain to have FPU multilibs built for
+libgcc/clib2 (standard with `make all`). If `m68k-amigaos-gcc -m68881
+-print-multi-lib` shows only a soft-float entry, rebuild bebbo with the
+FPU multilibs enabled or the link step will fail with `cannot find -lgcc`.
+
+**Why `68040` is larger than `68020fpu`.** The 68040's on-die FPU is a
+strict subset of the 68881/68882 — Motorola dropped the transcendental
+instructions (`FSIN`, `FCOS`, `FTAN`, `FATAN`, `FACOS`, `FASIN`, `FSINH`,
+`FCOSH`, `FTANH`, `FETOX`, `FLOGN`, `FLOG10`, `FLOG2`, `FTENTOX`, plus
+some packed-decimal and rounding variants) to save silicon. With
+`-m68040`, gcc knows the chip can't execute these instructions, so it
+emits libm function calls instead of single-instruction inlines.
+clib2's software `sin`/`cos`/`tan`/`log`/`exp`/`pow` then get pulled in
+(~9 KB). With `-m68020 -m68881`, gcc emits one-instruction `FSIN` etc.
+inline and the libm functions shrink to roughly "FPU op; return".
+
+An alternative for `68040` would be `-m68040 -m68881`: tell gcc the
+68881 ISA is available, get the smaller binary back, and rely on
+AmigaOS's **FPSP** (Floating Point Software Package — `68040.library`,
+shipped with Workbench 3.0+) to trap-and-emulate the missing
+transcendentals. We chose `-m68040` alone deliberately: a binary that
+uses `FSIN` on a 68040 without the FPSP loaded (custom Workbench,
+stripped Startup-Sequence, certain demos that take over the machine)
+faults with a guru. The ~9 KB extra is the price of self-containment.
+
+`sys.implementation._machine` reports the variant CPU: `"Amiga with
+68EC020"` / `"Amiga with 68020/68881"` / `"Amiga with 68040"` etc., so a
+script can branch on hardware capability at runtime.
+
+Open items deferred to later phases:
+
+- A `60` (or `68060`) variant. `-m68060` requires bebbo to have a 68060
+  multilib; the 060 also faults on some 040 instructions in user mode
+  (handled by emulation in `cpu060.library` on real hardware) so the
+  variant has to set `-mno-unaligned-access` for portions of generated
+  code. Punt until someone with the hardware confirms.
+- Once Phase 14 (dynamic heap) lands, the per-variant `MICROPY_HEAP_SIZE`
+  default becomes the *initial* size and users can override via
+  `-X heap=...` at runtime.
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
@@ -1044,6 +1551,26 @@ cd tests
 
 Results land in `tests/results/`. Failures show a diff of expected vs. actual
 output. Re-run only failures with `--run-failures`.
+
+#### Testing non-default variants
+
+`AMIGA_VARIANT` picks which `ports/amiga/build-<variant>/micropython` the
+wrapper launches and selects the matching vamos `--cpu` flag and RAM
+size:
+
+```sh
+AMIGA_VARIANT=a1200 ./run-tests.py -d basics    # --cpu 68020,  2 MiB RAM
+AMIGA_VARIANT=68040 ./run-tests.py -d basics    # --cpu 68040,  4 MiB RAM
+                                                # (vamos's 68040 has an FPU)
+```
+
+The `68020fpu` variant cannot be tested under vamos — it emits 68881
+coprocessor instructions and vamos has no 68881 emulation. The wrapper
+detects this and exits with a pointer at Amiberry / FS-UAE / real
+hardware. For host-side regression on FPU codegen, use
+`AMIGA_VARIANT=68040`, whose codegen is also FPU-using.
+
+The default variant when `AMIGA_VARIANT` is unset is `standard`.
 
 #### Exclude directories that can't run on Amiga
 
@@ -1284,3 +1811,14 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 14 — Dynamic heap / runtime sizing | Planned | Replace fixed 256 KB heap with `-X heap=<N>`/`MICROPYHEAP` initial size plus `gc_add()`-based growth on demand, capped by `-X maxheap=<N>`; `amiga.heap_info()` for introspection |
 | 15 — Memory-pool API | Planned | Expose `CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool` on the `amiga` module; optional `MemoryPool` context-manager wrapper for `with`-statement use |
 | 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |
+| 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |
+| 18 — ARexx integration | Planned | Outbound `amiga.rexx(port, command)` and inbound `MICROPYTHON.1` port via `rexxsyslib.library` |
+| 19 — Workbench launch / tooltypes | Planned | Handle `WBStartup` message, read tooltypes via `icon.library`; ship `tools/amiga-mkicon.py` for companion `.info` files |
+| 20 — `os.environ` ↔ `ENV:` | Planned | Back `os.environ` with `GetVar`/`SetVar`/`DeleteVar`; shared store with the AmigaShell |
+| 21 — Volume / assign introspection | Planned | `amiga.volumes()` / `assigns()` / `disk_info()` via `DosList` and `Info()` |
+| 22 — AmigaDOS pattern matching | Planned | `amiga.match("#?.py")` via `MatchFirst`/`MatchNext` |
+| 23 — `timer.device` timing | Planned | Replace newlib `clock()` in `mp_hal_delay_us` / `ticks_*` with MICROHZ unit + `ReadEClock()` |
+| 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
+| 25 — Extra break signals | Planned | Expose `SIGBREAKF_CTRL_D/E/F`, `amiga.signal()`, `amiga.wait_signal()` (Ctrl+C-safe) |
+| 26 — `PROGDIR:` on `sys.path` | Planned | One-line `main.c` change so scripts next to the binary are importable |
+| 27 — Build variants | ✅ Done | `make VARIANT=<name>` with `build-<name>` output dir; `standard` (default, 68020 soft-float), `a1200` (trimmed for stock unaccelerated A1200), `68020fpu` (68020 + 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants skip libgcc soft-float wraps |
