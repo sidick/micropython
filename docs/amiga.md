@@ -21,7 +21,6 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 12 — 68k native emitter rework (fix ASM_CALL_IND crash; ~47 native_*/viper_* tests blocked on this)
 - Phase 13 ✅ Interactive line editing at the REPL (cursor keys, history, kill/yank) via `shared/readline/`
 - Phase 14 ✅ Dynamic heap growth via `MICROPY_GC_SPLIT_HEAP_AUTO`; initial size from `-X heap=<N>` / `MICROPYHEAP`; total bounded by `-X maxheap=<N>` / `MICROPYHEAPMAX`; `amiga.heap_info()` for introspection
-- Phase 15 — Expose AmigaOS memory-pool API (`CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool`) in the `amiga` module
 - Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
 - Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
 - Phase 18 — ARexx integration: inbound `MICROPYTHON.1` port plus outbound `amiga.rexx(port, command)` client via `rexxsyslib.library`
@@ -29,7 +28,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 20 ✅ Env-var integration: `os.getenv` / `os.putenv` / `os.unsetenv` backed by `dos.library` `GetVar`/`SetVar` (local vars, matching Unix semantics; `ENV:` and `ENVARC:` writeable directly for shell-shared / persistent vars)
 - Phase 21 — Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)`
 - Phase 22 — AmigaDOS pattern matching: expose `MatchFirst`/`MatchNext` as `amiga.match("#?.py")`
-- Phase 23 — `timer.device`-backed timing: replace newlib `clock()` with MICROHZ-accurate `mp_hal_delay_us` / `ticks_us`
+- Phase 23 ✅ `timer.device`-backed timing: MICROHZ-accurate `mp_hal_delay_us` / `ticks_us` via `timer.device` + cached-frequency `ReadEClock()`
 - Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
 - Phase 25 — Extra break signals: expose `SIGBREAKF_CTRL_D/E/F` and `amiga.signal()` / `amiga.wait_signal()`
 - Phase 26 — `PROGDIR:` on `sys.path`: automatic per the standard Amiga "next-to-executable" convention
@@ -498,9 +497,8 @@ The `WaitForChar()` poll also improves Ctrl+C responsiveness during input: inste
 blocking in `FGetC`, the REPL polls every 200 ms and calls `amiga_check_ctrl_c()`
 between polls.
 
-Remaining newlib use: `clock()` in `mp_hal_delay_us` (sub-millisecond busy-wait) and
-`mp_hal_ticks_*` in `mphalport.h`; a timer.device implementation would improve
-accuracy but is not required for normal use.
+Remaining newlib use: superseded by Phase 23 — `mp_hal_delay_us` and `mp_hal_ticks_*`
+now use `timer.device` (MICROHZ + `ReadEClock()`) for microsecond accuracy.
 
 ---
 
@@ -810,94 +808,18 @@ the local-var lookup path.
 
 ---
 
-### Phase 15 — AmigaOS memory-pool API in the `amiga` module
+### Phase 15 — *withdrawn*
 
-`exec.library` provides a memory-pool allocator (`CreatePool`,
-`AllocPooled`, `FreePooled`, `DeletePool`) that's well suited to
-workloads with many small short-lived allocations sharing a lifetime
-— parser AST nodes, per-request scratch buffers, level-loaded game
-state, etc. The pool grows in "puddles" of a configurable size and
-`DeletePool` reclaims everything in one call without needing to
-track individual pointers. We already expose `AllocVec` /
-`FreeVec` (Phase 4); this phase rounds out the resource module with
-the pool API.
+Originally planned to expose `exec.library`'s memory-pool API
+(`CreatePool` / `AllocPooled` / `FreePooled` / `DeletePool`) as
+`amiga.create_pool()` etc. Dropped: Phase 14's dynamic GC heap
+already covers the common case for Python-level allocations, and the
+only remaining use (explicit native buffer lifetimes) is rare enough
+that `alloc_vec` is sufficient. If per-call scratch pools turn out to
+be useful inside the Phase 17 native-library trampoline, fold the
+pool bindings in there instead of as a standalone phase.
 
-Goals for this phase:
-
-1. **C bindings in `ports/amiga/modamiga.c`.** Mirror the existing
-   `alloc_vec` / `free_vec` style:
-
-   ```python
-   pool = amiga.create_pool(flags=amiga.MEMF_ANY,
-                            puddle_size=4096,
-                            threshold_size=1024)
-   addr = amiga.alloc_pooled(pool, size)
-   amiga.free_pooled(pool, addr, size)
-   amiga.delete_pool(pool)
-   ```
-
-   Pool handles are returned as Python ints (matching `alloc_vec`'s
-   integer-address convention) since `BPTR`-style opaque handles
-   would require a new type and finaliser for cleanup. Users keep
-   the int in a variable and pass it back; on `MemoryError` from
-   `CreatePool` we raise the standard exception.
-
-2. **Defaults that match common AmigaOS usage.**
-     - `flags` defaults to `MEMF_ANY` (matches `alloc_vec`).
-     - `puddle_size` defaults to 4 KB — large enough for many small
-       allocs without wasting a lot on the first puddle.
-     - `threshold_size`: any single request ≥ this bypasses the
-       pool and goes straight to `AllocVec`. AmigaOS docs recommend
-       setting this to roughly half the puddle size; default 2 KB.
-
-3. **Light Python-level wrapper (optional).** A small
-   `class MemoryPool` in `ports/amiga/modamiga.c` (or shipped as a
-   frozen Python module) that wraps the four C calls in a context
-   manager so `with amiga.MemoryPool() as p: ...` auto-deletes on
-   exit. This keeps the low-level functions exposed for users who
-   want them while making the common case easier.
-
-4. **Documentation in the `Phase 4 — amiga module API` table.**
-   Extend the API summary in this doc and the inline qstr table
-   with the new symbols (`Q(create_pool)`, `Q(alloc_pooled)`,
-   `Q(free_pooled)`, `Q(delete_pool)`, `Q(MemoryPool)` if we ship
-   the wrapper class). `MEMF_*` constants are already exported.
-
-Implementation notes:
-
-- `CreatePool` etc. were added in OS 3.0 (`exec.library` v37); the
-  port already requires `-m68020` + clib2 / NDK from bebbo so this
-  is a no-op compatibility-wise. Add a runtime guard via
-  `SysBase->LibNode.lib_Version >= 39` just in case (matches the
-  pattern used for `GetProgramName` in `main.c`).
-- Pool handles are opaque void pointers; we cast to `mp_int_t` for
-  Python and back to `APTR` for `Alloc/FreePooled`. The Phase 4
-  pattern for `alloc_vec` does the same with `AllocVec` results.
-- `FreePooled` requires the original `size` argument (AmigaOS pools
-  don't track per-allocation sizes); make this a hard parameter
-  on the Python side rather than trying to remember it ourselves.
-- The optional `MemoryPool` wrapper class should call
-  `delete_pool` in `__del__` (`MICROPY_ENABLE_FINALISER` is already
-  on for Phase 2's file handles), with a `closed` flag so an
-  explicit `delete_pool()` followed by GC doesn't double-free.
-
-Open questions to settle before starting:
-
-- Do we add bounds-checking on `alloc_pooled` returns / `free_pooled`
-  args, or trust the user? The existing `alloc_vec` / `free_vec`
-  trust the user; pools should match for consistency. The cost of
-  a stray `FreePooled` is a crash, but that's already true of the
-  current `free_vec`.
-- Should pool handles be registered as GC roots so a forgotten
-  pool gets collected? Probably not — pools are an *explicit*
-  resource, and the optional `MemoryPool` wrapper covers the
-  common "I forgot to free" case via its finaliser.
-
-Acceptance: a script can create a pool, allocate from it a few
-thousand times, optionally `free_pooled` some entries, and
-`delete_pool` cleanly with no memory leak under vamos's
-orphan-memory check. The wrapper class also works as a
-`with`-statement context manager.
+(Phase number kept as a placeholder to avoid renumbering later phases.)
 
 ---
 
@@ -1926,7 +1848,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 12 — Native emitter rework | Planned | Fix `ASM_CALL_IND` crash that blocks ~47 native/viper tests; see Phase 12 section |
 | 13 — REPL line editing | ✅ Done | `shared/readline/` drives the REPL; `mp_hal_stdin_rx_chr` translates AmigaOS CSI (`0x9B`) to `ESC [`; cursor keys, history, kill/yank all work |
 | 14 — Dynamic heap / runtime sizing | ✅ Done | `MICROPY_GC_SPLIT_HEAP_AUTO` enabled; initial size from `-X heap=<N>[K\|M]` or `MICROPYHEAP` env, default `MICROPY_HEAP_SIZE`; growth via `AllocVec` chunks tracked port-side and `FreeVec`'d at exit; `-X maxheap=<N>`/`MICROPYHEAPMAX` cap; `amiga.heap_info()` reports `(total, free, num_arenas)` |
-| 15 — Memory-pool API | Planned | Expose `CreatePool`/`AllocPooled`/`FreePooled`/`DeletePool` on the `amiga` module; optional `MemoryPool` context-manager wrapper for `with`-statement use |
+| 15 — Memory-pool API | Withdrawn | Dynamic GC heap (Phase 14) covers the common case; may be revisited as part of Phase 17's native-library trampoline |
 | 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |
 | 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |
 | 18 — ARexx integration | Planned | Outbound `amiga.rexx(port, command)` and inbound `MICROPYTHON.1` port via `rexxsyslib.library` |
@@ -1934,7 +1856,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 20 — Env-var integration | ✅ Done | `os.getenv`/`os.putenv`/`os.unsetenv` via `GetVar`/`SetVar` (flags=0, local vars; matches Unix `os.putenv` semantics) in `ports/amiga/modos.c` (included via `MICROPY_PY_OS_INCLUDEFILE`); two vamos bugs worked around — see Phase 20 |
 | 21 — Volume / assign introspection | Planned | `amiga.volumes()` / `assigns()` / `disk_info()` via `DosList` and `Info()` |
 | 22 — AmigaDOS pattern matching | Planned | `amiga.match("#?.py")` via `MatchFirst`/`MatchNext` |
-| 23 — `timer.device` timing | Planned | Replace newlib `clock()` in `mp_hal_delay_us` / `ticks_*` with MICROHZ unit + `ReadEClock()` |
+| 23 — `timer.device` timing | ✅ Done | `mp_hal_delay_us` uses `timer.device` MICROHZ (`DoIO`) for ≥200 µs and a tight `ReadEClock()` loop below; `mp_hal_ticks_us/ms` read EClock with a cached frequency; `mp_hal_delay_ms` no longer goes via `dos.library Delay()` (20 ms granularity); setup/teardown in `amiga_timer.c` around `mp_init/deinit` |
 | 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
 | 25 — Extra break signals | Planned | Expose `SIGBREAKF_CTRL_D/E/F`, `amiga.signal()`, `amiga.wait_signal()` (Ctrl+C-safe) |
 | 26 — `PROGDIR:` on `sys.path` | Planned | One-line `main.c` change so scripts next to the binary are importable |
