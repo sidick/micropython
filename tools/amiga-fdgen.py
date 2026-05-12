@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Parse bebbo NDK `.fd` files and emit a frozen Python signature table.
+"""Parse 3.2 NDK `.fd` files and emit a frozen Python signature table.
 
 Phase 17 of the AmigaOS port wants every system library's call signatures
 available to Python without a runtime dependency on the NDK being installed
 at the target.  This tool walks one or more directories of `.fd` files
-(the bebbo NDK ships them at `/opt/amiga/m68k-amigaos/ndk/lib/fd/`) and
+(the 3.2 NDK ships them at `/opt/amiga/m68k-amigaos/ndk/lib/fd/`) and
 writes a single Python module with a `LIBRARIES` dict keyed by openable
 name (`"intuition.library"`, `"console.device"`, `"card.resource"`, ...)
 whose values are dicts mapping function name to a `(lvo, regs_csv,

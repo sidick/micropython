@@ -1258,6 +1258,70 @@ Smoke-tested under Amiberry:
   the proxy unwrapped via `int()` and the trampoline forwarded the
   address into A1.
 
+#### Step 4 follow-up — full NDK tag-name coverage, parsing, chaining
+
+The hand-curated starter table in `_amiga_tags.py` was replaced by a
+generated one covering every plausible tag name in the 3.2 NDK.
+
+**`tools/amiga-taggen.py`** drives bebbo's m68k cross-gcc to harvest
+tag IDs:
+
+1. Runs `gcc -E -dM` over a generated C source that `#include`s the
+   common tag-bearing headers (`intuition/intuition.h`,
+   `intuition/screens.h`, `gadgetclass.h`, `libraries/asl.h`,
+   `libraries/gadtools.h`, `datatypes/datatypes.h`, etc.) and
+   collects every macro name matching `<UPPER>_<TagName>`.
+2. Generates a second C file with
+   `const ULONG _x_<NAME> = (ULONG)(<NAME>);` per candidate.  Compiles
+   it with `-S -O2` so the compiler folds each constant expression
+   (`(WA_Dummy + 0x01)` and so on) into a literal `.long`.
+3. Parses the assembly — bebbo prepends `_` to every global, so we
+   match `__x_<NAME>:` followed by `.long <value>` and decode either
+   decimal or hex.
+4. Bisects the candidate list to drop entries that aren't constant
+   expressions (rare; usually function-style macros that slipped past
+   the regex).
+5. Keeps only values with bit 31 set (the TAG_USER namespace) plus
+   the five universal `TAG_*` markers — drops the ~1800 unrelated
+   uppercase constants that happen to match the regex.
+
+Running it against `/opt/amiga/m68k-amigaos/ndk-include` yields
+**1072 tag IDs** in `ports/amiga/modules/_amiga_tags.py` (was: ~85
+hand-curated).  Tags covered include the full WA_*, SA_*, GA_*,
+ICA_*, IA_*, PA_*, GTMN_*, GTLV_*, GTCB_*, ASLFR_*, ASLFO_*, ASLSM_*,
+DTA_*, BIDTAG_*, IFFParseTag_* namespaces.  Frozen-module bloat is
+~48 KB (the standard build went 439 KB → 488 KB).
+
+**`amiga.parse_taglist(addr, max_items=64)`** walks a TagItem array
+back into a `{tag_id: value}` dict.  Follows `TAG_MORE` chains
+across multiple arrays (with `max_items` capping the total to
+prevent runaway loops); drops `TAG_IGNORE` slots; honours
+`TAG_SKIP` by advancing `1 + ti_Data` slots.  Returns `{}` for a
+null address so callers can pass an unconditional
+`parse_taglist(GetAttr(...))`.
+
+**`taglist(..., more=other_taglist)`** writes a `TAG_MORE` terminator
+pointing at `other_taglist`'s head address instead of the usual
+`TAG_DONE`, and pins the chained `TagList` alive via a reference on
+the outer one.  Closing the outer drops the keepalive; the inner
+then GC's normally.
+
+Smoke-tested under Amiberry:
+
+- New-namespace kwargs resolve (`GA_Width = 0x80030005`,
+  `ASLFR_TitleText = 0x80080001`, `DTA_GroupID = 0x8000101f`,
+  `GTMN_FullMenu = 0x8008003e`).
+- `parse_taglist(tl.addr)` returns `{WA_Width_id: 640, GA_Width_id: 120,
+  ASLFR_TitleText_id: <ptr to "Hi" buffer>}` — string-payload tags
+  surface their buffer pointer, exactly as written.
+- `outer = taglist(WA_Width=640, more=inner)` writes
+  `(TAG_MORE=0x2, inner.addr)` as the outer's terminator; a single
+  `parse_taglist(outer.addr)` returns the union of both lists.
+  Closing the outer keeps the inner alive (`inner.addr != 0`) until
+  the user closes it.
+- A manually-built TagList with a `TAG_IGNORE` slot in the middle
+  parses back without the ignored entry.
+
 #### Step 5 — runtime `.fd` loading + explicit signatures (shipped)
 
 Two complementary mechanisms let callers reach libraries that aren't
