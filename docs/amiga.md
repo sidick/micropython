@@ -23,7 +23,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 14 ✅ Dynamic heap growth via `MICROPY_GC_SPLIT_HEAP_AUTO`; initial size from `-X heap=<N>` / `MICROPYHEAP`; total bounded by `-X maxheap=<N>` / `MICROPYHEAPMAX`; `amiga.heap_info()` for introspection
 - Phase 16 ✅ Pythonic file I/O: VFS layer (`os.chdir`, `os.listdir`, `os.stat`, etc.) backed by `dos.library`
 - Phase 17 — Native AmigaOS library access: generic `lib_open`/`lib_call` trampoline plus `.fd`-driven `amiga.library(...)` proxy for system and third-party libraries
-- Phase 18 — ARexx integration (inbound ✅ via `amiga.rexx_open` / `rexx_recv` / `RexxMessage.reply`; outbound `amiga.rexx(port, command)` deferred)
+- Phase 18 ✅ ARexx integration — inbound via `amiga.rexx_open` / `rexx_recv` / `RexxMessage.reply`; outbound via `amiga.rexx(host, command)` / `_amiga.rexx_send`
 - Phase 19 ✅ Workbench launch support: `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype()`, auto-opened CON: window for stdin/stdout, `SCRIPT=` / `HEAP=` / `MAXHEAP=` tooltypes honoured at startup
 - Phase 20 ✅ Env-var integration: `os.getenv` / `os.putenv` / `os.unsetenv` backed by `dos.library` `GetVar`/`SetVar` (local vars, matching Unix semantics; `ENV:` and `ENVARC:` writeable directly for shell-shared / persistent vars)
 - Phase 21 ✅ Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)` via `LockDosList`/`NextDosEntry` and `Info()`
@@ -1376,11 +1376,10 @@ first if any of these are on the immediate horizon.
 ARexx is *the* Amiga IPC mechanism: every well-behaved Amiga application
 exposes an ARexx port that external scripts can drive.  Two halves:
 
-1. **Outbound client.** `amiga.rexx("DOPUS.1", "lister new")` posts a
-   command to another app's ARexx port and waits for the result.  Pure
-   send-and-wait; doesn't require an inbound port. Implemented via
-   `rexxsyslib.library` `CreateRexxMsg` / `FillRexxMsg` / `PutMsg` to the
-   target port plus a wait on the reply.  **Deferred.**
+1. **Outbound client — ✅ shipped.** `amiga.rexx("DOPUS.1", "lister new")`
+   posts a command to another app's ARexx port and blocks for the result.
+   Pure send-and-wait; doesn't require an inbound port to be open
+   ourselves.  See "Outbound" below.
 
 2. **Inbound port — ✅ shipped.** A public MsgPort named `MICROPYTHON.1`
    (or `.2`, `.3`... if multiple instances are running) is created on
@@ -1439,6 +1438,21 @@ amiga.rexx_serve(lambda cmd: eval(cmd))
   Otherwise `rm_Result2` gets `secondary` as the conventional error-
   code slot.  Finally `ReplyMsg()`.
 
+#### Failure modes if `rexxsyslib.library` is missing
+
+Phase 18 lazy-opens `rexxsyslib.library` only when a path actually
+needs `CreateArgstring` / `DeleteArgstring` / `CreateRexxMsg`.  So on
+a stripped AmigaOS install without ARexx, MicroPython still starts,
+`import amiga` works, and a script that opens an inbound port to
+receive rc-only requests works.  The hard failures are scoped:
+
+| Code path | If rexxsyslib missing |
+|-----------|-----------------------|
+| `amiga.rexx_open` / `rexx_close` / `rexx_recv` / `RexxMessage.command` | OK (exec.library only) |
+| `RexxMessage.reply(result=None, rc=...)` (no string) | OK |
+| `RexxMessage.reply(result="...", rc=0)` | Replies rc=10 to the sender so it doesn't hang, then raises `OSError("rexxsyslib.library unavailable")` to the script |
+| `amiga.rexx(host, command)` (outbound) | Raises `OSError("rexxsyslib.library unavailable")` before any send happens |
+
 The `RexxMessage` wrapper class in `amiga.py` exposes `.command`,
 `.action`, and `.reply(result=None, rc=0, secondary=0)`.  `__del__`
 sends an automatic rc=20 reply if the script forgets — a forgotten
@@ -1488,16 +1502,72 @@ Tested in Amiberry against a real `rx` invoked through `amiga.execute`:
   account for this by using a long first-iteration timeout (30 s) or
   by pre-warming with a no-op `rx`.
 
-#### Outbound (deferred)
+#### Outbound — as shipped
 
-Originally the second half of this phase.  Outbound is more
-mechanical (build a `RexxMsg`, `PutMsg`, `WaitPort` on a private
-reply port) but requires another pass to thread the rexxsyslib
-allocations through cleanly.  Tracked for a future commit.
+One C primitive in `modamiga.c` and a thin Python facade in
+`amiga.py`:
 
-Acceptance: from the AmigaShell, `rx`-via-`amiga.execute` against
-MICROPYTHON.1 round-trips a Python expression through the port and
-sees the eval'd result come back in the rx `result` variable.
+```python
+import amiga
+
+# Default check=True: returns the host's result string (bytes) on
+# rc==0, or raises OSError(rc) if the host returns a non-zero rc.
+result = amiga.rexx("PPAINT.1", "ScreenToFront")  # bytes
+
+# check=False: returns (rc, result_or_None) so the caller can
+# distinguish "success with empty result" from "host returned an
+# error code".
+rc, result = amiga.rexx("MYHOST.1", "DoSomething", check=False)
+```
+
+The C path is the textbook send-and-wait dance documented in the
+AREXX programmer's manual:
+
+1. `FindPort(host)` → `OSError(ENOENT)` if the port isn't published.
+2. Lazy `OpenLibrary("rexxsyslib.library", 0)`; cached in the same
+   `RexxSysBase` the inbound side uses, so two-way scripts pay only
+   one library open.
+3. `CreateMsgPort()` for the private reply port; `CreateRexxMsg`
+   with that as `mn_ReplyPort`.
+4. `CreateArgstring` for the command bytes; stored as `rm_Args[0]`.
+5. `rm_Action = RXCOMM | RXFF_RESULT` — command-level invocation,
+   asks the host to populate `rm_Result2` with a result argstring.
+6. `PutMsg(target, &msg->rm_Node)`.
+7. `Wait(reply_sig | SIGBREAKF_CTRL_C)` until our reply port fires.
+8. Unpack `rm_Result1` (rc) and `rm_Result2` (the result argstring
+   pointer if rc==0); copy the bytes into Python via
+   `mp_obj_new_bytes` + `LengthArgstring`.
+9. `DeleteArgstring` the result and our command; `DeleteRexxMsg`;
+   `DeleteMsgPort`.
+10. Return `(rc, result_or_None)` as a 2-tuple.
+
+**Ctrl+C is deferred, not aborting.** Once `PutMsg` has happened we
+can't safely tear the reply port down — the host will `PutMsg` into
+freed memory when it does reply.  The wait loop latches the Ctrl+C
+bit but keeps spinning until the reply is in hand; cleanup runs
+normally, then `KeyboardInterrupt` is raised before returning.  In
+practice ARexx hosts reply within milliseconds so the visible delay
+is negligible.
+
+#### Outbound smoke test
+
+Two MicroPython instances talking to each other over ARexx, no `rx`
+or `rexxmast` involved:
+
+- `phase18b_helper.py` opens `PYHOST.1` (inbound), receives one
+  message, `eval()`s the command, replies, exits.
+- `phase18b_test.py` `amiga.execute`s the helper in the background,
+  retries `amiga.rexx("PYHOST.1", expr)` until the helper has
+  AddPort'd, then verifies the round-trip.
+
+Verified: `2 + 2` → `b'4'`, `'hello'.upper()` → `b'HELLO'`,
+`3 * 14` → `b'42'`, `[1, 2, 3]` → `b'[1, 2, 3]'`.  Missing host →
+`OSError(ENOENT)`.  `check=False` against an eval error (`1/0`,
+helper replies rc=10) returns `(10, None)`.
+
+Acceptance: a Python expression sent via `amiga.rexx(host, expr)`
+to a MICROPYTHON-style host running `rexx_serve(eval)` returns the
+eval'd value as bytes.
 
 ---
 
@@ -2354,7 +2424,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 15 — Memory-pool API | Withdrawn | Dynamic GC heap (Phase 14) covers the common case; may be revisited as part of Phase 17's native-library trampoline |
 | 16 — VFS / `os.*` file I/O | ✅ Done | `MICROPY_VFS=1` with port-local `VfsAmiga` in `vfs_amiga.c` wrapping `dos.library`; `os.chdir`/`listdir`/`stat`/etc. work; `amigafile.c` and `amigaio.c` removed; on-device test runner uses `os.chdir` |
 | 17 — Native library access | Planned | `amiga.lib_open` / `lib_close` / `lib_call` asm trampoline + `.fd`-driven `amiga.library(...)` proxy; unlocks every system and third-party library without per-library C bindings |
-| 18 — ARexx integration | Partial — inbound ✅, outbound deferred | Inbound: `amiga.rexx_open/close/recv/reply` + `RexxMessage` facade; result strings allocated via `rexxsyslib.library` `CreateArgstring`; Ctrl+C-safe `recv()` with optional `timeout_ms` |
+| 18 — ARexx integration | ✅ Done | Inbound: `amiga.rexx_open/close/recv/reply` + `RexxMessage` facade.  Outbound: `amiga.rexx(host, cmd)` (raises `OSError(rc)` on non-zero rc with `check=True`, returns `(rc, result)` with `check=False`).  Result strings allocated via `rexxsyslib.library` `CreateArgstring`; lazy-opened so a missing library is harmless until first used.  Ctrl+C deferred (not aborting) once a message is in flight |
 | 19 — Workbench launch / tooltypes | ✅ Done | `amiga.launched_from_workbench()` / `wb_selected_files()` / `tooltype(name[, default])` in `modamiga.c`; bebbo crt0 does `WaitPort`+`GetMsg`+`ReplyMsg` so `main.c` just reads `_WBenchMsg`; `CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT` opened as stdin/stdout when WB-launched; `SCRIPT=` tooltype runs that path on startup; `HEAP=`/`MAXHEAP=` tooltypes feed the heap-sizing pre-scan (lower priority than env vars / `-X`); cannot be exercised under vamos (no Workbench, no `icon.library`) |
 | 20 — Env-var integration | ✅ Done | `os.getenv`/`os.putenv`/`os.unsetenv` via `GetVar`/`SetVar` (flags=0, local vars; matches Unix `os.putenv` semantics) in `ports/amiga/modos.c` (included via `MICROPY_PY_OS_INCLUDEFILE`); two vamos bugs worked around — see Phase 20 |
 | 21 — Volume / assign introspection | ✅ Done | `amiga.volumes()` / `assigns()` / `disk_info()` in `modamiga.c` via `LockDosList`+`NextDosEntry` and `Info()`; auto-requesters suppressed; `disk_info` returns 64-bit byte counts for >4 GB volumes; `IoErr()` mapped to `MP_E*` (incl. `ENODEV` for unmounted volumes) |

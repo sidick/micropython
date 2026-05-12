@@ -673,6 +673,40 @@ def rexx_recv(timeout_ms=None):
     return RexxMessage(ptr)
 
 
+def rexx(host, command, check=True):
+    """Send `command` to another app's ARexx port `host` and block for the reply.
+
+    `host` is the public port name (e.g. `"DOPUS.1"`, `"WORKBENCH"`).
+    `command` is the ARexx command string; pass a `str` (latin-1
+    encoded for you) or `bytes`.
+
+    On a successful reply (`rc == 0`) the host's result string is
+    returned as `bytes` (or empty `bytes` if the host returned `rc=0`
+    with no result).
+
+    If `rc != 0`, behaviour depends on `check`:
+        * `check=True` (default) — raises `OSError` with the rc as
+          errno and a short message.
+        * `check=False` — returns a `(rc, result_or_None)` tuple
+          instead.  `result` will be `None` since AmigaOS hosts
+          conventionally put a secondary error code (not a string)
+          in `rm_Result2` when `rc != 0`.
+
+    Ctrl+C during the wait is *deferred* until after the host's reply
+    arrives — abandoning the message mid-flight would have the host
+    `PutMsg` into our freed reply port.  In practice ARexx hosts
+    reply within milliseconds, so the user-visible delay is minimal.
+    """
+    if isinstance(command, str):
+        command = command.encode("latin-1")
+    rc, result = _c.rexx_send(host, command)
+    if check and rc != 0:
+        raise OSError(rc, "rexx %r at %s rc=%d" % (command, host, rc))
+    if check:
+        return result if result is not None else b""
+    return (rc, result)
+
+
 def rexx_serve(handler, timeout_ms=None):
     """Run a small dispatcher loop on the open port.
 
