@@ -538,6 +538,12 @@ int main(int argc_unused, char **argv_unused) {
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
+    // Phase 24: load persistent REPL history.  Done after mp_init so
+    // MP_STATE_PORT(readline_hist) is properly initialised.  Silent
+    // no-op on first run (no file yet) or on unreadable history files.
+    extern void amiga_history_load(void);
+    amiga_history_load();
+
     // Phase 26: append `PROGDIR:` to sys.path so users can drop modules
     // next to the binary and `import` them without extra setup.
     // AmigaDOS auto-assigns PROGDIR: to the directory of the running
@@ -758,6 +764,13 @@ int main(int argc_unused, char **argv_unused) {
     extern void vfs_amiga_cleanup(void);
     vfs_amiga_cleanup();
     #endif
+
+    // Phase 24: persist the REPL history before mp_deinit() drops
+    // MP_STATE_PORT(readline_hist).  Failure (e.g. S: read-only) is
+    // silent — the user notices "no history on next launch", they
+    // don't get a startup error.
+    extern void amiga_history_save(void);
+    amiga_history_save();
 
     // Phase 18 (inbound): if a script forgot to amiga.rexx_close(),
     // tear the port down ourselves so we don't leave a dangling public

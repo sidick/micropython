@@ -82,6 +82,9 @@ void amiga_free_heap(void *p);
 // sys.atexit registry; needed by the test runner's `-m` invocation so
 // modules that register atexit callbacks see them fire on a clean exit.
 #define MICROPY_PY_SYS_ATEXIT               (1)
+// Phase 24: keep more REPL history since disk storage is cheap and the
+// ring is reloaded from S:MicroPython.history on startup.  Default is 8.
+#define MICROPY_READLINE_HISTORY_SIZE       (32)
 // sys.stdin/stdout/stderr stream objects backed by the mphal stdio HAL.
 // Implementation lives in ports/amiga/sysstdio.c.
 #define MICROPY_PY_SYS_STDFILES             (1)
