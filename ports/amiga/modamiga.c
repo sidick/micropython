@@ -905,20 +905,130 @@ static mp_obj_t amiga_rexx_reply_fn(size_t n_args, const mp_obj_t *args) {
             RexxSysBase = (struct RxsLib *)OpenLibrary(
                 (CONST_STRPTR)"rexxsyslib.library", 0);
         }
-        if (RexxSysBase != NULL) {
-            mp_buffer_info_t bi;
-            mp_get_buffer_raise(result_obj, &bi, MP_BUFFER_READ);
-            UBYTE *argstr = CreateArgstring(
-                (CONST_STRPTR)bi.buf, (ULONG)bi.len);
-            if (argstr != NULL) {
-                msg->rm_Result2 = (LONG)(uintptr_t)argstr;
-            }
+        if (RexxSysBase == NULL) {
+            // We're past the point of no return — the message was
+            // delivered to us and the sender is blocked on a reply.
+            // Reply with a meaningful error rather than silently
+            // dropping the result string.
+            msg->rm_Result1 = 10;
+            msg->rm_Result2 = 0;
+            ReplyMsg(&msg->rm_Node);
+            mp_raise_msg(&mp_type_OSError,
+                MP_ERROR_TEXT("rexxsyslib.library unavailable"));
+        }
+        mp_buffer_info_t bi;
+        mp_get_buffer_raise(result_obj, &bi, MP_BUFFER_READ);
+        UBYTE *argstr = CreateArgstring(
+            (CONST_STRPTR)bi.buf, (ULONG)bi.len);
+        if (argstr != NULL) {
+            msg->rm_Result2 = (LONG)(uintptr_t)argstr;
         }
     }
     ReplyMsg(&msg->rm_Node);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_reply_obj, 3, 4, amiga_rexx_reply_fn);
+
+// ---------- Phase 18 outbound: drive another app's ARexx port ----------
+//
+// FindPort(host) → CreateMsgPort() (our reply port) → CreateRexxMsg →
+// CreateArgstring for the command → PutMsg to the target → Wait for
+// the reply on our port (with Ctrl+C latched but deferred so we don't
+// orphan the message in the host's queue) → unpack rm_Result1/2 and
+// clean everything up.
+//
+// Returns a `(rc, result_or_None)` tuple.  `result` is the bytes of
+// the argstring at rm_Result2 when rc==0 and the host returned a
+// string; otherwise None (rc!=0 leaves rm_Result2 as the host's
+// secondary error code, which the Python wrapper ignores for now).
+//
+// Ctrl+C handling: we never abort the wait once PutMsg has happened —
+// abandoning the reply port mid-flight would crash the host as it
+// PutMsg's into freed memory.  Instead we latch the Ctrl+C bit and
+// raise KeyboardInterrupt only after the reply is in hand and the
+// cleanup has run.  Most ARexx hosts reply within milliseconds, so
+// the user-visible delay is minimal.
+static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
+    const char *port_name = mp_obj_str_get_str(port_obj);
+    mp_buffer_info_t cmd_bi;
+    mp_get_buffer_raise(cmd_obj, &cmd_bi, MP_BUFFER_READ);
+
+    struct MsgPort *target = FindPort((CONST_STRPTR)port_name);
+    if (target == NULL) {
+        mp_raise_OSError(MP_ENOENT);
+    }
+    if (RexxSysBase == NULL) {
+        RexxSysBase = (struct RxsLib *)OpenLibrary(
+            (CONST_STRPTR)"rexxsyslib.library", 0);
+        if (RexxSysBase == NULL) {
+            mp_raise_msg(&mp_type_OSError,
+                MP_ERROR_TEXT("rexxsyslib.library unavailable"));
+        }
+    }
+
+    struct MsgPort *reply = CreateMsgPort();
+    if (reply == NULL) {
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("CreateMsgPort failed"));
+    }
+    struct RexxMsg *msg = CreateRexxMsg(reply, NULL, NULL);
+    if (msg == NULL) {
+        DeleteMsgPort(reply);
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("CreateRexxMsg failed"));
+    }
+    msg->rm_Args[0] = (STRPTR)CreateArgstring(
+        (CONST_STRPTR)cmd_bi.buf, (ULONG)cmd_bi.len);
+    if (msg->rm_Args[0] == NULL) {
+        DeleteRexxMsg(msg);
+        DeleteMsgPort(reply);
+        mp_raise_msg(&mp_type_MemoryError,
+            MP_ERROR_TEXT("CreateArgstring failed"));
+    }
+    // RXCOMM = a command-level invocation; RXFF_RESULT = ask the host
+    // to put a result string in rm_Result2.  RXFF_STRING is for
+    // function-style calls, not relevant here.
+    msg->rm_Action = RXCOMM | RXFF_RESULT;
+
+    PutMsg(target, &msg->rm_Node);
+
+    // Wait for the reply.  Ctrl+C latched but deferred.
+    bool ctrl_c_pending = false;
+    ULONG reply_sig = 1UL << reply->mp_SigBit;
+    struct RexxMsg *got_msg = NULL;
+    while (got_msg == NULL) {
+        ULONG got = Wait(reply_sig | SIGBREAKF_CTRL_C);
+        if (got & SIGBREAKF_CTRL_C) {
+            ctrl_c_pending = true;
+        }
+        if (got & reply_sig) {
+            got_msg = (struct RexxMsg *)GetMsg(reply);
+        }
+    }
+
+    LONG rc = msg->rm_Result1;
+    mp_obj_t result_obj = mp_const_none;
+    if (rc == 0 && msg->rm_Result2 != 0) {
+        UBYTE *argstr = (UBYTE *)(uintptr_t)msg->rm_Result2;
+        ULONG len = LengthArgstring(argstr);
+        result_obj = mp_obj_new_bytes((const byte *)argstr, (size_t)len);
+        DeleteArgstring(argstr);
+    }
+    DeleteArgstring((UBYTE *)msg->rm_Args[0]);
+    msg->rm_Args[0] = NULL;
+    DeleteRexxMsg(msg);
+    DeleteMsgPort(reply);
+
+    if (ctrl_c_pending) {
+        mp_raise_type(&mp_type_KeyboardInterrupt);
+    }
+    mp_obj_t pair[2] = {
+        mp_obj_new_int(rc),
+        result_obj,
+    };
+    return mp_obj_new_tuple(2, pair);
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(amiga_rexx_send_obj, amiga_rexx_send_fn);
 
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
@@ -958,6 +1068,7 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_recv),       MP_ROM_PTR(&amiga_rexx_recv_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_command),    MP_ROM_PTR(&amiga_rexx_command_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_reply),      MP_ROM_PTR(&amiga_rexx_reply_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_send),       MP_ROM_PTR(&amiga_rexx_send_obj) },
     // Break-signal bits (Phase 25)
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },
