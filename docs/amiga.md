@@ -2328,25 +2328,42 @@ absent from the port print `SKIP` and exit cleanly.
 
 ### Test suite summary
 
-Latest snapshot under vamos via `tools/amiga-vamos-run.sh`:
+Latest snapshot under vamos via `tools/amiga-vamos-run.sh` —
+**re-run 2026-05-12** after Phase 17 steps 3–6, Phase 18 inbound and
+outbound, Phase 25, Phase 26, and the tag-list follow-up (parse_taglist,
+TAG_MORE, full NDK tag harvest):
 
 | Directory | Files | Pass | Self-skip | Fail | Notes |
 |-----------|------:|-----:|----------:|-----:|-------|
-| `basics/`     | 574 | 490 | 83 | 1  | `struct1.py` (bebbo ABI alignment) |
-| `float/`      | 68  | 54  | 11 | 3  | EXACT-mode precision at double-range edges |
-| `io/`         | 16  | 12  | 3  | 1  | `argv.py` (vamos host-path rewriting) |
-| `import/`     | 30  | 28  | 0  | 2  | `import_file.py`, `builtin_ext.py` |
-| `micropython/`| 108 | 42  | 19 | 47 | All native_*/viper_* — Phase 12 |
-| `misc/`       | 14  | 6   | 8  | 0  | Skips are settrace, sys_exc_info, cexample (build-time module) |
-| `cmdline/`    | 25  | 9   | 2  | 14 | Unix-port-specific (REPL banner, `-v`, terminal editing) |
-| `stress/`     | 13  | 12  | 0  | 1  | `bytecode_limit.py` parser memory pressure |
+| `basics/`     | 574 | 490 | 83  | 1  | `struct1.py` (bebbo ABI alignment) |
+| `float/`      | 68  | 54  | 11  | 3  | EXACT-mode precision at double-range edges |
+| `io/`         | 16  | 12  | 3   | 1  | `argv.py` (vamos host-path rewriting) |
+| `import/`     | 30  | 29  | 0   | 1  | `import_file.py` (vamos host-path rewriting) |
+| `micropython/`| 108 | 43  | 18  | 47 | All native_*/viper_* — Phase 12 |
+| `extmod/`     | 205 | 67  | 131 | 7  | vamos socket / select / time-quantum / vfs_userfs gaps |
+| `misc/`       | 14  | 6   | 8   | 0  | Skips: settrace, sys_exc_info, cexample (build-time module) |
+| `cmdline/`    | 25  | 9   | 2   | 14 | Unix-port-specific (REPL banner, `-v`, terminal editing) |
+| `stress/`     | 13  | 12  | 0   | 1  | `bytecode_limit.py` parser memory pressure |
 
-Aggregate: **653 pass / 126 self-skip / 69 fail** out of 848 test files.
+Aggregate (this run, covering the directories listed above):
+**722 pass / 256 self-skip / 75 fail** out of 1053 test files.
+Adding `extmod/` to the prior baseline accounts for 67 new passes,
+131 new self-skips (mostly asyncio / cryptolib / machine_* / vfs_lfs /
+ssl/tls features the port doesn't compile in), and 7 new fails — all
+host-side vamos limitations, not port code.
 
-Excluding the Phase-12 native/viper failures, the unix-port-specific
-cmdline tests, and the deferred `bytecode_limit.py` / `extreme_exc.py`
-parser-memory edge cases, **9 individual tests fail** — the rest are
-real platform differences documented in *Known test failures* below.
+Net change from the previous snapshot (excluding `extmod/`, which
+wasn't in that run): **+1 pass in `import/`** (`builtin_ext.py` now
+passes — the `from uos import *` namespacing was tightened upstream)
+and **+1 pass / -1 self-skip in `micropython/`** (a previously
+filtered test now runs cleanly).  No new failures introduced by
+recent phase work.
+
+Excluding the 47 Phase-12 native/viper failures, the unix-port-specific
+cmdline tests, vamos host-emulation gaps (extmod sockets/timers,
+import/io path quirks), and the deferred `bytecode_limit.py` parser
+edge case, **4 individual tests fail** — all real platform differences
+documented in *Known test failures* below.
 
 ### Recommended test directories
 
@@ -2355,10 +2372,11 @@ real platform differences documented in *Known test failures* below.
 | `basics/` | 491 | 490 pass, 83 self-skip (mostly intbig-only and threading), `struct1.py` fails (see below) |
 | `float/` | 57 | 54 pass, 11 self-skip (mostly intbig-only); 3 fail on EXACT-mode precision near double range edges (see below) |
 | `io/` | 16 | 12 pass, 3 self-skip (`os.remove`, `sys.std*.buffer`), `argv.py` fails (see below) |
-| `micropython/` | 108 | 42 pass, 19 self-skip; 47 fail in `native_*` and `viper_*` (Phase 12) |
+| `micropython/` | 108 | 43 pass, 18 self-skip; 47 fail in `native_*` and `viper_*` (Phase 12) |
 | `misc/` | 14 | 6 pass, 8 self-skip (settrace, sys_exc_info, cexample build-time module) |
 | `cmdline/` | 25 | 9 pass, 2 self-skip, 14 fail — most failures are unix-port-specific (REPL banner format, `-v` bytecode dump, terminal-editing). `-X compile-only`, `-O`, `-m` SystemExit handling, and `sys.atexit` all pass. |
-| `import/` | 30 | 28 pass; `import_file.py` fails for the same vamos path-rewriting reason as `io/argv.py`, `builtin_ext.py` fails because `uos` exposes no attributes (test relies on `os.sep` via `from uos import *`). |
+| `import/` | 30 | 29 pass; `import_file.py` fails for the same vamos path-rewriting reason as `io/argv.py`. |
+| `extmod/` | 205 | 67 pass, 131 self-skip (asyncio, cryptolib, framebuf, machine_*, ssl/tls, vfs_lfs/fat, etc. — features not compiled in or not present), 7 fail (vamos's POSIX shim doesn't fully cover sockets, `select.poll`, the `time.time_ns` quantum, or `vfs_userfs`). |
 | `stress/` | 13 | 12 pass; `bytecode_limit.py` fails with a parser IndentationError partway through (memory-pressure edge case as it exec()s bodies that approach the bytecode-jump limit). |
 
 ### Directories to skip
