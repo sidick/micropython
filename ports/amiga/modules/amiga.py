@@ -278,13 +278,20 @@ class TagList:
     Passing a `TagList` directly to a `Library` proxy call works
     transparently — the proxy unwraps it via `__int__` (which returns
     the head address of the TagItem array).
+
+    `more` (passed via `taglist(..., more=other)`) chains this list
+    to a second `TagList` via a `TAG_MORE` terminator instead of
+    `TAG_DONE`.  The chained list is held alive by reference until
+    this one is closed, so users don't have to keep their own
+    bookkeeping.
     """
 
     # Each TagItem is two ULONGs (ti_Tag, ti_Data) = 8 bytes; the
-    # array is terminated by a TAG_DONE-marker pair.
+    # array is terminated by a TAG_DONE-marker pair (or TAG_MORE +
+    # pointer-to-next-array if `more=` was passed).
     _ITEM_SIZE = 8
 
-    def __init__(self, items):
+    def __init__(self, items, more=None):
         items = list(items)
         n = len(items)
         self._main = _c.alloc_vec(
@@ -292,6 +299,8 @@ class TagList:
             _c.MEMF_ANY | _c.MEMF_CLEAR,
         )
         self._buffers = []
+        # Keep any chained TagList alive for as long as we point at it.
+        self._more_keepalive = more if isinstance(more, TagList) else None
         try:
             for i, pair in enumerate(items):
                 tag, val = pair
@@ -312,11 +321,14 @@ class TagList:
                     _c.poke_bytes(buf, payload)
                     _c.poke_l(slot + 4, buf)
                     self._buffers.append(buf)
-            # TAG_DONE terminator (alloc_vec returned a CLEARed array
-            # so the terminator slot is already zero, but be explicit).
+            # Terminator: TAG_DONE, or TAG_MORE + ptr-to-next when chaining.
             term = self._main + n * self._ITEM_SIZE
-            _c.poke_l(term, 0)
-            _c.poke_l(term + 4, 0)
+            if more is None:
+                _c.poke_l(term, 0)       # TAG_DONE
+                _c.poke_l(term + 4, 0)
+            else:
+                _c.poke_l(term, 2)       # TAG_MORE
+                _c.poke_l(term + 4, int(more))
         except BaseException:
             self.close()
             raise
@@ -344,6 +356,8 @@ class TagList:
         if self._main:
             _c.free_vec(self._main)
             self._main = 0
+        # Drop the chained-list reference so it can be GC'd in turn.
+        self._more_keepalive = None
 
     def __del__(self):
         try:
@@ -356,7 +370,7 @@ class TagList:
         return "<TagList @ %s>" % state
 
 
-def taglist(*pairs, **named):
+def taglist(*pairs, more=None, **named):
     """Build a `TagList` from kwargs and/or positional pairs.
 
     Kwargs are looked up by name in `_amiga_tags.TAGS`; unknown names
@@ -398,7 +412,46 @@ def taglist(*pairs, **named):
         if tag_id is None:
             raise KeyError("unknown tag name: %r" % name)
         items.append((tag_id, val))
-    return TagList(items)
+    return TagList(items, more=more)
+
+
+def parse_taglist(addr, max_items=64):
+    """Walk a `TAG_DONE`-terminated TagItem array at `addr` and return
+    a `{tag_id: value}` dict.
+
+    Follows `TAG_MORE` chains (up to `max_items` items total across
+    the entire chain).  `TAG_IGNORE` slots are dropped; `TAG_SKIP`
+    skips this slot plus `ti_Data` additional slots, matching exec's
+    convention for parameter-overlay tag lists.  Returns an empty
+    dict for a null `addr` so callers can pass an unconditional
+    `parse_taglist(GetAttr(...))`.
+    """
+    out = {}
+    if addr == 0:
+        return out
+    count = 0
+    while count < max_items:
+        tag = _c.peek_l(addr) & 0xffffffff
+        data = _c.peek_l(addr + 4) & 0xffffffff
+        if tag == 0:           # TAG_DONE / TAG_END
+            break
+        if tag == 2:           # TAG_MORE — jump to chained array
+            if data == 0:
+                break
+            addr = data
+            continue
+        if tag == 1:           # TAG_IGNORE — skip this slot
+            addr += 8
+            count += 1
+            continue
+        if tag == 3:           # TAG_SKIP — skip this + ti_Data more
+            addr += 8 * (1 + (data & 0xffffffff))
+            count += 1 + (data & 0xffffffff)
+            continue
+        out[tag] = data
+        addr += 8
+        count += 1
+    return out
 
 
 # ---------- Phase 17 step 6: ctypes-lite struct accessors ----------
