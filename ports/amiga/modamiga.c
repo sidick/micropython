@@ -1030,6 +1030,45 @@ static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_rexx_send_obj, amiga_rexx_send_fn);
 
+// ---------- Phase 24: REPL history accessors ----------
+//
+// The readline history ring lives in `MP_STATE_PORT(readline_hist)`
+// and is normally only touched by `shared/readline/readline.c`.
+// Exposing two thin accessors makes it scriptable: a startup script
+// can pre-seed entries, and inspection is useful for "what did I
+// just type?" recovery.
+
+#include "shared/readline/readline.h"
+
+// amiga.readline_history() -> tuple[str, ...]  (most recent first)
+static mp_obj_t amiga_readline_history(void) {
+    size_t n = 0;
+    for (size_t i = 0; i < MICROPY_READLINE_HISTORY_SIZE; i++) {
+        if (MP_STATE_PORT(readline_hist)[i] != NULL) {
+            n++;
+        }
+    }
+    mp_obj_t tup = mp_obj_new_tuple(n, NULL);
+    mp_obj_tuple_t *t = MP_OBJ_TO_PTR(tup);
+    size_t w = 0;
+    for (size_t i = 0; i < MICROPY_READLINE_HISTORY_SIZE && w < n; i++) {
+        const char *entry = MP_STATE_PORT(readline_hist)[i];
+        if (entry != NULL) {
+            t->items[w++] = mp_obj_new_str(entry, strlen(entry));
+        }
+    }
+    return tup;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_readline_history_obj, amiga_readline_history);
+
+// amiga.readline_push_history(line)
+static mp_obj_t amiga_readline_push_history_fn(mp_obj_t line_obj) {
+    const char *line = mp_obj_str_get_str(line_obj);
+    readline_push_history(line);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_readline_push_history_obj, amiga_readline_push_history_fn);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -1069,6 +1108,8 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_command),    MP_ROM_PTR(&amiga_rexx_command_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_reply),      MP_ROM_PTR(&amiga_rexx_reply_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_send),       MP_ROM_PTR(&amiga_rexx_send_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readline_history),      MP_ROM_PTR(&amiga_readline_history_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readline_push_history), MP_ROM_PTR(&amiga_readline_push_history_obj) },
     // Break-signal bits (Phase 25)
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },

@@ -29,7 +29,7 @@ This document describes a plan to port MicroPython to AmigaOS 3.x running on Mot
 - Phase 21 ✅ Volume / assign introspection: `amiga.volumes()`, `amiga.assigns()`, `amiga.disk_info(path)` via `LockDosList`/`NextDosEntry` and `Info()`
 - Phase 22 ✅ AmigaDOS pattern matching: `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator with finaliser) via `MatchFirst`/`MatchNext`/`MatchEnd`
 - Phase 23 ✅ `timer.device`-backed timing: MICROHZ-accurate `mp_hal_delay_us` / `ticks_us` via `timer.device` + cached-frequency `ReadEClock()`
-- Phase 24 — Persistent REPL history saved to `ENVARC:MICROPYTHON_HISTORY`
+- Phase 24 ✅ Persistent REPL history saved to `S:MicroPython.history` (overridable via `MICROPYHISTORY` env-var); ring size bumped to 32
 - Phase 25 ✅ Extra break signals: `SIGBREAKF_CTRL_D/E/F` constants plus `amiga.signal()` / `amiga.wait_signal(mask, timeout_ms=N)` (Ctrl+C-safe; timeout backed by a dedicated `timer.device` async port)
 - Phase 26 ✅ `PROGDIR:` appended to `sys.path` after `mp_init()` so modules dropped next to the binary import without setup
 - Phase 27 ✅ Additional build variants: `minimal` (stock unaccelerated A1200), `68020fpu` (68020/68030 with 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants drop the libgcc soft-float wraps
@@ -1933,20 +1933,69 @@ call on emulated 68020); `time.sleep_us(50000)` measured 50750 µs
 
 ---
 
-### Phase 24 — Persistent REPL history
+### Phase 24 — Persistent REPL history ✅
 
-Phase 13 explicitly punted persistent history. The implementation is
-small: at startup, read `ENVARC:MICROPYTHON_HISTORY` (one line per entry,
-oldest first) and `readline_push_history()` each line in turn; at shutdown,
-walk the history ring and write it back out.
+Phase 13's REPL line-editing kept history only in memory; this phase
+adds load-on-startup / save-on-exit so ↑ recalls commands from a
+previous session.
 
-`mp_sys_atexit` (`MICROPY_PY_SYS_ATEXIT = 1`, already on) is the natural
-hook for the write side. `MICROPY_READLINE_HISTORY_SIZE` is 8 today; bump
-to 32 alongside this phase since disk storage costs nothing.
+**Path.** Defaults to `S:MicroPython.history` (not `ENVARC:` — that's
+for preferences, and dropping a frequently-written log there would
+make every reboot's `copy ENVARC: ENV: all` slower).  `S:` is the
+conventional AmigaOS spot for shell-style dot-files; the binary
+sits there alongside `Shell-Startup` and `user-startup`.  Override
+with the `MICROPYHISTORY` env-var (read via dos.library `GetVar` —
+same pattern as Phase 14's `MICROPYHEAP`), so a user can keep
+per-script histories or relocate to `RAM:`/`T:` if they want
+session-only.
 
-`ENVARC:` rather than `ENV:` so history survives a reboot —
-`copy ENVARC: ENV: all` at startup is the standard AmigaOS pattern and
-`ENVARC:` is what the user's S-S preferences for other apps already live in.
+**Format.** One entry per line, oldest first, plain AmigaDOS line
+endings.  Old files with more than `MICROPY_READLINE_HISTORY_SIZE`
+entries truncate naturally on the next save (newest ones win since
+the ring overwrites tail-end first).  CRLF tolerated on read so a
+file authored from the host side still loads cleanly.
+
+**Sizing.** `MICROPY_READLINE_HISTORY_SIZE` was 8 (the upstream
+default); bumped to 32 in `mpconfigport.h` since disk storage is
+free and 8 entries gets reused inside a single editing session.
+
+**Implementation.**
+
+- `ports/amiga/amiga_history.c` contains the two entry points
+  (`amiga_history_load` / `amiga_history_save`), the
+  `MICROPYHISTORY` resolution, and a tiny `Read`-one-line helper
+  that handles CRLF.  Both paths suppress AmigaDOS auto-requesters
+  via `pr_WindowPtr = (APTR)-1` so an unmounted `S:` volume just
+  produces a silent no-op rather than popping "Insert volume" in
+  the user's face.
+- `ports/amiga/main.c` calls `amiga_history_load()` immediately
+  after `mp_init()` (so `MP_STATE_PORT(readline_hist)` is alive)
+  and `amiga_history_save()` immediately before `mp_deinit()` (so
+  the ring is still valid).
+- `modamiga.c` exposes two thin accessors for scripting:
+  `amiga.readline_history() -> tuple[str, ...]` (most recent first)
+  and `amiga.readline_push_history(line)`.  Useful for inspection
+  ("what did I just type?"), for pre-seeding a session from a
+  script, and — pragmatically — for testing this phase without
+  needing an interactive REPL.
+
+**Smoke test (under Amiberry).** A two-step boot script:
+
+1. `SetEnv MICROPYHISTORY py0:phase24_hist.txt` then launches a
+   script that pushes three entries and exits.  After exit, the
+   on-disk file contains the three entries oldest-first:
+   `x = 1\ny = 'hello'\nprint(x, y)`.
+2. Relaunches a second script that prints
+   `amiga.readline_history()` — comes back as
+   `('print(x, y)', "y = 'hello'", 'x = 1')` (most-recent-first
+   matching how `readline_push_history` builds the ring) — then
+   pushes one more entry.  After this exit, the file is now four
+   lines, ending with the newly pushed entry.
+
+Failure cases (no `S:` volume; read-only filesystem; corrupt file)
+are silent: history just doesn't persist that session.  A startup
+error here would be more annoying than the missing-history symptom
+it'd flag.
 
 ---
 
@@ -2512,7 +2561,7 @@ repository; add `tests/**/*.py.exp` to `.git/info/exclude` if
 | 21 — Volume / assign introspection | ✅ Done | `amiga.volumes()` / `assigns()` / `disk_info()` in `modamiga.c` via `LockDosList`+`NextDosEntry` and `Info()`; auto-requesters suppressed; `disk_info` returns 64-bit byte counts for >4 GB volumes; `IoErr()` mapped to `MP_E*` (incl. `ENODEV` for unmounted volumes) |
 | 22 — AmigaDOS pattern matching | ✅ Done | `amiga.match("#?.py")` (eager list) and `amiga.imatch(...)` (iterator) in `modamiga.c` via `MatchFirst`/`MatchNext`/`MatchEnd`; iterator uses `mp_type_polymorph_iter_with_finaliser` so an abandoned loop cleans up the `AnchorPath` on GC |
 | 23 — `timer.device` timing | ✅ Done | `mp_hal_delay_us` uses `timer.device` MICROHZ (`DoIO`) for ≥200 µs and a tight `ReadEClock()` loop below; `mp_hal_ticks_us/ms` read EClock with a cached frequency; `mp_hal_delay_ms` no longer goes via `dos.library Delay()` (20 ms granularity); setup/teardown in `amiga_timer.c` around `mp_init/deinit` |
-| 24 — Persistent REPL history | Planned | Save/restore readline ring to `ENVARC:MICROPYTHON_HISTORY` |
+| 24 — Persistent REPL history | ✅ Done | `amiga_history.c` loads + saves `S:MicroPython.history` (overridable via `MICROPYHISTORY` env-var); ring size bumped to 32; `amiga.readline_history()` / `amiga.readline_push_history()` expose the ring for scripting; silent no-op when the path isn't writable |
 | 25 — Extra break signals | ✅ Done | `amiga.signal` + `amiga.wait_signal(mask, timeout_ms=N)` in `modamiga.c`; timeout uses a dedicated async `timer.device` port set up in `amiga_timer.c`; Ctrl+C always ORed into Wait mask but stripped from the return — never satisfies a user signal — and raises KeyboardInterrupt when it fires |
 | 26 — `PROGDIR:` on `sys.path` | ✅ Done | `main.c` appends `"PROGDIR:"` to `sys.path` after `mp_init()`; appended (not prepended) so the existing script-dir-at-[0] machinery still works |
 | 27 — Build variants | ✅ Done | `make VARIANT=<name>` with `build-<name>` output dir; `standard` (default, 68020 soft-float), `minimal` (trimmed for stock unaccelerated A1200), `68020fpu` (68020 + 68881 coprocessor), `68040` (68040 with built-in FPU); FPU variants skip libgcc soft-float wraps |
