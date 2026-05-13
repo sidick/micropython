@@ -2154,6 +2154,305 @@ Open items deferred to later phases:
 
 ---
 
+### Phase 28 — TLS/SSL via AmiSSL v5
+
+Phase 9 landed plain TCP via `bsdsocket.library`; the obvious next
+step on the networking front is TLS. Upstream MicroPython ships two
+`ssl` backends in `extmod/`: axTLS (small, dated, no SNI/hostname
+verification worth trusting) and mbedTLS (modern but a ~250 KB code
+add plus another C dependency to cross-compile for 68k). Neither fits
+the AmigaOS ethos when the platform already has a perfectly serviceable
+TLS implementation — **AmiSSL** — as a shared library that any
+application can dynamically open. The TLS code stays on the user's
+machine where every other TLS client can share it; we ship only the
+thin Python-facing wrapper.
+
+AmiSSL is the AmigaOS port of OpenSSL. The v5.x line is based on
+OpenSSL 3.x, supports TLS 1.3, and is exposed through `amisslmaster.library`
+plus a versioned `amissl.library`. The master indirection lets the
+system carry multiple OpenSSL major versions simultaneously and pick
+the right one at open time — so an A1200 with v4 (OpenSSL 1.1.x) and
+v5 (OpenSSL 3.x) installed side-by-side can host both legacy
+applications and this port. We target v5 only: modern ciphers,
+ChaCha20-Poly1305 AEAD, proper TLS 1.3, the simpler `TLS_method()` /
+`TLS_client_method()` selectors, and provider-based crypto. v4 is
+OpenSSL 1.1.x — useful but EOL upstream and not worth carrying a
+deprecated-API codepath for.
+
+#### How AmiSSL is opened (not stock `OpenLibrary`)
+
+Unlike `bsdsocket.library`, AmiSSL has a master-indirection step. The
+v5 SDK exposes a single unified `OpenAmiSSLTags()` entry point that
+replaces the legacy v3/v4 `InitAmiSSLMaster()` + `OpenAmiSSL()` +
+`InitAmiSSL()` triple — one call does everything for the main task:
+
+```c
+#include <proto/amisslmaster.h>
+#include <proto/amissl.h>
+#include <libraries/amisslmaster.h>
+#include <libraries/amissl.h>
+
+AmiSSLMasterBase = OpenLibrary("amisslmaster.library",
+                               AMISSLMASTER_MIN_VERSION);
+OpenAmiSSLTags(AMISSL_CURRENT_VERSION,                  // positional
+               AmiSSL_UsesOpenSSLStructs, FALSE,        // opaque-only
+               AmiSSL_GetAmiSSLBase,      &AmiSSLBase,
+               AmiSSL_GetAmiSSLExtBase,   &AmiSSLExtBase,  // OS3 split
+               AmiSSL_SocketBase,         (ULONG)SocketBase,
+               AmiSSL_ErrNoPtr,           (ULONG)&errno,
+               TAG_DONE);
+
+// ... use normal OpenSSL APIs ...
+
+CloseAmiSSL();
+CloseLibrary(AmiSSLMasterBase);
+```
+
+Four things worth noting:
+
+- **`AMISSL_CURRENT_VERSION` is positional**, not a tag — it's the
+  first arg to `OpenAmiSSLTags`. With the v5 SDK, the macro resolves
+  to the v5 / OpenSSL 3.x constant. Compiling against the v5 SDK
+  produces a binary that *requires* an installed AmiSSL of matching
+  major; the master library refuses the open otherwise. That's the
+  whole point of the master indirection.
+- **`AmiSSL_UsesOpenSSLStructs = FALSE`** because MicroPython treats
+  `SSL_CTX *` / `SSL *` / `X509 *` as opaque pointers and never
+  reaches into struct internals. (The SDK suggests `TRUE` if unsure —
+  we *are* sure.)
+- **`AmiSSLExtBase` is OS3-only.** v5's OpenSSL 3.x has so many
+  functions that on m68k they had to split the call surface across
+  two library bases; OS4 keeps a single base. We're m68k-only here,
+  so the extra base is required to reach the full v5 API.
+- **`AmiSSL_SocketBase` is supplied in the same call.** The legacy
+  `InitAmiSSL()` step is folded into `OpenAmiSSLTags` when the open
+  happens on the main task, so the bsdsocket binding still has to
+  happen *after* `amiga_socket_open()` populated `SocketBase` — i.e.
+  `amiga_ssl_open()` must run later in `main()`. `errno` is per-task
+  too, so the `AmiSSL_ErrNoPtr` tag aims it at our task's slot.
+
+MicroPython is single-tasked (`MICROPY_PY_THREAD (0)`), so we never
+need the `InitAmiSSL()` / `CleanupAmiSSL()` pair that subprocesses
+sharing the same base require — `OpenAmiSSLTags` / `CloseAmiSSL`
+brackets the whole lifetime cleanly.
+
+The build links against the AmiSSL SDK in one of two flavours:
+
+- **`-lamisslstubs`** — provides function stubs for every OpenSSL
+  function so callbacks that take an OpenSSL function pointer (e.g.
+  `sk_X509_pop_free(..., X509_free)`) link cleanly. Without this,
+  passing `X509_free` as a function pointer fails to link because
+  the symbol lives behind the library indirection. The wrapper code
+  for `wrap_socket` doesn't strictly need stubs, but anything that
+  reaches deeper into OpenSSL idioms does — including the verify
+  callback we'll likely register from `modssl.c`.
+- **`-lamisslauto`** — does the open/init dance automatically at
+  program startup via constructor magic, transparent to the program.
+  Convenient for client apps but conflicts with our explicit
+  `amiga_ssl_open()` (which has to fire after `amiga_socket_open()`
+  for `SocketBase` to be valid). We don't use this.
+
+Header scheme is straight OpenSSL: `#include <openssl/ssl.h>`,
+`<openssl/err.h>`, `<openssl/x509v3.h>` — same as a desktop build,
+no `amissl/...` prefix needed in v5.
+
+#### Callback ABI on m68k
+
+OS3 callbacks under AmiSSL are called with arguments on the stack
+(not in registers, unlike a normal m68k Amiga library call), and
+they need `STDARGS SAVEDS` annotations so gcc emits the right
+prologue/epilogue:
+
+```c
+STDARGS SAVEDS static int amiga_ssl_verify_cb(int preverify_ok,
+                                              X509_STORE_CTX *ctx)
+{
+    return preverify_ok;
+}
+SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, amiga_ssl_verify_cb);
+```
+
+bebbo gcc has `__attribute__((stkparm))` for the calling convention
+and `__saveds` for the base-register reload (a4-relative globals).
+Worth defining a `AMISSL_CB` macro in `amiga_ssl.h` so every
+callback site uses the same set of annotations.
+
+#### Module shape
+
+`ports/amiga/modssl.c` registers an `ssl` module that follows the
+upstream `ssl` API surface, so user code stays portable between this
+port, CPython, and other MicroPython targets:
+
+```python
+import ssl, socket
+
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.verify_mode = ssl.CERT_REQUIRED
+ctx.load_verify_locations("LIBS:amissl/certs/cacert.pem")
+
+s = socket.socket()
+s.connect(("www.example.com", 443))
+ws = ctx.wrap_socket(s, server_hostname="www.example.com")
+ws.write(b"GET / HTTP/1.1\r\nHost: www.example.com\r\n"
+         b"Connection: close\r\n\r\n")
+print(ws.read(4096))
+ws.close()
+```
+
+Two Python-visible types:
+
+- `ssl.SSLContext` — wraps `SSL_CTX *`. Carries verify mode, CA trust
+  store, SNI hostname, optional ALPN list. `wrap_socket()` returns…
+- `ssl.SSLSocket` — wraps `SSL *` plus the underlying socket fd.
+  Implements the MicroPython stream protocol (read / write / ioctl)
+  so it slots into `readline()`, `with` statements, and the file-like
+  helpers in `extmod/` — same shape as Phase 9's socket object.
+
+Per-socket lifecycle: `SSL_new(ctx)`, `SSL_set_fd(ssl, sock->fd)`,
+`SSL_set_tlsext_host_name(ssl, hostname)` for SNI, `SSL_connect(ssl)`
+on the client side, then `SSL_read` / `SSL_write` for I/O, and
+`SSL_shutdown` + `SSL_free` on close. Errors come back via
+`SSL_get_error(ssl, ret)`; transient `SSL_ERROR_WANT_READ` /
+`SSL_ERROR_WANT_WRITE` map to `MP_EAGAIN` on a non-blocking socket
+(or to a blocking retry on a blocking one), terminal errors raise
+`OSError` with the OpenSSL string from `ERR_error_string` so the
+user sees `OSError: certificate verify failed: self signed
+certificate` and not just `OSError: -1`.
+
+#### Certificate trust store
+
+OpenSSL won't validate a chain without a trust store, and AmigaOS
+has no system-wide one. Two complementary mechanisms:
+
+1. **Default search path.** `SSL_CTX_set_default_verify_paths()`
+   picks up `LIBS:amissl/certs/cacert.pem` (a Mozilla CA bundle the
+   AmiSSL installer drops there). Most users already have this from
+   installing AmiSSL itself.
+2. **Explicit.** `ctx.load_verify_locations(cafile=...)` and
+   `ctx.load_verify_locations(cadata=...)` for users who want to
+   bundle their own roots or pin to a constrained set.
+
+Don't ship a CA bundle in the MicroPython binary — adds ~200 KB to
+every variant, gets stale fast, and AmiSSL's bundle is the right
+shared resource. Document the path in the phase notes so users
+hitting `OSError: unable to get local issuer certificate` have the
+obvious lever.
+
+#### Module size and variant gating
+
+The wrapper module is small (~600 lines C, estimated ~10 KB text),
+but it hard-depends on `MICROPY_PY_AMIGA_SOCKET` — `SSL_set_fd`
+needs a bsdsocket descriptor. Add:
+
+```c
+#ifndef MICROPY_PY_AMIGA_SSL
+#define MICROPY_PY_AMIGA_SSL                (MICROPY_PY_AMIGA_SOCKET)
+#endif
+```
+
+so the `minimal` variant (no socket on a stock A1200) also gets no
+SSL, while `standard` / `68020fpu` / `68040` build it in. If
+`amisslmaster.library` isn't installed at runtime the master-open
+fails and the module self-disables — `import ssl` then raises
+`ImportError("amisslmaster.library not found")` rather than crashing
+or returning a half-initialised module.
+
+#### Memory shape
+
+OpenSSL 3.x is comfortable with memory. `SSL_CTX` is ~16 KB once
+the default cipher list and verify store are populated; each
+`SSL` instance is ~48 KB (TLS 1.3 record buffers, key schedule,
+read/write BIOs). Two simultaneous HTTPS connections plus a CA
+store loaded from `cacert.pem` (~200 KB resident) pushes a stock
+256 KB `standard` heap right to the edge — the AmiSSL allocations
+come from system memory via `MEMF_ANY`, not MicroPython's GC heap,
+so it's the *system* free pool that matters, but the symptom on a
+2 MB Chip-only machine is identical: `OSError: out of memory`
+mid-handshake. The lever: `-X heap=` doesn't help (different
+pool), but `Avail FAST` showing low → close other apps or build
+the `68020fpu` / `68040` variant which assumes a Fast-RAM-equipped
+machine. Document this in the phase write-up.
+
+#### What we deliberately *don't* do
+
+- **Server-side TLS.** Mechanically straightforward (`TLS_server_method`,
+  cert + key load, `SSL_accept`), but the Amiga isn't a webserver
+  host in practice. Land client-side first; server is a small
+  additional surface if anyone actually asks.
+- **OpenSSL config-file integration.** OpenSSL 3.x reads `openssl.cnf`
+  for provider configuration; AmiSSL ships a sane default and we
+  don't expose tuning knobs to Python.
+- **`asyncio.start_server` / non-blocking handshake plumbing.**
+  Asyncio isn't enabled on this port (`MICROPY_PY_ASYNCIO (0)` in
+  `mpconfigport.h`); a future phase that lights up the scheduler
+  will revisit `SSLSocket.ioctl(MP_STREAM_POLL)` then. For now,
+  blocking handshakes only.
+- **Touching upstream `extmod/modssl_*.c`.** AmiSSL-only — this is
+  a port-side module under `ports/amiga/modssl.c`, leaving the
+  upstream axtls / mbedtls backends untouched. Same separation
+  rule as the rest of this port.
+
+#### File structure
+
+```
+ports/amiga/modssl.c          — module def, SSLContext, SSLSocket
+ports/amiga/amiga_ssl.c       — AmiSSL master open / init / cleanup
+ports/amiga/amiga_ssl.h       — shared prototypes + base pointers
+```
+
+`main()` calls `amiga_ssl_open()` after `amiga_socket_open()` and
+`amiga_ssl_close()` before exit; both are no-ops if AmiSSL isn't
+installed. `modsocket.c` and `modssl.c` share no symbols beyond
+`SocketBase` (passed through the `AmiSSL_SocketBase` tag to
+`OpenAmiSSLTags`).
+
+SDK reference: the AmiSSL v5 developer documentation lives at
+[`jens-maus/amissl:dist/README-SDK`](https://github.com/jens-maus/amissl/blob/master/dist/README-SDK)
+— authoritative for the exact tag set, the OS3/OS4 split, and the
+`STDARGS SAVEDS` callback convention. The `Examples/httpget.c` and
+`Examples/https.c` programs in the SDK distribution are minimal
+working clients worth mirroring.
+
+#### Testing
+
+- **Module-load smoke.** `import ssl; print(ssl.SSLContext)` works
+  even without AmiSSL installed — only `wrap_socket` / `SSLContext()`
+  construction needs the library, so a stripped Workbench can still
+  load the module.
+- **Handshake smoke under Amiberry.** HTTPS GET against the `badssl.com`
+  family — `expired.badssl.com`, `self-signed.badssl.com`,
+  `wrong.host.badssl.com` — exercises verify-failure paths. The
+  `boot` hook drives this unattended and the test grep's `rx_*.log`
+  for the expected `OSError: ... certificate verify failed` /
+  `Hostname mismatch` strings.
+- **Live target.** GET `https://www.example.com/` and confirm the
+  body comes back with `Connection: close` working cleanly through
+  `SSL_shutdown`.
+- **Upstream `tests/extmod/ssl_*.py`.** Most require asyncio; the
+  ones that just construct `ssl.SSLContext()` and call
+  `wrap_socket()` against a real server are the ones to enable in
+  the test-suite snapshot. Update `docs/amiga.md`'s
+  *Recommended test directories* once the actual pass/skip
+  breakdown is known.
+
+#### Open items
+
+- **AmiSSL 4 fallback.** If a target has only AmiSSL v4, the master
+  open with v5 constants fails. Decide: error out cleanly (v5-only,
+  recommend SDK upgrade) or carry a v4 codepath. Land v5-only
+  initially; revisit if anyone with a v4-locked setup asks.
+- **Cert pinning helpers.** `set_servername_callback` and the
+  raw-public-key APIs OpenSSL 3 exposes are useful for IoT-style
+  scripts on an Amiga reaching out to a fixed peer. Punt to a
+  follow-up phase.
+- **Async-friendly handshake.** Tied to the asyncio gating above.
+- **`urequests` / `mip`.** Once `ssl` lands, the upstream `urequests`
+  recipe and the `mip` package installer become usable — both are
+  pure-Python and just need an `ssl.wrap_socket` that works. Worth
+  freezing into the variant manifests as a follow-up.
+
+---
+
 ### Other known limitations
 
 | Issue | Status | Fix |
