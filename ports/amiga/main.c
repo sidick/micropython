@@ -577,6 +577,11 @@ int main(int argc_unused, char **argv_unused) {
     amiga_socket_open();
     #endif
 
+    #if MICROPY_PY_AMIGA_SSL
+    extern bool amiga_ssl_open(void);
+    amiga_ssl_open();
+    #endif
+
     int exit_code = 0;
     bool ran_something = false;
 
@@ -753,6 +758,13 @@ int main(int argc_unused, char **argv_unused) {
     if (mp_obj_is_callable(MP_STATE_VM(sys_exitfunc))) {
         mp_call_function_0(MP_STATE_VM(sys_exitfunc));
     }
+    #endif
+
+    // Reverse open order: AmiSSL holds SocketBase, so it must close
+    // before bsdsocket.library does.
+    #if MICROPY_PY_AMIGA_SSL
+    extern void amiga_ssl_close(void);
+    amiga_ssl_close();
     #endif
 
     #if MICROPY_PY_AMIGA_SOCKET
