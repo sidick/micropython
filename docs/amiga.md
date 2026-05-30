@@ -56,8 +56,24 @@ with file-system access, based on the `ports/minimal` template.
 
 ### Toolchain
 
-bebbo's GCC (`m68k-amigaos-gcc`) — confirmed GCC 6.5.0b at `/opt/amiga`.
-Produces native AmigaOS HUNK executables. Install from
+bebbo's GCC (`m68k-amigaos-gcc`), GCC 6.5.0b. Produces native AmigaOS HUNK
+executables.
+
+**Recommended: container-based build.** `tools/amiga-build.sh` runs the
+build inside `stefanreinauer/amiga-gcc:latest` — the same image CI uses,
+so local and CI binaries are bit-identical. Output lands in the standard
+`ports/amiga/build-<variant>/` paths so `tools/amiga-vamos-run.sh` and
+friends find the binaries unchanged. Files are written as the host user
+(via `--user`), not root.
+
+```sh
+tools/amiga-build.sh                   # all four variants
+tools/amiga-build.sh standard          # one
+tools/amiga-build.sh standard 68040    # several
+tools/amiga-build.sh clean             # clean all build dirs
+```
+
+**Native install (alternative).** Install from
 <https://franke.ms/git/bebbo/amiga-gcc>:
 
 ```sh
@@ -68,7 +84,10 @@ export PATH=/opt/amiga/bin:$PATH
 ```
 
 `make min` does *not* install C library headers and cannot compile MicroPython.
-Always use `all` or at minimum `clib2 ndk`.
+Always use `all` or at minimum `clib2 ndk`. Don't interleave native and
+container builds in the same `mpy-cross/build/` without running
+`tools/amiga-build.sh clean` first — the host and Linux mpy-cross binaries
+share that path and aren't compatible.
 
 ### Exception handling (NLR)
 
