@@ -168,10 +168,37 @@ The current Amiberry test loop relies on a startup hook: `S:user-startup`
 runs `py0:boot` if present (where `py0:` is the repo root mounted as an
 Amiberry hard drive), and `boot` redirects its own output to
 `py0:boot.log` that the host can read directly. This works for one-shot
-scripted runs but is custom tooling; **a future phase will replace it
-with a serial-port pipe via socat so `tests/run-tests.py --target=pyboard`
-drives the emulated Amiga the same way it drives an rp2 or esp32**
-(scoping pending).
+scripted runs but is custom tooling.
+
+A serial-pipe replacement — so `tests/run-tests.py --target=pyboard`
+could drive the emulated Amiga the same way it drives an rp2 or esp32 —
+was scoped on 2026-05-30 and is currently blocked on the Amiberry side.
+With `serial_port=TCP://...`, **Amiga → host is byte-perfect 8-bit
+clean** (`Open("SER:")` + `Write` flows verbatim, all 256 byte values
+plus CR/LF/CSI survive), but **host → Amiga delivers zero bytes** to
+the emulated `serial.device`'s RX path. Confirmed with two independent
+probes:
+
+1. A MicroPython probe using `amiga.library("dos.library").Read` /
+   `WaitForChar` on `SER:`.
+2. A pure-C probe (bebbo clib2, no MicroPython, no `bsdsocket`, no
+   signal hooks) — same `Open` / `Write` / `WaitForChar` / `Read`
+   sequence, byte-for-byte identical failure capture.
+
+Both probes wrote a READY marker (host saw it), then `WaitForChar(5s)`
+× 6 returned 0 every time while the host bridge confirmed
+`s.sendall(...)` of test pulses over the established TCP connection.
+Reported to the Amiberry author; if/when `readser` is fixed, the
+design sketch — port-side `-X serial` flag plus an `execpty:` launcher
+that bridges Amiberry's TCP to a host PTY — is straightforward to
+implement.
+
+> **Tip for reproducing the probe.** Use
+> `serial_port=TCP://127.0.0.1:1234/wait` rather than the bare form.
+> With `/wait`, Amiberry blocks at startup until a TCP client connects,
+> eliminating the race where the bridge connects after the Amiga has
+> already written its first marker and Amiberry has dropped the bytes
+> for lack of a peer.
 
 ### On-device test runner: `tools/amiga-runtests.py`
 
