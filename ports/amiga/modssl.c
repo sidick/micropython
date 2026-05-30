@@ -20,6 +20,7 @@
 
 #include "py/runtime.h"
 #include "py/objstr.h"
+#include "py/stream.h"
 #include "py/mperrno.h"
 
 #include "amiga_ssl.h"
@@ -36,7 +37,14 @@ typedef struct _mp_ssl_context_t {
     SSL_CTX *ctx;
 } mp_ssl_context_t;
 
+typedef struct _mp_ssl_socket_t {
+    mp_obj_base_t base;
+    SSL *ssl;
+    mp_obj_t sock_obj; // pin the underlying socket against GC
+} mp_ssl_socket_t;
+
 static const mp_obj_type_t ssl_context_type;
+static const mp_obj_type_t ssl_socket_type;
 
 static void check_amissl(void) {
     if (AmiSSLBase == NULL) {
@@ -46,8 +54,6 @@ static void check_amissl(void) {
 }
 
 static MP_NORETURN void raise_ssl_error(void) {
-    // ERR_peek_error keeps the error in the queue for chained raises;
-    // ERR_get_error would consume it and clear the next-call slot.
     unsigned long e = ERR_get_error();
     if (e == 0) {
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("TLS error"));
@@ -56,6 +62,27 @@ static MP_NORETURN void raise_ssl_error(void) {
     ERR_error_string_n(e, buf, sizeof(buf));
     mp_raise_msg_varg(&mp_type_OSError,
         MP_ERROR_TEXT("TLS: %s"), buf);
+}
+
+// Resolve an SSL_get_error() code into a meaningful exception. Caller
+// may have a partially-constructed SSL pointer to free first.
+static MP_NORETURN void raise_ssl_error_for(SSL *ssl, int rc) {
+    int err = SSL_get_error(ssl, rc);
+    unsigned long e = ERR_get_error();
+    if (e != 0) {
+        char buf[128];
+        ERR_error_string_n(e, buf, sizeof(buf));
+        mp_raise_msg_varg(&mp_type_OSError,
+            MP_ERROR_TEXT("TLS: %s"), buf);
+    }
+    if (err == SSL_ERROR_ZERO_RETURN) {
+        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("TLS: closed"));
+    }
+    if (err == SSL_ERROR_SYSCALL) {
+        mp_raise_OSError(MP_EIO);
+    }
+    mp_raise_msg_varg(&mp_type_OSError,
+        MP_ERROR_TEXT("TLS: SSL error %d"), err);
 }
 
 // SSLContext(protocol)
@@ -205,9 +232,184 @@ static void ssl_context_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
     }
 }
 
+// SSLContext.wrap_socket(sock, server_hostname=None,
+//                        do_handshake_on_connect=True)
+//
+// sock must expose a fileno() method returning the underlying OS
+// file descriptor (the bsdsocket.library handle). We don't take
+// ownership of the socket -- the caller still owns its lifetime --
+// but we pin a reference so it can't be GC'd while the SSLSocket
+// is alive.
+static mp_obj_t ssl_context_wrap_socket(
+        size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    enum { ARG_sock, ARG_server_hostname, ARG_do_handshake };
+    static const mp_arg_t allowed[] = {
+        { MP_QSTR_sock, MP_ARG_OBJ | MP_ARG_REQUIRED, {0} },
+        { MP_QSTR_server_hostname,
+            MP_ARG_OBJ | MP_ARG_KW_ONLY,
+            {.u_rom_obj = MP_ROM_NONE} },
+        { MP_QSTR_do_handshake_on_connect,
+            MP_ARG_BOOL | MP_ARG_KW_ONLY, {.u_bool = true} },
+    };
+    mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+    mp_arg_parse_all(n_args - 1, pos_args + 1, kw_args,
+        MP_ARRAY_SIZE(allowed), allowed, args);
+
+    mp_ssl_context_t *self = MP_OBJ_TO_PTR(pos_args[0]);
+    if (self->ctx == NULL) {
+        mp_raise_OSError(MP_EBADF);
+    }
+
+    mp_obj_t sock_obj = args[ARG_sock].u_obj;
+    int fd = mp_obj_get_int(
+        mp_call_function_0(mp_load_attr(sock_obj, MP_QSTR_fileno)));
+
+    SSL *ssl = SSL_new(self->ctx);
+    if (ssl == NULL) {
+        raise_ssl_error();
+    }
+    SSL_set_fd(ssl, fd);
+
+    if (args[ARG_server_hostname].u_obj != mp_const_none) {
+        const char *hostname =
+            mp_obj_str_get_str(args[ARG_server_hostname].u_obj);
+        SSL_set_tlsext_host_name(ssl, hostname);
+    }
+
+    if (args[ARG_do_handshake].u_bool) {
+        // Underlying sockets are blocking by default; SSL_connect
+        // therefore either succeeds or returns a terminal error.
+        // WANT_READ/WANT_WRITE only crop up on non-blocking sockets,
+        // which Step 4 doesn't aim to handle; surface them as EAGAIN
+        // so a future asyncio glue knows what to do.
+        int rc = SSL_connect(ssl);
+        if (rc != 1) {
+            int err = SSL_get_error(ssl, rc);
+            if (err == SSL_ERROR_WANT_READ
+                || err == SSL_ERROR_WANT_WRITE) {
+                SSL_free(ssl);
+                mp_raise_OSError(MP_EAGAIN);
+            }
+            SSL_free(ssl);
+            raise_ssl_error_for(ssl, rc);
+        }
+    }
+
+    mp_ssl_socket_t *s = mp_obj_malloc_with_finaliser(
+        mp_ssl_socket_t, &ssl_socket_type);
+    s->ssl = ssl;
+    s->sock_obj = sock_obj;
+    return MP_OBJ_FROM_PTR(s);
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(
+    ssl_context_wrap_socket_obj, 1, ssl_context_wrap_socket);
+
+// SSLSocket -- stream protocol on top of SSL_read / SSL_write.
+
+static mp_uint_t ssl_socket_read(mp_obj_t self_in, void *buf,
+                                 mp_uint_t size, int *errcode) {
+    mp_ssl_socket_t *self = MP_OBJ_TO_PTR(self_in);
+    if (self->ssl == NULL) {
+        *errcode = MP_EBADF;
+        return MP_STREAM_ERROR;
+    }
+    int rc = SSL_read(self->ssl, buf, (int)size);
+    if (rc > 0) {
+        return (mp_uint_t)rc;
+    }
+    int err = SSL_get_error(self->ssl, rc);
+    if (err == SSL_ERROR_ZERO_RETURN) {
+        return 0; // clean TLS close = EOF
+    }
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        *errcode = MP_EAGAIN;
+        return MP_STREAM_ERROR;
+    }
+    *errcode = MP_EIO;
+    return MP_STREAM_ERROR;
+}
+
+static mp_uint_t ssl_socket_write(mp_obj_t self_in, const void *buf,
+                                  mp_uint_t size, int *errcode) {
+    mp_ssl_socket_t *self = MP_OBJ_TO_PTR(self_in);
+    if (self->ssl == NULL) {
+        *errcode = MP_EBADF;
+        return MP_STREAM_ERROR;
+    }
+    int rc = SSL_write(self->ssl, buf, (int)size);
+    if (rc > 0) {
+        return (mp_uint_t)rc;
+    }
+    int err = SSL_get_error(self->ssl, rc);
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        *errcode = MP_EAGAIN;
+        return MP_STREAM_ERROR;
+    }
+    *errcode = MP_EIO;
+    return MP_STREAM_ERROR;
+}
+
+static mp_uint_t ssl_socket_ioctl(mp_obj_t self_in, mp_uint_t request,
+                                  uintptr_t arg, int *errcode) {
+    mp_ssl_socket_t *self = MP_OBJ_TO_PTR(self_in);
+    if (request == MP_STREAM_CLOSE) {
+        if (self->ssl) {
+            // One-shot SSL_shutdown: send close_notify, don't wait
+            // for peer's. Two-step polling is what asyncio buys us;
+            // not in scope for Step 4. The peer may complain in its
+            // log but TLS-spec-wise both sides are free to close.
+            SSL_shutdown(self->ssl);
+            SSL_free(self->ssl);
+            self->ssl = NULL;
+        }
+        self->sock_obj = mp_const_none;
+        return 0;
+    }
+    *errcode = MP_EINVAL;
+    return MP_STREAM_ERROR;
+}
+
+static mp_obj_t ssl_socket_close(mp_obj_t self_in) {
+    int errcode = 0;
+    ssl_socket_ioctl(self_in, MP_STREAM_CLOSE, 0, &errcode);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(ssl_socket_close_obj, ssl_socket_close);
+
+static const mp_stream_p_t ssl_socket_stream_p = {
+    .read = ssl_socket_read,
+    .write = ssl_socket_write,
+    .ioctl = ssl_socket_ioctl,
+};
+
+static const mp_rom_map_elem_t ssl_socket_locals_dict_table[] = {
+    { MP_ROM_QSTR(MP_QSTR_read),    MP_ROM_PTR(&mp_stream_read_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readinto),
+        MP_ROM_PTR(&mp_stream_readinto_obj) },
+    { MP_ROM_QSTR(MP_QSTR_readline),
+        MP_ROM_PTR(&mp_stream_unbuffered_readline_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write),
+        MP_ROM_PTR(&mp_stream_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_close),
+        MP_ROM_PTR(&ssl_socket_close_obj) },
+    { MP_ROM_QSTR(MP_QSTR___del__),
+        MP_ROM_PTR(&ssl_socket_close_obj) },
+};
+static MP_DEFINE_CONST_DICT(
+    ssl_socket_locals_dict, ssl_socket_locals_dict_table);
+
+static MP_DEFINE_CONST_OBJ_TYPE(
+    ssl_socket_type,
+    MP_QSTR_SSLSocket,
+    MP_TYPE_FLAG_NONE,
+    protocol, &ssl_socket_stream_p,
+    locals_dict, &ssl_socket_locals_dict);
+
 static const mp_rom_map_elem_t ssl_context_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_load_verify_locations),
         MP_ROM_PTR(&ssl_context_load_verify_locations_obj) },
+    { MP_ROM_QSTR(MP_QSTR_wrap_socket),
+        MP_ROM_PTR(&ssl_context_wrap_socket_obj) },
     { MP_ROM_QSTR(MP_QSTR_close),
         MP_ROM_PTR(&ssl_context_close_obj) },
     { MP_ROM_QSTR(MP_QSTR___del__),
