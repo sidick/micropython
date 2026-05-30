@@ -13,10 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: stefanreinauer/amiga-gcc:latest
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: ['standard', 'minimal', '68020fpu', '68040']
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -49,12 +45,39 @@ jobs:
       - name: Build mpy-cross
         run: make -C mpy-cross -j$(nproc)
 
-      - name: Build (${{ matrix.variant }})
-        run: make -C ports/amiga VARIANT=${{ matrix.variant }} -j$(nproc)
+      - name: Build all variants
+        run: |
+          set -e
+          for v in standard minimal 68020fpu 68040; do
+            echo "::group::Build $v"
+            make -C ports/amiga VARIANT=$v -j$(nproc)
+            echo "::endgroup::"
+          done
 
-      - name: Upload binary
+      - name: Upload standard
         uses: actions/upload-artifact@v4
         with:
-          name: micropython-amiga-${{ matrix.variant }}-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-${{ matrix.variant }}/micropython
+          name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: ports/amiga/build-standard/micropython
+          if-no-files-found: error
+
+      - name: Upload minimal
+        uses: actions/upload-artifact@v4
+        with:
+          name: micropython-amiga-minimal-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: ports/amiga/build-minimal/micropython
+          if-no-files-found: error
+
+      - name: Upload 68020fpu
+        uses: actions/upload-artifact@v4
+        with:
+          name: micropython-amiga-68020fpu-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: ports/amiga/build-68020fpu/micropython
+          if-no-files-found: error
+
+      - name: Upload 68040
+        uses: actions/upload-artifact@v4
+        with:
+          name: micropython-amiga-68040-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: ports/amiga/build-68040/micropython
           if-no-files-found: error
