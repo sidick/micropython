@@ -152,7 +152,7 @@ Under Amiberry:
 import ssl
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.verify_mode = ssl.CERT_REQUIRED
-ctx.load_verify_locations("LIBS:amissl/certs/cacert.pem")
+ctx.load_verify_locations(capath="AmiSSL:certs/")
 del ctx     # GC finalises, SSL_CTX_free runs
 ```
 
@@ -191,7 +191,7 @@ s = socket.socket()
 s.connect(socket.getaddrinfo("www.example.com", 443)[0][-1])
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.verify_mode = ssl.CERT_REQUIRED
-ctx.load_verify_locations("LIBS:amissl/certs/cacert.pem")
+ctx.load_verify_locations(capath="AmiSSL:certs/")
 ws = ctx.wrap_socket(s, server_hostname="www.example.com")
 ws.write(b"GET / HTTP/1.0\r\nHost: www.example.com\r\n\r\n")
 print(ws.read(2048)[:80])
@@ -234,7 +234,8 @@ Should print the start of an HTTP/1.0 response.
   with `(see [step plan](phase28-ssl-plan.md))`.
 - `docs/amiga-testing.md` — new "Step 4 — SSL tests" subsection
   under the Amiberry runner: requires AmiSSL v5 installed
-  (`LIBS:amisslmaster.library` + `LIBS:amissl/certs/cacert.pem`),
+  (`amisslmaster.library` reachable via LIBS:, e.g. via
+  `Assign LIBS: AmiSSL:Libs ADD`; CA dir at `AmiSSL:certs/`),
   not exercisable under vamos.
 - `tools/amiga-runtests.py` — confirm `tests/extmod/ssl*.py` aren't
   in any `_SKIP_*` list and run cleanly.
@@ -262,7 +263,7 @@ pass via the on-device runner under Amiberry.
   bebbo's calling convention attributes still work as Phase 28
   documents.
 - **CA bundle distribution.** Don't ship one in the binary. Rely on
-  `LIBS:amissl/certs/cacert.pem` (Mozilla bundle the AmiSSL installer
+  `AmiSSL:certs/` (the c_rehash-style dir of hashed CAs the AmiSSL installer
   drops there) for the default trust store.
 - **AmiSSL v4 fallback.** Out of scope. v5-only initially.
 - **Async-friendly handshake.** Tied to asyncio gating
