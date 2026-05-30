@@ -424,37 +424,53 @@ MP_DEFINE_CONST_OBJ_TYPE(
 // Module-level functions
 
 // socket.getaddrinfo(host, port[, af[, type[, proto[, flags]]]])
+//
+// We deliberately don't call bsdsocket.library's getaddrinfo: UAE's
+// built-in bsdsocket emulation only implements the original BSD
+// socket API (lib_NegSize ~ 0x12c = 50 vector slots), and
+// getaddrinfo lives at LVO 0x32A — far past the end of UAE's
+// vector area, so calling it walks off into bad memory and faults
+// with Software Failure 80000004. Roadshow / Miami / etc. ship a
+// real getaddrinfo at that LVO but UAE doesn't.
+//
+// Build the result tuple ourselves from gethostbyname (works on
+// every bsdsocket-compatible stack including UAE). IPv4-only,
+// single result, no AI_PASSIVE handling — sufficient for the
+// usual `addr = getaddrinfo(host, port)[0][-1]; sock.connect(addr)`
+// pattern. Numeric IP strings short-circuit so we don't pay a
+// lookup for them.
 static mp_obj_t mod_getaddrinfo(size_t n_args, const mp_obj_t *args) {
     const char *host = mp_obj_str_get_str(args[0]);
     int port = mp_obj_get_int(args[1]);
+    int stype = (n_args > 3) ? mp_obj_get_int(args[3]) : SOCK_STREAM;
+    int proto = (n_args > 4) ? mp_obj_get_int(args[4]) : 0;
+    // ai_family + ai_flags ignored: UAE bsdsocket is IPv4-only.
 
-    struct addrinfo hints, *res, *r;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = (n_args > 2) ? mp_obj_get_int(args[2]) : AF_UNSPEC;
-    hints.ai_socktype = (n_args > 3) ? mp_obj_get_int(args[3]) : 0;
-    hints.ai_protocol = (n_args > 4) ? mp_obj_get_int(args[4]) : 0;
-    hints.ai_flags    = (n_args > 5) ? mp_obj_get_int(args[5]) : 0;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
 
-    char port_str[8];
-    snprintf(port_str, sizeof(port_str), "%d", port);
-
-    int rc = getaddrinfo((STRPTR)host, (STRPTR)port_str, &hints, &res);
-    if (rc != 0) {
-        mp_raise_OSError(MP_ENOENT);
+    in_addr_t numeric = inet_addr((STRPTR)host);
+    if (numeric != (in_addr_t)-1) {
+        sa.sin_addr.s_addr = numeric;
+    } else {
+        struct hostent *he = gethostbyname((STRPTR)host);
+        if (!he) {
+            mp_raise_OSError(MP_ENOENT);
+        }
+        memcpy(&sa.sin_addr, he->h_addr, he->h_length);
     }
+
+    mp_obj_t tuple[5];
+    tuple[0] = mp_obj_new_int(AF_INET);
+    tuple[1] = mp_obj_new_int(stype);
+    tuple[2] = mp_obj_new_int(proto);
+    tuple[3] = mp_const_none; // no canonical name from gethostbyname path
+    tuple[4] = mp_obj_new_bytes((const byte *)&sa, sizeof(sa));
 
     mp_obj_t list = mp_obj_new_list(0, NULL);
-    for (r = res; r; r = r->ai_next) {
-        mp_obj_t tuple[5];
-        tuple[0] = mp_obj_new_int(r->ai_family);
-        tuple[1] = mp_obj_new_int(r->ai_socktype);
-        tuple[2] = mp_obj_new_int(r->ai_protocol);
-        tuple[3] = (r->ai_canonname) ? mp_obj_new_str(r->ai_canonname, strlen(r->ai_canonname)) : mp_const_none;
-        // addr[4]: store raw sockaddr bytes for use with connect()/bind()
-        tuple[4] = mp_obj_new_bytes((const byte *)r->ai_addr, r->ai_addrlen);
-        mp_obj_list_append(list, mp_obj_new_tuple(5, tuple));
-    }
-    freeaddrinfo(res);
+    mp_obj_list_append(list, mp_obj_new_tuple(5, tuple));
     return list;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_getaddrinfo_obj, 2, 6, mod_getaddrinfo);
