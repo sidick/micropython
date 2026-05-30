@@ -55,28 +55,28 @@ jobs:
           done
 
       - name: Upload standard
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
           path: ports/amiga/build-standard/micropython
           if-no-files-found: error
 
       - name: Upload minimal
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-minimal-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
           path: ports/amiga/build-minimal/micropython
           if-no-files-found: error
 
       - name: Upload 68020fpu
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-68020fpu-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
           path: ports/amiga/build-68020fpu/micropython
           if-no-files-found: error
 
       - name: Upload 68040
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-68040-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
           path: ports/amiga/build-68040/micropython
