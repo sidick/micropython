@@ -1,0 +1,60 @@
+name: amiga port
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or commit SHA to build from'
+        required: true
+        default: 'amiga-port'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: stefanreinauer/amiga-gcc:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ['standard', 'minimal', '68020fpu', '68040']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Resolve SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Sanitise ref for artifact name
+        id: refname
+        run: echo "value=$(echo '${{ inputs.ref }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure toolchain on PATH
+        run: echo "/opt/amiga/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm toolchain
+        run: m68k-amigaos-gcc --version
+
+      - name: Init required submodules
+        # The port's manifest.py only freezes ports/amiga/modules, but the
+        # frozen-content build rule unconditionally checks for
+        # lib/micropython-lib/README.md whenever FROZEN_MANIFEST is set.
+        run: make -C ports/amiga submodules
+
+      - name: Build mpy-cross
+        run: make -C mpy-cross -j$(nproc)
+
+      - name: Build (${{ matrix.variant }})
+        run: make -C ports/amiga VARIANT=${{ matrix.variant }} -j$(nproc)
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: micropython-amiga-${{ matrix.variant }}-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: ports/amiga/build-${{ matrix.variant }}/micropython
+          if-no-files-found: error
