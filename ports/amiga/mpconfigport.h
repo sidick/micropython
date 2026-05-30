@@ -155,6 +155,13 @@ void amiga_free_heap(void *p);
 #define MICROPY_PY_AMIGA_SOCKET             (1)
 #endif
 
+// AmiSSL v5 TLS (Phase 28). Defaults to whatever the socket layer is
+// — TLS without sockets is meaningless on this port. Builds without
+// the AmiSSL SDK installed must override this to 0 at make time.
+#ifndef MICROPY_PY_AMIGA_SSL
+#define MICROPY_PY_AMIGA_SSL                (MICROPY_PY_AMIGA_SOCKET)
+#endif
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
