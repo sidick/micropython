@@ -940,6 +940,30 @@ SDK ref:
 `Examples/httpget.c` and `Examples/https.c` are minimal working clients
 worth mirroring.
 
+### SDK provisioning (CI + container build)
+
+`stefanreinauer/amiga-gcc:latest` ships only vbcc-side AmiSSL stubs
+(`proto/amisslmaster.h`, `proto/amissl.h`, `inline/amissl_protos.h`
+under `…/vbcc/…`). The GCC tree has no `<openssl/*>` headers, no
+`<libraries/amissl[master].h>`, and no `libamisslstubs.a`/
+`libamisslauto.a`. Phase 28 needs the AmiSSL v5 SDK layered in. Three
+options when we get there:
+
+1. **Extend the container image.** Custom Dockerfile
+   `FROM stefanreinauer/amiga-gcc:latest` that fetches the SDK from
+   <https://github.com/jens-maus/amissl/releases>, unpacks headers into
+   `/opt/amiga/m68k-amigaos/include/` and libs into
+   `/opt/amiga/m68k-amigaos/lib/`. Push to GHCR; CI workflow and
+   `tools/amiga-build.sh` both point at it. Cleanest, one-time setup.
+2. **Workflow step.** Download + unpack the SDK on every CI run.
+   Simpler setup, but adds 10–30 s per run and a network dependency on
+   GitHub releases.
+3. **Vendored in-tree.** Drop the headers + stubs under
+   `ports/amiga/amissl-sdk/`. No external deps; downside is shipping a
+   few MB of third-party code in the repo.
+
+Pick when Phase 28 actually starts; option 1 is the current preference.
+
 ### Open items
 
 - **AmiSSL 4 fallback.** Land v5-only initially.
