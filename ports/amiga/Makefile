@@ -79,6 +79,33 @@ LDFLAGS += $(AMIGA_FLOAT_WRAPS)
 # math-library bugs, not soft-float bugs — applies to all variants.
 LDFLAGS += -Wl,--wrap=pow,--wrap=tgamma
 
+# AmiSSL v5 TLS (Phase 28). The minimal variant overrides this to 0;
+# every other variant inherits the default and links -lamisslstubs.
+# The SDK headers and the libamisslstubs.a archive come from the
+# host cache populated by tools/amiga-fetch-amissl-sdk.sh and bind-
+# mounted into the container at /amissl-cache. Override
+# AMISSL_SDK_DEV when building natively against a different install.
+MICROPY_PY_AMIGA_SSL ?= 1
+AMISSL_SDK_DEV ?= /amissl-cache/latest/AmiSSL/Developer
+
+ifeq ($(MICROPY_PY_AMIGA_SSL),1)
+ifeq ($(wildcard $(AMISSL_SDK_DEV)/include/openssl/ssl.h),)
+$(error MICROPY_PY_AMIGA_SSL=1 but AmiSSL SDK not found at \
+  $(AMISSL_SDK_DEV)/include/openssl/ssl.h. Run tools/amiga-fetch-amissl-sdk.sh \
+  first, override AMISSL_SDK_DEV, or pass MICROPY_PY_AMIGA_SSL=0)
+endif
+CFLAGS += -I$(AMISSL_SDK_DEV)/include -DMICROPY_PY_AMIGA_SSL=1
+LDFLAGS += -L$(AMISSL_SDK_DEV)/lib/AmigaOS3 -lamisslstubs
+else
+CFLAGS += -DMICROPY_PY_AMIGA_SSL=0
+endif
+
+# Allow callers (CI, manual invocations) to inject extra include /
+# library paths without editing the Makefile. Mirrors the convention
+# in ports/unix.
+CFLAGS  += $(CFLAGS_EXTRA)
+LDFLAGS += $(LDFLAGS_EXTRA)
+
 # shared/libc/printf.c uses __attribute__((alias)) which bebbo GCC doesn't
 # support on AmigaOS. clib2 provides vsnprintf natively so drop this file.
 SRC_EXTMOD_C := $(filter-out shared/libc/printf.c, $(SRC_EXTMOD_C))
@@ -104,6 +131,10 @@ SRC_C = \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
 	shared/runtime/interrupt_char.c \
+
+ifeq ($(MICROPY_PY_AMIGA_SSL),1)
+SRC_C += amiga_ssl.c
+endif
 
 SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modsocket.c sysstdio.c
 
