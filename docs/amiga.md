@@ -20,7 +20,7 @@ with file-system access, based on the `ports/minimal` template.
 | 8 | Native AmigaOS API migration | ✅ |
 | 9 | Networking via `bsdsocket.library` | ✅ |
 | 10 | Command-line argument parsing | ✅ |
-| 11 | CI build workflow | planned |
+| 11 | CI build workflow | ✅ |
 | 12 | 68k native emitter rework (fix ASM_CALL_IND crash) | planned |
 | 13 | Interactive line editing at the REPL | ✅ |
 | 14 | Dynamic heap growth | ✅ |
@@ -287,11 +287,38 @@ The bebbo argv parser is broken under vamos with multi-arg invocations;
 
 ---
 
-## Phase 11 — CI build workflow (planned)
+## Phase 11 — CI build workflow ✅
 
-Add `.github/workflows/ports_amiga.yml` to confirm cross-compile on Linux
-without an emulator run. Install bebbo GCC from a binary release tarball into
-`/opt/amiga`.
+`.github/workflows/ports_amiga.yml`, manually triggered via
+`workflow_dispatch` with a `ref` input (branch / tag / commit, default
+`amiga-port`). One job runs inside `stefanreinauer/amiga-gcc:latest`,
+builds mpy-cross once, then builds all four variants sequentially with
+`make -j$(nproc)` inside each. Each variant's binary is uploaded as a
+separate artifact named
+`micropython-amiga-<variant>-<ref>-<sha>`.
+
+`tools/amiga-build.sh` mirrors the workflow exactly for local container
+builds — same image, same commands, same output paths — so local and CI
+binaries are bit-identical (see *Toolchain*).
+
+**Required submodule.** `make -C ports/amiga submodules` runs before the
+build; the frozen-content rule unconditionally checks for
+`lib/micropython-lib/README.md` whenever `FROZEN_MANIFEST` is set, even
+though `manifest.py` only freezes `ports/amiga/modules`.
+
+**Timing.** Image pull dominates at ~87 s; the rest (checkout, submodule,
+mpy-cross, four variant builds, four uploads) is ~45 s — total wall time
+~130 s, billed compute matches.
+
+Possible follow-ups (deferred):
+
+- **Image tarball cache.** `docker save | gzip` + `actions/cache` would
+  drop repeat-run wall time from ~130 s to ~40 s. Not worth the
+  complexity for a manual-trigger workflow.
+- **Release flow.** When the input `ref` is a tag, also publish a draft
+  GitHub release with the four binaries attached.
+- **AmiSSL SDK.** Phase 28 will need the SDK layered into the build
+  environment — see Phase 28 "SDK provisioning" subsection for options.
 
 ---
 
