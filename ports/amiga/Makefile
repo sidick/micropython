@@ -133,10 +133,13 @@ SRC_C = \
 	shared/runtime/interrupt_char.c \
 
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
-SRC_C += amiga_ssl.c
+SRC_C += amiga_ssl.c modssl.c
 endif
 
 SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modsocket.c sysstdio.c
+ifeq ($(MICROPY_PY_AMIGA_SSL),1)
+SRC_QSTR += modssl.c
+endif
 
 SRC_S = \
 	amiga_lib_call.S \

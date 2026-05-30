@@ -916,7 +916,7 @@ bebbo gcc has `__attribute__((stkparm))` and `__saveds`. Worth a
 ```python
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.verify_mode = ssl.CERT_REQUIRED
-ctx.load_verify_locations("LIBS:amissl/certs/cacert.pem")
+ctx.load_verify_locations(capath="AmiSSL:certs/")
 ws = ctx.wrap_socket(s, server_hostname="www.example.com")
 ```
 
@@ -931,7 +931,7 @@ with `ERR_error_string` text.
 
 Two paths:
 1. `SSL_CTX_set_default_verify_paths()` picks up
-   `LIBS:amissl/certs/cacert.pem` (Mozilla bundle the AmiSSL installer
+   the `AmiSSL:certs/` c_rehash dir (the hashed CAs the AmiSSL installer
    drops there).
 2. `ctx.load_verify_locations(cafile=...)` / `cadata=...` for custom roots.
 
