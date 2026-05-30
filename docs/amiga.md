@@ -849,6 +849,11 @@ the link fails with `cannot find -lgcc`.
 
 ## Phase 28 — TLS/SSL via AmiSSL v5 (planned)
 
+The step-by-step ship plan for this phase lives in
+[docs/phase28-ssl-plan.md](phase28-ssl-plan.md). The section below is
+the design and rationale — *what* and *why*; the companion doc covers
+*how to chunk and land it*.
+
 Upstream MicroPython ships axTLS (small, dated, no SNI) and mbedTLS (~250 KB
 add). Neither fits the AmigaOS ethos when the platform already has a
 perfectly serviceable TLS implementation — **AmiSSL** — as a shared library.
