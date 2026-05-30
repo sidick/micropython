@@ -1011,158 +1011,25 @@ Pick when Phase 28 actually starts; option 1 is the current preference.
 
 ---
 
-## Testing Strategy
+## Testing
 
-1. **Emulator:** Amiberry confirmed working. FS-UAE, WinUAE are also options.
-2. **CI:** Phase 11 — `.github/workflows/ports_amiga.yml` cross-compile check.
-3. **Real hardware:** A1200 + accelerator, MiSTer Amiga core, etc.
+Three paths, each for a different stage:
 
-### Option A: vamos on the host (recommended for iteration)
+- **vamos** (host, headless) — day-to-day iteration; widest automated
+  coverage via `tests/run-tests.py` driven through
+  `tools/amiga-vamos-run.sh`. Current snapshot under the `standard`
+  variant: ~722 pass / ~256 self-skip / ~75 fail out of 1053 files, of
+  which only 4 are real platform differences (m68k struct alignment,
+  long-double precision); the rest are Phase-12 native/viper gaps,
+  Unix-port-specific cmdline tests, or vamos emulation gaps.
+- **Amiberry** (full emulation) — anything needing Kickstart: Workbench
+  launch, `icon.library`, 68881 FPU (the `68020fpu` variant), persistent
+  REPL history, real AmiSSL. On-device runner `tools/amiga-runtests.py`
+  walks a test dir and diffs against `.exp` files pre-generated on the
+  host via `tools/amiga-gen-exp.py`.
+- **CI** — `.github/workflows/ports_amiga.yml` (Phase 11). Cross-compile
+  gate; produces release-style artefacts. No test execution.
 
-`vamos` is a userspace 68k/AmigaOS emulator from the `amitools` package.
-Boots in ms, no GUI, integrates with `tests/run-tests.py`. Setup assumes
-vamos installed at `~/vamos/` and activated via `pipenv`.
-
-```sh
-cd ~/vamos
-pipenv run vamos --cpu 68020 \
-    -V "mp:/path/to/micropython/tests" \
-    --cwd mp:basics \
-    -- /path/to/build/micropython string1.py
-```
-
-- `--cpu 68020` is **required** (vamos default is 68000, which faults on
-  `m68020` instructions).
-- `-V name:/host/path` mounts a host directory as an AmigaOS volume.
-- `--cwd` sets cwd; with basename invocation, `sys.argv[0]`/`__file__`
-  match host CPython exactly.
-- `--` separates vamos options from binary args.
-
-### `tools/amiga-vamos-run.sh` wrapper for run-tests.py
-
-Mounts `tests/` as internal `mp:` volume, points cwd at the test's
-directory, replaces script argument with basename, uses `--vols-base-dir`
-so parallel workers don't collide on the auto `RAM:` volume, and `-q` so
-vamos logs don't pollute captured stdout.
-
-```sh
-export MICROPY_MICROPYTHON="$(pwd)/tools/amiga-vamos-run.sh"
-cd tests
-./run-tests.py -d basics float io micropython misc
-```
-
-`AMIGA_VARIANT=minimal` / `=68040` selects build + `--cpu` flag.
-`68020fpu` can't run under vamos (no 68881 emulation); the wrapper
-detects and exits. Default variant is `standard`.
-
-Exclude dirs that can't run on Amiga:
-
-```sh
-./run-tests.py -d basics float io micropython misc \
-    -e "inlineasm|machine_|thread|extmod/ussl|extmod/uasync"
-```
-
-### Test-runner integration requirements
-
-For `tests/run-tests.py` to work, the binary must:
-
-- Accept `-X <option>` flags as no-ops (run-tests.py always emits
-  `-X emit=bytecode`; macOS adds `-X realtime`).
-- Return POSIX-style exit codes
-  (`MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)`).
-- Free `AllocVec`'d argv buffers before returning (vamos's orphan-memory
-  check makes the process exit non-zero otherwise).
-
-### Known vamos quirks
-
-- bebbo's argv parser produces broken pointers under vamos with multi-arg
-  invocations — `amiga_parse_args` parses `pr_Arguments` itself.
-- `WaitForChar` returns 0 immediately (we use plain `FGetC`).
-- `SetMode(fh, 1)` is a no-op (vamos already delivers one char at a time).
-
-### Option B: inside Amiberry
-
-For verifying real-AmigaOS-like behaviour. Mount the repo at `PY0:` (single
-host-directory entry pointing at repo root, so `tools/` and `tests/` are
-both reachable):
-
-```sh
-1> cd py0:tests
-1> micropython basics/string_format.py
-```
-
-### Test suite summary
-
-Snapshot under vamos via `tools/amiga-vamos-run.sh`, 2026-05-12:
-
-| Directory | Files | Pass | Self-skip | Fail | Notes |
-|-----------|------:|-----:|----------:|-----:|-------|
-| `basics/`     | 574 | 490 | 83  | 1  | `struct1.py` (bebbo ABI alignment) |
-| `float/`      | 68  | 54  | 11  | 3  | EXACT-mode precision at double-range edges |
-| `io/`         | 16  | 12  | 3   | 1  | `argv.py` (vamos host-path rewriting) |
-| `import/`     | 30  | 29  | 0   | 1  | `import_file.py` (vamos host-path rewriting) |
-| `micropython/`| 108 | 43  | 18  | 47 | All native_*/viper_* — Phase 12 |
-| `extmod/`     | 205 | 67  | 131 | 7  | vamos socket / select / time-quantum / vfs_userfs gaps |
-| `misc/`       | 14  | 6   | 8   | 0  | Skips: settrace, sys_exc_info, cexample |
-| `cmdline/`    | 25  | 9   | 2   | 14 | Unix-port-specific (REPL banner, `-v`, terminal editing) |
-| `stress/`     | 13  | 12  | 0   | 1  | `bytecode_limit.py` parser memory pressure |
-
-Aggregate: **722 pass / 256 self-skip / 75 fail** out of 1053 files.
-Excluding the 47 Phase-12 native/viper failures, unix-port-specific cmdline
-tests, vamos emulation gaps, and the `bytecode_limit.py` parser edge case,
-**4 individual tests fail** — all real platform differences.
-
-### Known test failures (real platform differences, not port bugs)
-
-| Test | Cause |
-|------|-------|
-| `basics/struct1.py` | `struct.calcsize("97sI") == 102`, test expects 104. bebbo gcc on m68k uses 2-byte `int` alignment per the AmigaOS m68k ABI; CPython on x86 uses 4. Both platform-correct. |
-| `float/float_parse*.py` | A few edge cases (very long mantissa with very negative exponent; `1e+300` vs `9.999...e+299` differing by 2 ULP; `1e4294967301` not detected as overflow) come out 1–2 ULP off. Bebbo's 80-bit long double soft-float has just enough precision loss that EXACT-mode parsing can't always nail the closest double. |
-| `float/float_format_accuracy.py` | repr round-trip rate ~72% vs ≥99.7% expected. Same long-double precision tax. |
-
-### Bebbo soft-float library bugs
-
-bebbo gcc 6.5b on `-msoft-float` ships incorrect floating-point helpers in
-libgcc / clib2 / libnix. `ports/amiga/floatconv.c` overrides each one (some
-directly, some via `--wrap` because clib2 fat-packs them with `__muldf3`
-and friends).
-
-| Routine | Bug | Trigger |
-|---------|-----|---------|
-| `__floatunsidf`, `__floatundidf`, `__floatdidf` | High-bit-set values convert to garbage | `float("9"*51 + "e-39")`, `array.array('Q', [...])`, any `mp_obj_new_int_from_uint(>2^31)` → double |
-| `__eqdf2`, `__nedf2`, `__ledf2`, `__gedf2`, `__ltdf2`, `__gtdf2` | NaN treated as ordered/equal | `==`/`!=`/`<=`/`>=` with NaN; `math.isclose`, set/dict NaN keys, `x != x` NaN check |
-| `pow(-1, NaN)` (libnix) | Returns `1.0`, CPython expects NaN | `(-1) ** float('nan')` |
-| `tgamma(-inf)` (libnix) | Returns `+inf`, CPython raises | `math.gamma(-inf)` |
-| `__fixdfsi` (clib2) | Calls `IEEEDPFix` which under vamos aborts the whole emulator on NaN | `hash(float('nan'))` (gcc 6.5 emits `__fixdfsi` for `mp_float_hash`'s bit-level body after opt) |
-
-### On-device batch runner (Amiberry)
-
-No CPython to diff against, so relies on a `.exp` file next to every `.py`
-test. Upstream only ships `.exp` where MicroPython output is *expected* to
-differ; generate the rest first:
-
-```sh
-tools/amiga-gen-exp.py tests/basics tests/float tests/io \
-    tests/import tests/micropython tests/misc tests/cmdline tests/stress
-```
-
-Without this, every test whose expected output contains `Error` (lots of
-`TypeError` prints in `basics/`) gets flagged by the runner's `"Error" in
-output` fallback.
-
-Set AmigaDOS stack to at least 32 KB — the default (4–8 KB) is too small
-for deep compile-time recursion (e.g. `try_except_break.py`), which shows
-up as `Software Failure 8000000B` rather than a `RuntimeError`:
-
-```
-1> Stack 32768
-1> cd py0:
-1> micropython tools/amiga-runtests.py tests/basics
-1> micropython tools/amiga-runtests.py tests/float T:my-results/
-```
-
-Result dir default `T:mp-test-results/` (RAM). On FAIL, `<dir>/<test>.py.out`
-and `<dir>/<test>.py.exp` land there; on pass/skip, stale ones are deleted.
-
-Generated `.exp` files aren't checked in — add `tests/**/*.py.exp` to
-`.git/info/exclude` if `git status` chatter bothers you.
+Full runbook — install paths, variant selection, exclude lists, suite
+snapshot, known-good failures, soft-float library bugs, on-device runner
+setup — lives in [docs/amiga-testing.md](amiga-testing.md).
