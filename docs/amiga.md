@@ -38,7 +38,7 @@ with file-system access, based on the `ports/minimal` template.
 | 26 | `PROGDIR:` on `sys.path` | ✅ |
 | 27 | Additional build variants | ✅ |
 | 28 | TLS/SSL via AmiSSL v5 | ✅ |
-| 29 | `urequests` frozen HTTP/HTTPS client | planned |
+| 29 | `urequests` frozen HTTP/HTTPS client | ✅ |
 | 30 | Intuition requester dialogs (`amiga.intuition`) | planned |
 | 31 | ASL file requester (`amiga.asl`) | planned |
 
@@ -1015,7 +1015,17 @@ Pick when Phase 28 actually starts; option 1 is the current preference.
 
 ---
 
-## Phase 29 — `urequests` frozen HTTP/HTTPS client (planned)
+## Phase 29 — `urequests` frozen HTTP/HTTPS client ✅
+
+Shipped in five steps over commits `3455810e4` (Step 1),
+`de03cc93b` (Steps 2–4), and the doc-flip in this section.
+End-to-end verified under Amiberry against
+`www.example.com` (HTTP + gzip), `httpbin.org` (HTTP +
+chunked + POST echo for both `json=` and `data=dict`), and
+`www.python.org` (HTTPS, 48 887 B of HTML through the Phase 28
+TLS stack). See [docs/phase29-urequests-plan.md](phase29-urequests-plan.md)
+for the step-by-step log.
+
 
 Convenience client built on top of Phase 9 (`socket`) and Phase 28
 (`ssl`). Same shape as upstream `micropython-lib`'s `requests`:
