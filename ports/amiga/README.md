@@ -109,19 +109,32 @@ Copy the built binary to any AmigaOS volume. The `C:` assign is the
 conventional location for command-line tools so they're on the
 Shell's path:
 
-    1> copy mypy/build-standard/micropython c:micropython
+    1> copy ports/amiga/build-standard/micropython c:micropython
     1> protect c:micropython rwed
 
 `protect rwed` clears the default deny bits so the file is
 readable, writable, executable, and deletable -- AmigaDOS
 protection bits are inverted relative to Unix (set bit ⇒ denied).
 
-For Workbench launch, ship a `micropython.info` icon alongside the
-executable. Tooltypes drive launch behaviour:
+A Workbench tool icon ships at `ports/amiga/micropython.info`:
+
+    1> copy ports/amiga/micropython.info c:micropython.info
+
+Tooltypes carry the launch-time defaults; the ones shipped are
+disabled-by-default templates (wrapped in parentheses, the AmigaOS
+convention for "documentation, edit to enable") plus an active
+`DONOTWAIT`:
 
 - `SCRIPT=<path>` — Python script to execute on launch.
 - `HEAP=<bytes>` — initial garbage-collected heap size.
 - `MAXHEAP=<bytes>` — upper bound for dynamic heap growth.
+
+`tools/amiga-make-icon.py` regenerates the icon from
+`logo/1bit-logo.png` if you want to tweak the defaults.
+
+The binary handles the AmigaDOS default-4 KiB Shell stack
+internally via `StackSwap` to a 64 KiB scratch stack at entry, so
+there's no need for a `Stack 65536` directive before invoking it.
 
 Under emulation, mount the source tree (or a copy of the binary)
 as a hard drive partition in your emulator's configuration. The
