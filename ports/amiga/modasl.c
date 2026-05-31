@@ -26,6 +26,7 @@
 #include <exec/memory.h>
 #include <exec/tasks.h>
 #include <libraries/asl.h>
+#include <workbench/startup.h>
 #include <proto/exec.h>
 #include <proto/asl.h>
 #include <proto/dos.h>
@@ -89,10 +90,13 @@ static void asl_run_on_scratch_stack(struct asl_swap_ctx *ctx) {
 }
 
 static const mp_arg_t mod_asl_file_request_args[] = {
-    { MP_QSTR_title,          MP_ARG_OBJ, {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
-    { MP_QSTR_initial_drawer, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
-    { MP_QSTR_initial_file,   MP_ARG_OBJ, {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
-    { MP_QSTR_pattern,        MP_ARG_OBJ, {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
+    { MP_QSTR_title,          MP_ARG_OBJ,  {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
+    { MP_QSTR_initial_drawer, MP_ARG_OBJ,  {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
+    { MP_QSTR_initial_file,   MP_ARG_OBJ,  {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
+    { MP_QSTR_pattern,        MP_ARG_OBJ,  {.u_rom_obj = MP_ROM_QSTR(MP_QSTR_)} },
+    { MP_QSTR_save,           MP_ARG_BOOL, {.u_bool = false} },
+    { MP_QSTR_drawers_only,   MP_ARG_BOOL, {.u_bool = false} },
+    { MP_QSTR_multi,          MP_ARG_BOOL, {.u_bool = false} },
 };
 
 static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
@@ -102,18 +106,26 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
         MP_ARRAY_SIZE(mod_asl_file_request_args), mod_asl_file_request_args,
         arg_vals);
 
-    const char *title   = mp_obj_str_get_str(arg_vals[0].u_obj);
-    const char *drawer  = mp_obj_str_get_str(arg_vals[1].u_obj);
-    const char *file    = mp_obj_str_get_str(arg_vals[2].u_obj);
-    const char *pattern = mp_obj_str_get_str(arg_vals[3].u_obj);
+    const char *title    = mp_obj_str_get_str(arg_vals[0].u_obj);
+    const char *drawer   = mp_obj_str_get_str(arg_vals[1].u_obj);
+    const char *file     = mp_obj_str_get_str(arg_vals[2].u_obj);
+    const char *pattern  = mp_obj_str_get_str(arg_vals[3].u_obj);
+    bool save_mode       = arg_vals[4].u_bool;
+    bool drawers_only    = arg_vals[5].u_bool;
+    bool multi           = arg_vals[6].u_bool;
+
+    // Save dialogs only make sense with a single target. ASL would
+    // silently honour one or the other; we'd rather surface the
+    // contradiction so callers fix the call site.
+    if (multi && save_mode) {
+        mp_raise_ValueError(MP_ERROR_TEXT("multi=True is incompatible with save=True"));
+    }
 
     asl_ensure_open();
 
-    // Build a TagItem array on the stack. Max slots = 5 user tags + TAG_DONE.
-    // AllocAslRequestTags only references the tag list during the call, so
-    // the strings need to outlive that call (they do — they're either qstr
-    // statics from MP_QSTR_ or stable Python str buffers).
-    struct TagItem tags[6];
+    // Build a TagItem array on the stack. Max slots = 8 user tags + TAG_DONE
+    // (title, drawer, file, pattern + DoPatterns, save, drawers_only, multi).
+    struct TagItem tags[10];
     int t = 0;
     if (title[0]) {
         tags[t].ti_Tag  = ASLFR_TitleText;
@@ -135,6 +147,21 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
         tags[t].ti_Data = (ULONG)(uintptr_t)pattern;
         t++;
         tags[t].ti_Tag  = ASLFR_DoPatterns;
+        tags[t].ti_Data = TRUE;
+        t++;
+    }
+    if (save_mode) {
+        tags[t].ti_Tag  = ASLFR_DoSaveMode;
+        tags[t].ti_Data = TRUE;
+        t++;
+    }
+    if (drawers_only) {
+        tags[t].ti_Tag  = ASLFR_DrawersOnly;
+        tags[t].ti_Data = TRUE;
+        t++;
+    }
+    if (multi) {
+        tags[t].ti_Tag  = ASLFR_DoMultiSelect;
         tags[t].ti_Data = TRUE;
         t++;
     }
@@ -168,21 +195,43 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
     }
 
     // AslRequest returned TRUE if the user clicked OK, FALSE on Cancel.
+    // Build the return value back on the original stack so the GC's
+    // stack-scan range stays correct.
     mp_obj_t result = mp_const_none;
     if (ctx.ok) {
         char buf[ASL_PATH_BUFSIZE];
-        buf[0] = '\0';
-        // AddPart joins a component to the buffer with the right separator
-        // ('/' between dirs, ':' after a volume name). Drawer first, then
-        // file. Either may be empty (e.g. user typed just a filename, no
-        // drawer) -- AddPart copes.
-        if (ctx.req->fr_Drawer != NULL && ctx.req->fr_Drawer[0] != '\0') {
-            AddPart((STRPTR)buf, (STRPTR)ctx.req->fr_Drawer, sizeof(buf));
+        const char *drawer_str = (ctx.req->fr_Drawer != NULL)
+            ? (const char *)ctx.req->fr_Drawer : "";
+        if (multi) {
+            // Multi-select: walk fr_NumArgs / fr_ArgList building a list.
+            // Each WBArg's wa_Lock is 0 (ASL doesn't lock dirs) so we join
+            // fr_Drawer with each entry's wa_Name into a fresh buffer.
+            result = mp_obj_new_list(0, NULL);
+            for (LONG i = 0; i < ctx.req->fr_NumArgs; i++) {
+                struct WBArg *wa = &ctx.req->fr_ArgList[i];
+                buf[0] = '\0';
+                if (drawer_str[0] != '\0') {
+                    AddPart((STRPTR)buf, (STRPTR)drawer_str, sizeof(buf));
+                }
+                if (wa->wa_Name != NULL && wa->wa_Name[0] != '\0') {
+                    AddPart((STRPTR)buf, (STRPTR)wa->wa_Name, sizeof(buf));
+                }
+                mp_obj_list_append(result,
+                    mp_obj_new_str(buf, strlen(buf)));
+            }
+        } else {
+            // Single-pick. AddPart joins with the right separator ('/'
+            // between dirs, ':' after a volume name). For drawers_only the
+            // file component is empty -- AddPart copes either way.
+            buf[0] = '\0';
+            if (drawer_str[0] != '\0') {
+                AddPart((STRPTR)buf, (STRPTR)drawer_str, sizeof(buf));
+            }
+            if (ctx.req->fr_File != NULL && ctx.req->fr_File[0] != '\0') {
+                AddPart((STRPTR)buf, (STRPTR)ctx.req->fr_File, sizeof(buf));
+            }
+            result = mp_obj_new_str(buf, strlen(buf));
         }
-        if (ctx.req->fr_File != NULL && ctx.req->fr_File[0] != '\0') {
-            AddPart((STRPTR)buf, (STRPTR)ctx.req->fr_File, sizeof(buf));
-        }
-        result = mp_obj_new_str(buf, strlen(buf));
     }
     FreeAslRequest(ctx.req);
     return result;

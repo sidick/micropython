@@ -19,6 +19,7 @@ import _amiga as _c
 import _amiga_fd
 import _amiga_tags
 import _intuition as intuition  # noqa: F401  (re-exported as amiga.intuition)
+import _asl as asl  # noqa: F401  (re-exported as amiga.asl)
 
 
 _VALID_REGS = frozenset((
