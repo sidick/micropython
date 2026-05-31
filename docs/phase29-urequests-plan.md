@@ -25,11 +25,11 @@ Step 1: skeleton (HTTP/1.0 GET) → Step 2: chunked TE + gzip
 
 | # | Step | Output | On-target smoke test |
 |---|------|--------|---------------------|
-| **1** | Core `Response` + `request("GET", ...)` over plain HTTP. URL parsing, status line, headers, fixed-length body via `Content-Length`. | `urequests.py` shipping `get`, `head`, `request`, `Response`. No HTTPS, no chunked, no compression. | `urequests.get("http://www.example.com/")` returns status 200 and a reasonable `.text` |
-| **2** | Chunked Transfer-Encoding decoder + `Content-Encoding: gzip` decompression via the existing `deflate` module. | `Response.content` handles both inline. | One host that serves chunked (`httpforever.com`), one that serves gzip. |
-| **3** | HTTPS via `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` + `verify_mode = CERT_REQUIRED` + `set_default_verify_paths()`. SSLContext built once per call. | `urequests.get("https://www.python.org/")` returns 200. Inherits the Phase 28 Cloudflare TLS 1.3 limitation. | `www.python.org`, end-to-end, full HTML body. |
-| **4** | `post` / `put` / `delete` / `patch` methods. `data=` (str/bytes urlencoded), `json=` (auto-serialised → `application/json`), `headers=` overrides. | All HTTP verbs land. POSTing JSON to `https://httpbin.org/post` round-trips. | Verbs against `httpbin.org` (or local TLS echo). |
-| **5** | Freeze into `manifest.py`, gate behind the existing `MICROPY_PY_AMIGA_SSL` (-equivalent) Make flag, doc updates. | `import urequests` works after a clean variant build. Phase 29 row flips to ✅. | `import urequests` under the on-device runner + tests/extmod/* untouched-by-skip-list verification. |
+| **1 ✅** | Core `Response` + `request("GET", ...)` over plain HTTP. URL parsing, status line, headers, fixed-length body via `Content-Length`. | `urequests.py` shipping `get`, `head`, `request`, `Response`. No HTTPS, no chunked, no compression. | `urequests.get("http://www.example.com/")` returns status 200 and a reasonable `.text` |
+| **2 ✅** | Chunked Transfer-Encoding decoder + `Content-Encoding: gzip` decompression via the existing `deflate` module. | `Response.content` handles both inline. | One host that serves chunked (`httpforever.com`), one that serves gzip. |
+| **3 ✅** | HTTPS via `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` + `verify_mode = CERT_REQUIRED` + `set_default_verify_paths()`. SSLContext built once per call. | `urequests.get("https://www.python.org/")` returns 200. Inherits the Phase 28 Cloudflare TLS 1.3 limitation. | `www.python.org`, end-to-end, full HTML body. |
+| **4 ✅** | `post` / `put` / `delete` / `patch` methods. `data=` (str/bytes urlencoded), `json=` (auto-serialised → `application/json`), `headers=` overrides. | All HTTP verbs land. POSTing JSON to `https://httpbin.org/post` round-trips. | Verbs against `httpbin.org` (or local TLS echo). |
+| **5 ✅** | Freeze into `manifest.py`, gate behind the existing `MICROPY_PY_AMIGA_SSL` (-equivalent) Make flag, doc updates. | `import urequests` works after a clean variant build. Phase 29 row flips to ✅. | `import urequests` under the on-device runner + tests/extmod/* untouched-by-skip-list verification. |
 
 Each step is small (50–150 LOC of Python plus tests). Step 4 is
 the only place the API surface grows materially.
@@ -219,3 +219,36 @@ origins like `www.python.org` work cleanly.
 - HTTP/2, async, websocket.
 - Authentication helpers beyond a caller-supplied `Authorization`
   header.
+
+## Status — done
+
+All five steps shipped 2026-05-31. Verified end-to-end under
+Amiberry in a single boot session across five live endpoints:
+
+| Test | Result |
+|---|---|
+| `urequests.get("http://www.example.com/")` | 200, 528 B body (gzip decoded transparently) |
+| `urequests.get("http://httpbin.org/get")` | 200, 274 B JSON |
+| `urequests.get("https://www.python.org/")` | 200, 48 887 B HTML through Phase 28 TLS |
+| `urequests.post("http://httpbin.org/post", json={"hello": "amiga", "n": 42}, headers={"X-Test": "phase29"})` | 200, JSON echoed, X-Test override survived round-trip |
+| `urequests.post("http://httpbin.org/post", data={"name": "amiga 1200", "ram_kb": 2048})` | 200, form echoed, `Content-Type: application/x-www-form-urlencoded` auto-set |
+
+### Side fix
+
+The HTTPS path turned up a real gap in `modssl.c`: `SSLSocket`
+exposed `read` / `write` (stream protocol) only — no
+`send` / `recv` aliases. Calling `s.send(...)` after
+`ctx.wrap_socket(...)` raised `AttributeError`. Added a two-line
+alias in `ssl_socket_locals_dict_table` pointing `send` /
+`recv` at the same `mp_stream_write_obj` / `mp_stream_read_obj`
+the stream-protocol entries use, so `SSLSocket` is now drop-in
+compatible with the BSD-socket idiom `modsocket.c` exposes.
+
+### Variant gating note
+
+The frozen `urequests.py` ships in all four variants (the
+manifest's `freeze("$(PORT_DIR)/modules")` rule is
+unconditional). On `minimal` it imports cleanly but the
+constructor calls fail at the implicit `import socket` step —
+correct behaviour, since `minimal` deliberately omits
+`MICROPY_PY_AMIGA_SOCKET`. No variant carve-out needed.
