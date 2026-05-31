@@ -149,6 +149,15 @@ void amiga_free_heap(void *p);
 // Amiga-specific module
 #define MICROPY_PY_AMIGA                    (1)
 
+// Shared buffer size for "AmigaOS full filesystem path with comfortable
+// headroom for long-name filesystems (SFS / PFS3 / FFS2 with the
+// long-names patch, all allowing ~105-byte filenames per component)."
+// Used by modasl.c, modamiga.c (match / WB-launched-args path
+// reconstruction), and any future surface that builds a full path.
+// Narrower buffers (e.g. assign-target resolution, history-file path
+// in ENVARC:) deliberately stay smaller -- their inputs are bounded.
+#define AMIGA_PATH_MAX                      1024
+
 // bsdsocket.library networking (optional — silently absent if lib not found).
 // a500 disables this to keep the build small.
 #ifndef MICROPY_PY_AMIGA_SOCKET
