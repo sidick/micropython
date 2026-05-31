@@ -80,10 +80,9 @@ jobs:
           done
 
       - name: Install lha
-        # Debian's `lha` is the maintained Tsugio Okamoto fork
-        # (lha-1.14i). It speaks the same archive format Amiga
-        # tooling expects.
-        run: apt-get update && apt-get install -y --no-install-recommends lha
+        # `lha` is a virtual package on Ubuntu; `lhasa` is extract-only,
+        # so we install `jlha-utils` for the `jlha` creator.
+        run: apt-get update && apt-get install -y --no-install-recommends jlha-utils
 
       - name: Stage release tree
         # Assemble a single deployment-ready tree:
@@ -109,12 +108,13 @@ jobs:
           set -e
           archive="micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}.lha"
           cd release
-          # `a` = add, `r` recursive, `q` quiet. The archive lives one
-          # level up so its own path isn't in the file list.
-          lha aq ../$archive .
+          # `jlha a` adds files (recursive via -r); -q suppresses
+          # progress chatter. Archive lives one level up so its own
+          # path isn't in the file list.
+          jlha -aq ../$archive .
           cd ..
           ls -la "$archive"
-          lha v "$archive"
+          jlha -v "$archive"
 
       - name: Upload LHA
         uses: actions/upload-artifact@v7
