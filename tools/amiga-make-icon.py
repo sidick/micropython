@@ -248,7 +248,7 @@ def serialise_disk_object(width, height, plane_data, tooltypes,
 def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     png_path = os.path.join(repo_root, "logo", "1bit-logo.png")
-    out_path = os.path.join(repo_root, "ports", "amiga", "micropython.info")
+    amiga_dir = os.path.join(repo_root, "ports", "amiga")
 
     width, height, rows = parse_png_1bit(png_path)
     print("loaded %s: %dx%d, %d ink pixels"
@@ -258,7 +258,10 @@ def main():
     plane_data = pack_planar(width, height, rows)
     print("packed %d bytes of planar bitmap" % len(plane_data))
 
-    tooltypes = [
+    # ---------- Tool icon (micropython.info) ----------
+    # WBTOOL: ships next to the binary; double-click launches
+    # micropython with no script (REPL) unless SCRIPT= is set.
+    tool_tooltypes = [
         # The cached SCRIPT= tooltype lets a double-click on the icon
         # launch a Python script. Edit the value before use.
         "(SCRIPT=PROGDIR:hello.py)",
@@ -280,16 +283,44 @@ def main():
         # DONOTWAIT keeps the launcher from blocking on this icon.
         "DONOTWAIT",
     ]
-
-    info_bytes = serialise_disk_object(
+    tool_info = serialise_disk_object(
         width, height, plane_data,
-        tooltypes,
+        tool_tooltypes,
         do_type=WBTOOL,
         stack_size=65536,
     )
-    with open(out_path, "wb") as f:
-        f.write(info_bytes)
-    print("wrote %s (%d bytes)" % (out_path, len(info_bytes)))
+    tool_path = os.path.join(amiga_dir, "micropython.info")
+    with open(tool_path, "wb") as f:
+        f.write(tool_info)
+    print("wrote %s (%d bytes)" % (tool_path, len(tool_info)))
+
+    # ---------- Project icon (python_script.info) ----------
+    # WBPROJECT: drop this alongside a .py file (renamed to match,
+    # e.g. cp python_script.info myscript.py.info) so double-clicking
+    # launches `micropython myscript.py`. default_tool is the
+    # AmigaShell command that runs; "micropython" resolves via the
+    # Shell path so installing the binary into C: is the typical
+    # prerequisite.
+    project_tooltypes = [
+        # Same HEAP= / MAXHEAP= templates as the tool icon -- they
+        # apply to the launched micropython instance.
+        "(HEAP=131072)",
+        "(MAXHEAP=8388608)",
+        # CON= override -- same shape and semantics as the tool icon.
+        "(CON=CON:0/30/640/200/MicroPython/AUTO/CLOSE)",
+        "DONOTWAIT",
+    ]
+    project_info = serialise_disk_object(
+        width, height, plane_data,
+        project_tooltypes,
+        do_type=WBPROJECT,
+        stack_size=65536,
+        default_tool="micropython",
+    )
+    project_path = os.path.join(amiga_dir, "python_script.info")
+    with open(project_path, "wb") as f:
+        f.write(project_info)
+    print("wrote %s (%d bytes)" % (project_path, len(project_info)))
 
 
 if __name__ == "__main__":

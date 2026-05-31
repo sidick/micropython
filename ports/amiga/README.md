@@ -125,6 +125,17 @@ For Workbench launch, a tool icon ships at
 
     1> copy ports/amiga/micropython.info c:micropython.info
 
+A companion project icon ships at `ports/amiga/python_script.info`.
+Copy it alongside any `.py` file (renamed to match) and
+double-clicking from Workbench will launch `micropython` with that
+script as the argument:
+
+    1> copy ports/amiga/python_script.info work:my_script.py.info
+
+The project icon's `default_tool` is `micropython`, so the binary
+must be on the AmigaShell path (the `c:micropython` install above
+satisfies that).
+
 Tooltypes carry the launch-time defaults; the ones shipped are
 disabled-by-default templates (wrapped in parentheses, the AmigaOS
 convention for "documentation, edit to enable") plus an active
