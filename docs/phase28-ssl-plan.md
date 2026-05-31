@@ -268,6 +268,66 @@ AmiSSL handle this internally.
 - `AvailMem(MEMF_ANY|MEMF_LARGEST)` snapshot to size system-memory
   vs GC-heap consumption.
 
+### Status — verified
+
+Measured under Amiberry on 2026-05-31, standard variant, end-to-end
+HTTPS GET against `www.python.org` (53 912-byte response). Each row
+is a snapshot from `amiga.heap_info()` + `AvailMem(MEMF_ANY|*)`:
+
+| Stage | GC used | GC free | sys total | sys largest |
+|---|---:|---:|---:|---:|
+| startup | 26 816 | 229 312 | 14 243 080 | 12 166 992 |
+| after `SSLContext()` + `set_default_verify_paths()` | 27 008 | 229 120 | 13 919 952 | 11 835 784 |
+| after `del ctx` + `gc.collect()` | 26 992 | 229 136 | **13 919 952** | 11 835 784 |
+| ctx ready (second one) | 27 008 | 229 120 | 13 911 720 | 11 827 552 |
+| after `wrap_socket` (TLS handshake done) | 27 136 | 228 992 | 13 823 208 | 11 663 352 |
+| after full read (53 912 B response) | 28 400 | 227 728 | 13 789 880 | 11 663 352 |
+| after `ws.close()` + `s.close()` | 28 352 | 227 776 | 13 829 376 | 11 663 352 |
+| after `del` + `gc.collect()` | 28 304 | 227 824 | 13 837 608 | 11 687 976 |
+
+**GC heap impact: negligible.** Total growth across the entire
+session is well under 2 KB. The 256 KB default heap is plenty for
+SSL workloads; no heap bump needed.
+
+**System memory is where AmiSSL lives.** It allocates from `MEMF_ANY`
+via `exec.library`, completely outside the GC heap, so `-X heap=`
+doesn't help. The observed costs:
+
+- `SSL_CTX_new(TLS_client_method())` + `set_default_verify_paths()`
+  → **~316 KB** of system memory, persistent for the lifetime of the
+  process. `SSL_CTX_free` doesn't return it (likely caches the
+  parsed default trust paths globally inside AmiSSL).
+- One HTTPS session (handshake + 54 KB read) → **~125 KB** additional
+  during the session.
+- `ws.close()` + `del` recovers **~48 KB**.
+- Net per-session leak after close: **~77 KB**, plausibly the
+  AmiSSL session-resumption cache for that endpoint.
+
+For a stock 2 MB A1200 (chip RAM only), `~441 KB` for one HTTPS
+session is significant but workable if Fast RAM is added. The
+`minimal` variant is the right target for tight-memory setups —
+SSL autodisables there.
+
+### Minimal variant gate — verified
+
+`MICROPY_PY_AMIGA_SSL = 0` in `variants/minimal/mpconfigvariant.mk`
+correctly drops `amiga_ssl.c` and `modssl.c` from `SRC_C`, omits
+`-lamisslstubs` from the link, and excludes AmiSSL-related strings
+from the binary (3 occurrences in `standard`, 0 in `minimal`).
+
+### Variant sizes (post-Step-4 baseline)
+
+| Variant | Text bytes | Total binary |
+|---|---:|---:|
+| `standard` | 491 216 | 562 840 |
+| `minimal`  | 459 808 | 527 220 |
+| `68020fpu` | (built) | 530 388 |
+| `68040`    | (built) | 540 716 |
+
+Standard grew ~33 KB over the pre-Phase-28 baseline (488 596 →
+491 216) for the SSL wiring + AmiSSL stub trampolines. Minimal
+is unchanged from pre-Phase 28.
+
 ---
 
 ## Step 6 — Docs + test wiring
