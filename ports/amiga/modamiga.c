@@ -124,7 +124,10 @@ static mp_obj_t amiga_wb_selected_files(void) {
     if (_WBenchMsg == NULL) {
         return list;
     }
-    char path[512];
+    // 1024 bytes covers nested paths on long-name filesystems (SFS / PFS3 /
+    // FFS2 allow ~105-byte filenames per component) with comfortable
+    // headroom.
+    char path[1024];
     for (LONG i = 1; i < _WBenchMsg->sm_NumArgs; i++) {
         struct WBArg *arg = &_WBenchMsg->sm_ArgList[i];
         path[0] = '\0';
@@ -328,9 +331,10 @@ static mp_obj_t amiga_disk_info(mp_obj_t path_obj) {
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_disk_info_obj, amiga_disk_info);
 
 // Pattern-match buffer for the full path returned by MatchFirst/Next.
-// 512 bytes is generous: AmigaDOS volume names are <=30 chars and
-// typical nesting depth is shallow.
-#define AMIGA_MATCH_BUFSIZE 512
+// 1024 bytes accommodates nested paths on long-name filesystems
+// (SFS / PFS3 / FFS2 allow ~105-byte filenames per component) with
+// comfortable headroom; legacy OFS/FFS volumes use much less.
+#define AMIGA_MATCH_BUFSIZE 1024
 
 // Allocate a zeroed AnchorPath with `ap_Buf` space for the full path,
 // pre-filling ap_Strlen so MatchFirst/Next will write into ap_Buf.
