@@ -1,5 +1,10 @@
 # MicroPython port to AmigaOS 3.x — Implementation Plan
 
+This file is the in-port implementation log and design reference. For an
+upstream-style introduction to the port, see
+[`ports/amiga/README.md`](../ports/amiga/README.md).
+The full testing runbook lives in [`docs/amiga-testing.md`](amiga-testing.md).
+
 ## Overview
 
 Port of MicroPython to AmigaOS 3.x on Motorola 68k (68020+). CLI-driven REPL
