@@ -174,7 +174,7 @@ origins like `www.python.org` work cleanly.
 - `docs/amiga-testing.md` — add a short subsection under "SSL
   tests" pointing at urequests as the recommended way to do HTTPS
   GETs.
-- `tests/amiga/test_urequests_smoke.py` — a small on-device smoke
+- `tests/ports/amiga/test_urequests_smoke.py` — a small on-device smoke
   that hits `http://www.example.com/` and `https://www.python.org/`
   and prints the first response line + content length.
 

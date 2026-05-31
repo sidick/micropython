@@ -44,7 +44,7 @@ with file-system access, based on the `ports/minimal` template.
 | 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | ✅ |
 | 33 | `platform.amiga_info()` + frozen `platform.py` | ✅ |
 | 34 | Frozen `os.py` extensions + AmigaOS-aware `os.path` | planned |
-| 35 | `amiga.icon` — `.info` file read / write / manipulation | planned |
+| 35 | `amiga.icon` — `.info` file read / write / manipulation | ✅ |
 | 36 | `amiga.catalog` — `locale.library` catalog lookup | planned |
 | 37 | `amiga.datatypes` — `datatypes.library` file recognition | planned (low priority) |
 
@@ -1119,7 +1119,7 @@ default work.
 ```
 ports/amiga/modules/urequests.py        — frozen pure-Python module
 docs/phase29-urequests-plan.md          — step plan
-tests/amiga/test_urequests_smoke.py     — on-target smoke (Amiberry, AmiSSL installed)
+tests/ports/amiga/test_urequests_smoke.py     — on-target smoke (Amiberry, AmiSSL installed)
 ```
 
 All three shipped variants include it.
@@ -1169,7 +1169,7 @@ intuition.message("Done.", button="OK")
 ```
 ports/amiga/modintuition.c              — C module (~180 LOC)
 ports/amiga/modules/amiga.py            — adds `import _intuition as intuition`
-tests/amiga/test_intuition_smoke.py     — vamos arg-shape smoke test
+tests/ports/amiga/test_intuition_smoke.py     — vamos arg-shape smoke test
 docs/phase30-intuition-plan.md          — step plan
 ```
 
@@ -1257,7 +1257,7 @@ drawer = asl.file_request(drawers_only=True)
 ```
 ports/amiga/modasl.c                    — C module (~280 LOC)
 ports/amiga/modules/amiga.py            — adds `import _asl as asl`
-tests/amiga/test_asl_smoke.py           — vamos arg-shape smoke test
+tests/ports/amiga/test_asl_smoke.py           — vamos arg-shape smoke test
 docs/phase31-asl-plan.md                — step plan
 ```
 
@@ -1350,7 +1350,7 @@ ports/amiga/modamiga.c                  — five new C entries
                                           (rexx_exists, rexx_list,
                                           rexx_client_open/close/send)
 ports/amiga/modules/amiga.py            — RexxClient Python facade
-tests/amiga/test_rexx_polish.py         — vamos arg-shape smoke
+tests/ports/amiga/test_rexx_polish.py         — vamos arg-shape smoke
 docs/phase32-arexx-polish-plan.md       — step plan
 ```
 
@@ -1419,7 +1419,7 @@ identity. Modeled on OoZe1911's port:
 ```
 ports/amiga/modamiga.c                  — six accessor functions
 ports/amiga/modules/platform.py         — frozen facade
-tests/amiga/test_platform_smoke.py      — vamos smoke
+tests/ports/amiga/test_platform_smoke.py      — vamos smoke
 docs/phase33-platform-plan.md           — step plan
 ```
 
@@ -1523,7 +1523,7 @@ ports/amiga/modules/os.py               — frozen extension (makedirs,
                                           walk, `import _ospath as path`)
 ports/amiga/modules/_ospath.py          — frozen AmigaOS-aware path
                                           helpers
-tests/amiga/test_os_smoke.py            — vamos smoke
+tests/ports/amiga/test_os_smoke.py            — vamos smoke
 docs/phase34-os-path-plan.md            — step plan
 ```
 
@@ -1531,11 +1531,11 @@ Variants: all three.
 
 ---
 
-## Phase 35 — `amiga.icon` (planned)
+## Phase 35 — `amiga.icon` ✅
 
-`amiga.icon` C sub-module wrapping `icon.library` for full
+`amiga.icon` is a C sub-module wrapping `icon.library` for full
 `.info` file manipulation. Goes beyond the read-only
-`amiga.tooltype()` we ship today (which only looks up *one*
+`amiga.tooltype()` we already had (which only looks up *one*
 tooltype on the *launched* tool icon).
 
 ```python
@@ -1550,7 +1550,8 @@ print(dobj.stack_size)      # 8192
 # Tooltypes are exposed as a dict-shaped accessor.
 print(dobj.tooltypes["WINDOW"])
 dobj.tooltypes["FONT"] = "topaz.font/8"
-dobj.tooltypes["NEW_THING"] = ""        # bare flag tooltype
+dobj.tooltypes["FLAG"] = None              # bare flag tooltype (no '=')
+del dobj.tooltypes["OLD_KEY"]
 
 # Position on the parent drawer.
 dobj.current_x, dobj.current_y = 16, 24
@@ -1562,31 +1563,46 @@ icon.write("Work:Tools/Editor", dobj)
 new = icon.new(icon.WBPROJECT, default_tool="C:Ed",
                tooltypes={"WINDOW": "CON:0/0/640/256/Title"})
 icon.write("Work:Notes", new)
+new.close()
 ```
 
-### Scope
+### Surface
 
-- `amiga.icon.read(path)` → `DiskObject` wrapper (Python facade
-  around the underlying `struct DiskObject *`).
-- `amiga.icon.write(path, dobj)` → None. Uses `PutDiskObject` then
-  refreshes the parent drawer's Workbench display if it's open.
-- `amiga.icon.new(type, **kwargs)` → fresh `DiskObject` with the
-  given `type` and optional `default_tool` / `tooltypes` /
-  `stack_size` etc.; backed by `GetDefDiskObject(type)` so the
-  icon image comes from `ENV:sys/def_*.info`.
-- `DiskObject` Python class:
-  - `.type` (str) and corresponding `icon.WB*` constants
-    (`WBDISK`, `WBDRAWER`, `WBTOOL`, `WBPROJECT`, `WBGARBAGE`,
-    `WBDEVICE`, `WBKICK`, `WBAPPICON`).
-  - `.default_tool` (str, read/write) for project icons.
-  - `.stack_size` (int, read/write).
-  - `.current_x`, `.current_y` (int, read/write).
-  - `.tooltypes` — a Python mapping that wraps the underlying
-    NULL-terminated `STRPTR[]`; supports `[k]` get / set,
-    `del [k]`, `in`, iteration. Reallocates the underlying array
-    via `AllocVec` when keys are added.
-  - Releases the underlying `DiskObject` on `.close()` /
-    `__del__`.
+| Call | Returns | Notes |
+|------|---------|-------|
+| `icon.read(path)` | `DiskObject` | `GetDiskObject` wrapper. `OSError(ENOENT)` if the `.info` doesn't exist. |
+| `icon.write(path, dobj)` | `None` | `PutDiskObject`. `OSError(EIO)` on failure. Doesn't refresh the parent Workbench window (out of scope — that's `workbench.library`'s `UpdateWorkbench`). |
+| `icon.new(type, **kwargs)` | `DiskObject` | `GetDefDiskObject(type)` for the system default image. Kwargs `default_tool` / `stack_size` / `current_x` / `current_y` / `tooltypes` applied in one pass. `OSError(EINVAL)` if the type code isn't recognised. |
+| `icon.WBDISK / WBDRAWER / WBTOOL / WBPROJECT / WBGARBAGE / WBDEVICE / WBKICK / WBAPPICON` | int | Raw `do_Type` values from `<workbench/workbench.h>`. |
+| `icon.DiskObject` | type | Re-exported so `isinstance(d, icon.DiskObject)` works. |
+
+`DiskObject` attributes:
+
+| Attr | Type | R/W | Notes |
+|------|------|-----|-------|
+| `.type` | `str` | R | `"disk"` / `"drawer"` / `"tool"` / `"project"` / `"garbage"` / `"device"` / `"kick"` / `"appicon"`. Falls back to the raw int for any future code. |
+| `.default_tool` | `str` or `None` | R/W | `None` clears (icon.library treats NULL/empty as "none"). |
+| `.stack_size` | `int` | R/W | `do_StackSize`. |
+| `.current_x`, `.current_y` | `int` | R/W | Icon position on the parent drawer. |
+| `.tooltypes` | `DiskObjectTooltypes` | R/W via methods | Dict-shaped mapping (see below). |
+| `.close()` / `__del__` | — | — | Releases the underlying allocation. Idempotent. |
+
+`DiskObjectTooltypes` mapping methods:
+
+| Op | Notes |
+|----|-------|
+| `tt[k]` | Returns the value as `bytes` (empty `b""` for flag-style entries). `KeyError` if absent. |
+| `tt[k] = v` | `v` is `str` / `bytes` (writes `"KEY=VALUE"`) or `None` (writes flag-style `"KEY"`). `TypeError` for anything else. |
+| `del tt[k]` | `KeyError` if absent. |
+| `k in tt` / `len(tt)` / `iter(tt)` | Standard dict semantics; iteration yields keys as `str`. |
+| `tt.keys()` / `.values()` / `.items()` / `.get(k, default)` | List-returning helpers (no view objects). |
+
+Ownership: a freshly-read DiskObject has icon.library-owned
+`do_DefaultTool` / `do_ToolTypes`; the first mutation deep-copies
+them into Python-owned `AllocVec` buffers so subsequent edits are
+free. `.close()` swaps the original pointers back in before
+`FreeDiskObject` so the library's teardown only sees memory it
+allocated.
 
 ### Out of scope
 
@@ -1594,12 +1610,11 @@ icon.write("Work:Notes", new)
   `SelectRender`) — that's a substantial surface (planar image
   munging, palette handling); separate phase if ever needed.
 - App icons (`AddAppIcon`) — that's
-  `workbench.library`, not `icon.library`. Could ride along if a
-  caller asks but not in the initial Phase 35.
+  `workbench.library`, not `icon.library`.
 - NewIcon / GlowIcon / OS3.5+ ColorIcon extended IFF chunks —
   the basic `do_Gadget` planar icon is enough for round-tripping.
-- Drag-and-drop position / IDCMP integration — out of scope for
-  a one-shot manipulation API.
+- Workbench-window refresh after `icon.write` — caller can drive
+  that via ARexx (`WORKBENCH UPDATE`) if they need it.
 
 ### Dependencies
 
@@ -1612,13 +1627,13 @@ icon.write("Work:Notes", new)
 
 ```
 ports/amiga/modicon.c                   — C module + DiskObject type
-ports/amiga/modules/amiga.py            — adds `import _icon as icon`
-tests/amiga/test_icon_smoke.py          — vamos arg-shape smoke
-docs/phase35-icon-plan.md               — step plan (TBD)
+ports/amiga/modules/amiga.py            — `import _icon as icon`
+tests/ports/amiga/test_icon_smoke.py          — vamos arg-shape + RAM: round trip
+docs/phase35-icon-plan.md               — step plan
 ```
 
-Variants: all three. ~2.5 KB text per variant (DiskObject type +
-tooltype mapping protocol is the bulk).
+Variants: all three. ~5 KB text per variant (DiskObject + tooltype
+mapping protocol + write + new).
 
 ---
 
@@ -1673,7 +1688,7 @@ print(catalog.language())          # 'english' / 'german' / 'français'
 ```
 ports/amiga/modcatalog.c                — C module + Catalog type
 ports/amiga/modules/amiga.py            — adds `import _catalog as catalog`
-tests/amiga/test_catalog_smoke.py       — vamos arg-shape smoke
+tests/ports/amiga/test_catalog_smoke.py       — vamos arg-shape smoke
 docs/phase36-catalog-plan.md            — step plan (TBD)
 ```
 
@@ -1745,7 +1760,7 @@ attrs = datatypes.info("Work:Photos/holiday.jpg")
 ```
 ports/amiga/moddatatypes.c              — C module
 ports/amiga/modules/amiga.py            — adds `import _datatypes as datatypes`
-tests/amiga/test_datatypes_smoke.py     — vamos arg-shape smoke
+tests/ports/amiga/test_datatypes_smoke.py     — vamos arg-shape smoke
 docs/phase37-datatypes-plan.md          — step plan (TBD)
 ```
 

@@ -179,7 +179,7 @@ False  # user clicked No
 - `docs/amiga-testing.md` gains an Intuition subsection under
   Amiberry runner: "Interactive only — needs visual click-through
   to verify return values."
-- A tiny `tests/amiga/test_intuition_argshape.py` that exercises
+- A tiny `tests/ports/amiga/test_intuition_argshape.py` that exercises
   the argument validation without actually opening a requester
   (mock out `_intuition.easy_request` and check the wrappers
   pass the right labels). Runs under vamos.

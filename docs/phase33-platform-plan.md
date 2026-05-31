@@ -115,7 +115,7 @@ just confirms the shape.
   - `platform()` → `"AmigaOS-<kickstart>-<cpu>-MicroPython_<pyver>"`
   - `node()` → `"Amiga"` (no NodeName concept on AmigaOS)
   - `amiga_info()` → the formatted single-line dump
-- `tests/amiga/test_platform_smoke.py` — vamos-runnable:
+- `tests/ports/amiga/test_platform_smoke.py` — vamos-runnable:
   - `platform.system()` returns `"AmigaOS"`
   - `platform.machine()` is a str
   - `platform.amiga_info()` returns a str containing all six fields
