@@ -440,6 +440,30 @@ the `CreateMsgPort` / `DeleteMsgPort` cost per send. The one-shot
 `amiga.rexx_send` / `amiga.rexx` helpers are still the right
 shape for single sends.
 
+### Platform identity (Phase 33)
+
+`tests/amiga/test_platform_smoke.py` covers the CPython-shaped
+`platform` surface plus the underlying `amiga.*` accessors; it
+runs under vamos. `platform.amiga_info()` and `amiga.chipset()`
+need `graphics.library` (not stubbed by vamos) and are skipped
+when that fails.
+
+For end-to-end confirmation under Amiberry:
+
+```python
+>>> import platform
+>>> platform.amiga_info()
+'CPU: 68020 | FPU: 68881 | Chipset: AGA | Kickstart: 45.57 | Chip: 1856KB | Fast: 14336KB'
+>>> platform.machine(), platform.release()
+('68020', '45.57')
+```
+
+The CPU and FPU strings reflect runtime AmigaOS state -- a
+`standard` binary built `-m68020 -msoft-float` running on a
+68040 reports `'68040'` / `'68040'`, not the compile-time target.
+Memory values are *currently free* bytes (`AvailMem(MEMF_*)`),
+not total installed.
+
 ---
 
 ## 3. CI (cross-compile only)
