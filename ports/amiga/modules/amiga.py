@@ -18,6 +18,7 @@ from _amiga import *  # noqa: F401,F403  (the underscore module is the source of
 import _amiga as _c
 import _amiga_fd
 import _amiga_tags
+import _intuition as intuition  # noqa: F401  (re-exported as amiga.intuition)
 
 
 _VALID_REGS = frozenset((
