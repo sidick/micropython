@@ -14,6 +14,11 @@ mp_uint_t mp_hal_ticks_cpu(void);
 // Called by the VM hook every N bytecodes to check for Ctrl+C.
 void amiga_check_ctrl_c(void);
 
+// One-shot REPL banner injector. main.c arms this before entering
+// pyexec_friendly_repl with after_n_writes = number of upstream
+// banner writes to elapse before the inject fires. See mphalport.c.
+void amiga_arm_banner_inject(int after_n_writes);
+
 // timer.device lifecycle (Phase 23). main.c calls these around mp_init() /
 // mp_deinit().
 bool amiga_timer_open(void);

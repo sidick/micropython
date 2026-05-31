@@ -41,6 +41,10 @@ static struct {
 } amiga_heap_chunks[AMIGA_HEAP_MAX_CHUNKS];
 static size_t amiga_heap_total_bytes;        // sum of all chunk sizes
 static size_t amiga_heap_max_bytes;          // -X maxheap=... cap (0 = unlimited)
+// File scope so mphalport.c's banner injector can read the post-parse
+// initial GC heap size. Populated in main() once arg / env / tooltype
+// parsing has settled the value.
+size_t amiga_initial_heap;
 
 void *amiga_alloc_heap(size_t n) {
     // Honour the -X maxheap cap. gc_get_max_new_split() also clamps to
@@ -427,6 +431,9 @@ int main(int argc_unused, char **argv_unused) {
     // Same priority for -X maxheap=<N> > MICROPYHEAPMAX env var > unlimited.
     // Pre-scan argv for the -X heap=/-X maxheap= forms so the heap is
     // sized correctly *before* gc_init().
+    // initial_heap is also referenced by amiga_initial_heap (file scope,
+    // below this function) so the REPL banner injector in mphalport.c
+    // can report the post-parse value.
     size_t initial_heap = MICROPY_HEAP_SIZE;
     char envbuf[32];
     if (GetVar((STRPTR)"MICROPYHEAP", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
@@ -481,6 +488,10 @@ int main(int argc_unused, char **argv_unused) {
     if (amiga_heap_max_bytes != 0 && amiga_heap_max_bytes < initial_heap) {
         amiga_heap_max_bytes = initial_heap;
     }
+    // Publish the post-parse initial heap so mphalport.c's REPL banner
+    // injector can report it without re-doing the argv / env / tooltype
+    // parse.
+    amiga_initial_heap = initial_heap;
 
     // Allocate the initial GC heap. AmigaOS hands out the fastest
     // available memory first when MEMF_ANY is set, so we don't need a
@@ -750,18 +761,12 @@ int main(int argc_unused, char **argv_unused) {
 
     if (!ran_something) {
         // No script or command: start the interactive REPL.
-        // Show the initial GC heap and how much system memory is left
-        // for dynamic growth (Phase 14 grows a chain of AllocVec chunks
-        // up to MEMF_LARGEST or -X maxheap, whichever's smaller). Only
-        // printed in REPL mode -- scripted runs keep stdout clean.
-        {
-            char buf[80];
-            snprintf(buf, sizeof(buf),
-                "Heap: %luK initial; system free: %luK\r\n",
-                (unsigned long)(initial_heap / 1024),
-                (unsigned long)(AvailMem(MEMF_ANY) / 1024));
-            mp_hal_stdout_tx_str(buf);
-        }
+        // Arm the banner injector so the heap line lands between the
+        // upstream "MicroPython v... ; Amiga with ..." banner and the
+        // "Type help()" line. pyexec_friendly_repl emits three writes
+        // for that banner block (version, "; <machine>", "\r\n"); the
+        // injector fires after the third. See mphalport.c.
+        amiga_arm_banner_inject(3);
         // Switch console to raw mode so readline gets characters immediately
         // rather than waiting for a full line. readline.c handles echo itself.
         BPTR stdin_fh = Input();
