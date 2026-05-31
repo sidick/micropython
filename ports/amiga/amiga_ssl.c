@@ -28,6 +28,8 @@ struct Library *AmiSSLMasterBase;
 struct Library *AmiSSLBase;
 struct Library *AmiSSLExtBase;
 
+int amiga_ssl_version_override;
+
 bool amiga_ssl_open(void) {
     if (SocketBase == NULL) {
         // SSL on AmigaOS 3 requires a working bsdsocket.library; no
@@ -45,8 +47,11 @@ bool amiga_ssl_open(void) {
     // matching amissl.library version (via AMISSL_CURRENT_VERSION
     // baked into the SDK we built against), opens it, and fills the
     // GetAmiSSLBase / GetAmiSSLExtBase out-params we pass.
+    LONG api_version = amiga_ssl_version_override > 0
+        ? (LONG)amiga_ssl_version_override
+        : AMISSL_CURRENT_VERSION;
     LONG rc = OpenAmiSSLTags(
-        AMISSL_CURRENT_VERSION,
+        api_version,
         AmiSSL_UsesOpenSSLStructs, FALSE,
         AmiSSL_GetAmiSSLBase,      (ULONG)&AmiSSLBase,
         AmiSSL_GetAmiSSLExtBase,   (ULONG)&AmiSSLExtBase,

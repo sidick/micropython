@@ -76,6 +76,29 @@ So this isn't MLKEM-specific, isn't session-ticket-related, and
 dropping to TLS 1.2 isn't an option (Cloudflare has phased it out
 for most edge configurations in 2026).
 
+### Version bisect across AmiSSL v5
+
+Pinning the `OpenAmiSSLTags()` `APIVersion` to each installed
+v5 sub-version in turn (via the
+`-X sslver=<N>` flag added to the MicroPython port for this
+purpose) shows the failure is **consistent across the entire
+available v5 line**:
+
+| Library | `AMISSL_V*` | APIVersion | Result |
+|---|---|---:|---|
+| `amissl_v352.library` (v5.22, Aug 2025) | `AMISSL_V352` | 41 | handshake ok, write broken pipe |
+| `amissl_v353.library` (v5.23, Sep 2025) | `AMISSL_V353` | 42 | handshake ok, write broken pipe |
+| `amissl_v354.library` (v5.24, Sep 2025) | `AMISSL_V354` | 43 | handshake ok, write broken pipe |
+| `amissl_v360.library` (v5.25, Oct 2025) | `AMISSL_V360` | 44 | handshake ok, write broken pipe |
+| `amissl_v361.library` (v5.26, Jan 2026) | `AMISSL_V361` | 45 | handshake ok, write broken pipe |
+| `amissl_v362.library` (v5.27, Apr 2026) | `AMISSL_V362` | 46 | same |
+
+So the behaviour is **not a v5.27 regression** — it has been
+present continuously across at least 8 months of v5 releases.
+That points to a structural / fingerprint-shape issue in
+AmiSSL's TLS 1.3 ClientHello (or its OpenSSL 3.x configuration),
+not to a specific patch that broke things recently.
+
 ### Working comparison
 
 Same `s_client` invocation against `www.python.org:443` completes
