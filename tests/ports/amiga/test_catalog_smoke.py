@@ -1,7 +1,8 @@
 # Phase 36 wiring smoke -- exercises the `_catalog` module and the
 # `amiga.catalog` facade alias. Runs under vamos and on real hardware.
-# Vamos has no real locale.library, so the open() round trip is best
-# done on Amiberry; vamos verifies surface only.
+# Vamos has no real locale.library that can find catalog files, so
+# the open() round-trip block soft-passes there; Amiberry covers it
+# end-to-end against Sys/monitors.catalog.
 
 import _catalog
 import amiga
@@ -19,7 +20,7 @@ lang = _catalog.language()
 assert isinstance(lang, str), lang
 assert len(lang) > 0, "language() should not return empty string"
 
-# ---------- Error path: missing catalog ----------
+# ---------- Error paths ----------
 try:
     _catalog.open("nonexistent_phase36.catalog")
 except OSError:
@@ -27,7 +28,6 @@ except OSError:
 else:
     raise AssertionError("expected OSError for missing catalog")
 
-# ---------- Error path: open requires a name ----------
 try:
     _catalog.open()
 except TypeError:
@@ -35,7 +35,6 @@ except TypeError:
 else:
     raise AssertionError("expected TypeError on missing name")
 
-# ---------- Error path: language kwarg must be str or None ----------
 try:
     _catalog.open("foo.catalog", language=42)
 except (TypeError, OSError):
@@ -43,14 +42,28 @@ except (TypeError, OSError):
 else:
     raise AssertionError("expected TypeError/OSError for non-str language")
 
-# ---------- Try opening a known system catalog ----------
-# When this succeeds (Amiberry / real hw with localised Workbench),
-# round-trip the surface. When it fails (vamos / English Workbench
-# without translations), the OSError is the expected smoke result.
 try:
-    cat = _catalog.open("workbench.catalog", version=0)
+    _catalog.open("foo.catalog", built_in_language=42)
+except (TypeError, OSError):
+    pass
+else:
+    raise AssertionError(
+        "expected TypeError/OSError for non-str built_in_language"
+    )
+
+# ---------- Try opening a known system catalog ----------
+# Sys/monitors.catalog ships with most Workbench installs. Passing
+# built_in_language="german" forces locale.library to actually load
+# the English file rather than short-circuit on the matching
+# built-in language.
+try:
+    cat = _catalog.open(
+        "Sys/monitors.catalog",
+        language="english",
+        built_in_language="german",
+    )
 except OSError:
-    print("workbench.catalog unavailable -- skipping round trip")
+    print("Sys/monitors.catalog unavailable -- skipping round trip")
     print("OK")
     raise SystemExit
 
@@ -59,12 +72,27 @@ got = cat.lookup(99999, "FALLBACK")
 assert got == "FALLBACK", got
 assert isinstance(got, str)
 
+# lookup return type is str.
+assert isinstance(cat.lookup(1, "default_1"), str)
+
+# isinstance via re-exported type.
+assert isinstance(cat, _catalog.Catalog)
+
+# Close + double-close.
 cat.close()
-# Double-close is idempotent.
 cat.close()
 
-# With-statement support.
-with _catalog.open("workbench.catalog") as cat2:
+# Closed catalog: lookup forwards NULL into GetCatalogStr which
+# returns the default. Not a ValueError -- matches AmigaOS contract.
+got = cat.lookup(1, "after_close")
+assert got == "after_close", got
+
+# Context manager.
+with _catalog.open(
+    "Sys/monitors.catalog",
+    language="english",
+    built_in_language="german",
+) as cat2:
     s = cat2.lookup(99999, "WITH_FALLBACK")
     assert s == "WITH_FALLBACK"
 
