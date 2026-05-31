@@ -42,7 +42,7 @@ with file-system access, based on the `ports/minimal` template.
 | 30 | Intuition requester dialogs (`amiga.intuition`) | ✅ |
 | 31 | ASL file requester (`amiga.asl`) | ✅ |
 | 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | ✅ |
-| 33 | `platform.amiga_info()` + frozen `platform.py` | planned |
+| 33 | `platform.amiga_info()` + frozen `platform.py` | ✅ |
 
 ### Non-goals (initially)
 
@@ -1330,7 +1330,7 @@ latch / argstring handling.
 
 ---
 
-## Phase 33 — `platform.amiga_info()` (planned)
+## Phase 33 — `platform.amiga_info()` ✅
 
 Frozen CPython-shaped `platform.py` module surfacing AmigaOS
 identity. Modeled on OoZe1911's port:
@@ -1375,7 +1375,31 @@ tests/amiga/test_platform_smoke.py      — vamos smoke
 docs/phase33-platform-plan.md           — step plan
 ```
 
-Variants: all three.
+Variants: all three. ~1.6 KB text per variant (six C accessors +
+the frozen module + the lazy graphics.library hook).
+
+### Status — done
+
+| `amiga.*` accessor   | `platform.*` wrapper          | Returns |
+|----------------------|-------------------------------|---------|
+| `amiga.cpu()`        | `platform.machine` / `processor` | str — highest `AttnFlags` CPU bit (`"68000"` .. `"68060"`) |
+| `amiga.fpu()`        | `platform.fpu`                | str — `"none"` / `"68881"` / `"68882"` / `"68040"` |
+| `amiga.chipset()`    | `platform.chipset`            | str — `"OCS"` / `"ECS"` / `"AGA"` (lazy `graphics.library`) |
+| `amiga.kickstart()`  | `platform.release` (and `version` prefix) | str — `"VV.RR"` |
+| `amiga.chipmem()`    | `platform.chipmem`            | int — bytes currently free in Chip RAM |
+| `amiga.fastmem()`    | `platform.fastmem`            | int — bytes currently free in Fast RAM |
+
+Plus the CPython-standard `platform.system()` → `"AmigaOS"`,
+`node()` → `"Amiga"`, `python_implementation()` /
+`python_version()`, and the convenience
+`platform.platform()` ("AmigaOS-`<kick>`-`<cpu>`-MicroPython_`<pyver>`")
+and `platform.amiga_info()`
+("CPU: 68020 | FPU: 68881 | Chipset: AGA | Kickstart: 45.57 |
+Chip: 1856KB | Fast: 14336KB").
+
+Values reflect runtime AmigaOS state, not compile-time targeting:
+a `standard` (68020 / soft-float) binary running on a 68040
+reports `"68040"` / `"68040"` for `cpu()` / `fpu()`.
 
 ---
 
