@@ -46,6 +46,7 @@ with file-system access, based on the `ports/minimal` template.
 | 34 | Frozen `os.py` extensions + AmigaOS-aware `os.path` | planned |
 | 35 | `amiga.icon` — `.info` file read / write / manipulation | planned |
 | 36 | `amiga.catalog` — `locale.library` catalog lookup | planned |
+| 37 | `amiga.datatypes` — `datatypes.library` file recognition | planned (low priority) |
 
 ### Non-goals (initially)
 
@@ -1677,6 +1678,89 @@ docs/phase36-catalog-plan.md            — step plan (TBD)
 ```
 
 Variants: all three. ~1.5 KB text per variant.
+
+---
+
+## Phase 37 — `amiga.datatypes` (planned, low priority)
+
+Wrap `datatypes.library` (V39+) for universal file recognition.
+`datatypes.library` is AmigaOS's plug-in registry of file-format
+handlers (`.datatype` modules in `SYS:Classes/DataTypes/`); any
+running system knows about every datatype that's been installed
+on it.
+
+```python
+from amiga import datatypes
+
+# "What is this file?" — works for everything the system has a
+# datatype for: PNG/JPEG/GIF/IFF ILBM, 8SVX/AIFF/WAV, ASCII/IFF FTXT,
+# anim, etc.
+info = datatypes.recognize("Work:Photos/holiday.jpg")
+# {'group': 'picture', 'type': 'jpeg', 'name': 'JPEG (JFIF)'}
+
+# Slightly more: full DTA_* attribute dump.
+attrs = datatypes.info("Work:Photos/holiday.jpg")
+# {'BaseName': 'JPEG', 'GroupID': 'pict', 'Width': 1280, 'Height': 720, ...}
+```
+
+### Scope
+
+- `amiga.datatypes.recognize(path)` → dict with `group`, `type`,
+  `name`. Uses `ObtainDataTypeA(DTST_FILE, lock, NULL)` then
+  `GetDTAttrs(DTA_BaseName, DTA_GroupID, DTA_Name)`, releases via
+  `ReleaseDataType`.
+- `amiga.datatypes.info(path)` → dict. Same as `recognize` but
+  also queries common attrs (`DTA_NominalHoriz` / `_NominalVert` for
+  pictures, `DTA_Duration` / `_SampleLength` for sound, etc.) so
+  callers can do quick metadata reads without `NewDTObject`.
+- `amiga.datatypes.groups()` → list of installed group IDs (one of
+  `"sound"` / `"picture"` / `"text"` / `"anim"` / `"system"` / `"document"`).
+  Iterates the `dtl_*` chain in `DataTypesList`.
+
+### Out of scope
+
+- `NewDTObjectA` / `DoDTMethodA(DTM_DRAW)` rendering — requires a
+  `RastPort` and a target `BitMap`, plus colour-map handling for
+  CLUT formats. That's a much larger surface (graphics.library
+  BitMap wrappers + intuition Screen/Window plumbing) and the
+  payoff for a MicroPython workload is narrow.
+- Save-as-other-format (`DTM_WRITE`) — same render-pipeline
+  problem in reverse.
+- Audio playback (`DTM_TRIGGER` on sound datatypes) — needs AHI on
+  modern hosts.
+- BOOPSI object exposure — `NewDTObject` returns an
+  `Object *` that callers normally drive via `SetDTAttrs` /
+  `GetDTAttrs`/`DoDTMethod`. Surfacing that as a Python type is a
+  whole separate phase (one BOOPSI superclass per Python class).
+
+### Dependencies
+
+- `datatypes.library` v39+. Lazy open. The library is V39+ (OS 3.0)
+  baseline — earlier Kickstarts simply skip the import (we already
+  require V37 for things like `lib_call`, so V39 is a small bump
+  but worth a clean `OSError(MP_ENOSYS)` if missing).
+
+### Files
+
+```
+ports/amiga/moddatatypes.c              — C module
+ports/amiga/modules/amiga.py            — adds `import _datatypes as datatypes`
+tests/amiga/test_datatypes_smoke.py     — vamos arg-shape smoke
+docs/phase37-datatypes-plan.md          — step plan (TBD)
+```
+
+Variants: all three. ~2 KB text per variant.
+
+### Why "low priority"
+
+`recognize` / `info` is genuinely useful but rarely on the critical
+path for a MicroPython script — file-type sniffing is more often
+done by reading the first few bytes (`b"\x89PNG"`, `b"\xff\xd8"`).
+The big win is universal sniffing across formats the system has
+been taught about (third-party PNG / JPEG / WebP `.datatype`s), and
+that lives or dies by which datatypes are installed on the target
+host. Land Phase 35 / 36 first; pick up Phase 37 if a real caller
+shows up.
 
 ---
 
