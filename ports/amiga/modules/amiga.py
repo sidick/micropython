@@ -21,6 +21,7 @@ import _amiga_tags
 import _intuition as intuition  # noqa: F401  (re-exported as amiga.intuition)
 import _asl as asl  # noqa: F401  (re-exported as amiga.asl)
 import _icon as icon  # noqa: F401  (re-exported as amiga.icon)
+import _catalog as catalog  # noqa: F401  (re-exported as amiga.catalog)
 
 
 _VALID_REGS = frozenset((
