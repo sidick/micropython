@@ -279,8 +279,71 @@ diff <(tr -d '\r' < captured.out) reference.exp
 - **`68020fpu`** — needs 68881; vamos has no 68881/68882 emulation.
 - **Workbench launch** — `WBStartup`, `icon.library`, tooltype handling.
   Vamos has no `icon.library`.
-- **AmiSSL** (Phase 28, planned) — needs Kickstart and a real
-  `amisslmaster.library` install.
+- **AmiSSL** (Phase 28) — needs Kickstart and a real
+  `amisslmaster.library` install (see SSL section below).
+
+### SSL tests (Phase 28)
+
+TLS support is on in `standard`, `68020fpu`, `68040`; off in
+`minimal` (no `bsdsocket.library` → no SSL). Exercising `ssl` on
+target needs:
+
+- **AmiSSL v5 installed.** `amisslmaster.library` must be reachable
+  via `LIBS:`. The conventional install puts it at
+  `SYS:AmiSSL/Libs/amisslmaster.library` with the CA bundle in a
+  c_rehash dir at `SYS:AmiSSL/certs/`. AmiSSL's own installer adds
+  `Assign AmiSSL: SYS:AmiSSL` and
+  `Assign LIBS: AmiSSL:Libs ADD` to `S:user-startup`.
+- **AmiSSL assigns in scope at micropython launch.** Watch the
+  ordering in `user-startup`: if the boot hook runs `py0:boot`
+  *before* the AmiSSL assigns, the boot script must add them
+  itself or `import ssl` will raise on `SSLContext()`.
+
+Recommended verify path:
+
+```python
+import ssl
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.verify_mode = ssl.CERT_REQUIRED
+ctx.set_default_verify_paths()   # preferred over load_verify_locations
+```
+
+`set_default_verify_paths()` sidesteps two AmigaOS-specific
+gotchas with manual cert loading:
+
+1. **Trailing-slash capath fails.** `load_verify_locations(capath=
+   "AmiSSL:certs/")` concatenates internally to a double-slash that
+   AmigaDOS interprets as parent-dir reference, and lookups silently
+   miss. Pass `"AmiSSL:certs"` (no trailing slash) if you want to
+   use it explicitly.
+2. **AmiSSL c_rehash uses the old (pre-OpenSSL-1.0.0) subject hash
+   algorithm.** New-hash filenames silently miss in lookups even
+   though byte-identical files exist under their old-hash names
+   in the same directory.
+
+#### Known limitation: TLS 1.3 against modern CDNs
+
+`CERT_REQUIRED` HTTPS against TLS-1.3-eager fronts (Cloudflare,
+GitHub) completes the handshake (cert chain verifies fine) but the
+subsequent `ws.write` returns `EPIPE` / broken pipe with zero
+bytes sent. Forcing TLS 1.2 doesn't help — those servers reject
+TLS 1.2. Hosts that still negotiate TLS 1.2 by default
+(`www.python.org`, etc.) work cleanly in both directions.
+
+Tracked in `docs/phase28-ssl-plan.md` as a Phase 28 follow-up
+(likely AmiSSL's post-handshake state isn't fully ready for
+`SSL_write` when the server pushes a NewSessionTicket
+immediately after `Finished`).
+
+#### Upstream extmod/ssl* and tls* tests
+
+`tools/amiga-runtests.py` does not gate these out, so they run
+when the on-device runner walks `extmod/`. A handful require
+features we don't yet expose (`ssl.wrap_socket` module-level
+legacy form, `cadata=` parameter, server-mode handshake against a
+canned cert pair) and will fail; the `SSLContext`-shape tests
+(`ssl_sslcontext.py`, `ssl_sslcontext_verify_mode.py` etc.) should
+pass.
 
 ---
 

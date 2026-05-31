@@ -37,7 +37,7 @@ with file-system access, based on the `ports/minimal` template.
 | 25 | Extra break signals | ✅ |
 | 26 | `PROGDIR:` on `sys.path` | ✅ |
 | 27 | Additional build variants | ✅ |
-| 28 | TLS/SSL via AmiSSL v5 | planned |
+| 28 | TLS/SSL via AmiSSL v5 | ✅ |
 
 ### Non-goals (initially)
 
@@ -847,12 +847,16 @@ the link fails with `cannot find -lgcc`.
 
 ---
 
-## Phase 28 — TLS/SSL via AmiSSL v5 (planned)
+## Phase 28 — TLS/SSL via AmiSSL v5 ✅
 
-The step-by-step ship plan for this phase lives in
-[docs/phase28-ssl-plan.md](phase28-ssl-plan.md). The section below is
-the design and rationale — *what* and *why*; the companion doc covers
-*how to chunk and land it*.
+Landed in six commits, end-to-end verified against `www.python.org`
+on 2026-05-31 with `CERT_REQUIRED` chain validation
+(`HTTP/1.1 200 OK`, 53 912 B HTML). The implementation log lives in
+[docs/phase28-ssl-plan.md](phase28-ssl-plan.md) — measured heap
+costs, the AmigaOS capath trailing-slash gotcha, and the modern-CDN
+TLS 1.3 limitation tracked as a follow-up. The section below is
+the design and rationale — *what* and *why*; the companion doc
+covers *how it shipped*.
 
 Upstream MicroPython ships axTLS (small, dated, no SNI) and mbedTLS (~250 KB
 add). Neither fits the AmigaOS ethos when the platform already has a
