@@ -377,6 +377,36 @@ Workbench is loaded. `OSError(EIO)` is reserved for the rare case
 where `EasyRequestArgs` returns `-1` (genuine intuition-side
 failure, not a missing screen).
 
+### ASL file requester (Phase 31)
+
+`tests/amiga/test_asl_smoke.py` covers the module-registration,
+arg-shape validation, and the `multi=True` + `save=True`
+ValueError guard; it runs under vamos and prints `OK` on success.
+The actual file-pick dialog needs Amiberry or real hardware.
+
+For end-to-end visual confirmation:
+
+```python
+>>> from amiga import asl
+>>> asl.file_request(title="Pick a script", initial_drawer="Sys:")
+'Sys:Prefs/Workbench'        # picked, or
+None                          # cancelled
+
+>>> asl.file_request(save=True, initial_file="out.txt")
+'Ram Disk:out.txt'
+
+>>> asl.file_request(multi=True, pattern="#?.py")
+['Work:scripts/foo.py', 'Work:scripts/bar.py']
+
+>>> asl.file_request(drawers_only=True)
+'Work:scripts'
+```
+
+`file_request` runs the underlying `AllocAslRequest` +
+`AslRequest` calls on a 32 KB scratch stack via `StackSwap`, so
+the dialog works even from a default-stack shell prompt — no
+`Stack 32768` prelude required.
+
 ---
 
 ## 3. CI (cross-compile only)

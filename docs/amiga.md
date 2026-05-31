@@ -40,7 +40,7 @@ with file-system access, based on the `ports/minimal` template.
 | 28 | TLS/SSL via AmiSSL v5 | ✅ |
 | 29 | `urequests` frozen HTTP/HTTPS client | ✅ |
 | 30 | Intuition requester dialogs (`amiga.intuition`) | ✅ |
-| 31 | ASL file requester (`amiga.asl`) | planned |
+| 31 | ASL file requester (`amiga.asl`) | ✅ |
 
 ### Non-goals (initially)
 
@@ -1154,7 +1154,7 @@ whether Workbench is loaded.
 
 ---
 
-## Phase 31 — ASL file requester (planned)
+## Phase 31 — ASL file requester ✅
 
 `amiga.asl` C sub-module wrapping `asl.library`'s
 `AslRequest(ASL_FileRequest, ...)`. Native Amiga file chooser
@@ -1205,11 +1205,39 @@ drawer = asl.file_request(drawers_only=True)
 ### Files
 
 ```
-ports/amiga/modasl.c                    — C module
+ports/amiga/modasl.c                    — C module (~280 LOC)
+ports/amiga/modules/amiga.py            — adds `import _asl as asl`
+tests/amiga/test_asl_smoke.py           — vamos arg-shape smoke test
 docs/phase31-asl-plan.md                — step plan
 ```
 
-Variants: all three shipped variants. Trivial size cost (~2 KB).
+Variants: all three shipped variants. ~1.2 KB text cost per variant.
+
+### Status — done
+
+One entry point, behaviour driven entirely by kwargs:
+
+| Kwargs                                                | Returns      |
+|-------------------------------------------------------|--------------|
+| `(title, initial_drawer, initial_file, pattern)`      | `str` — full path of the picked file |
+| `save=True`                                           | `str` — full path (editable filename gadget) |
+| `drawers_only=True`                                   | `str` — drawer path (no file component) |
+| `multi=True`                                          | `list[str]` — one full path per shift-clicked file |
+| user clicked Cancel                                   | `None`       |
+| `multi=True` + `save=True`                            | `ValueError` |
+
+`asl.library` is famously stack-hungry: a default ~4 KB shell stack
+trips a CHK exception (`0x80000006`) on the post-pick code path
+even though the dialog renders fine. `file_request` runs the bare
+`AllocAslRequest` + `AslRequest` calls on a 32 KB scratch stack
+via `StackSwap` so callers don't have to remember `Stack 32768`
+at the shell prompt; the path-build and string allocation happen
+back on the original stack so the GC's stack-scan range stays
+correct.
+
+Path buffer is 1024 bytes (vs the 512 used by older `modamiga.c`
+surfaces) to comfortably accommodate long-name filesystems
+(SFS / PFS3 / FFS2).
 
 ---
 
