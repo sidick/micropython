@@ -1372,7 +1372,7 @@ identity. Modeled on OoZe1911's port:
 ports/amiga/modamiga.c                  — six accessor functions
 ports/amiga/modules/platform.py         — frozen facade
 tests/amiga/test_platform_smoke.py      — vamos smoke
-docs/phase33-platform-plan.md           — step plan (TBD)
+docs/phase33-platform-plan.md           — step plan
 ```
 
 Variants: all three.
