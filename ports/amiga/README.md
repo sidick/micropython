@@ -116,7 +116,12 @@ Shell's path:
 readable, writable, executable, and deletable -- AmigaDOS
 protection bits are inverted relative to Unix (set bit ⇒ denied).
 
-A Workbench tool icon ships at `ports/amiga/micropython.info`:
+If you installed into `C:` for Shell use only, you're done -- the
+icon is purely a Workbench-launch convenience and isn't needed for
+`micropython` invocations from the Shell.
+
+For Workbench launch, a tool icon ships at
+`ports/amiga/micropython.info`:
 
     1> copy ports/amiga/micropython.info c:micropython.info
 
