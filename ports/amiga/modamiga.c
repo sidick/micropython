@@ -22,6 +22,8 @@
 #include <workbench/startup.h>
 #include <workbench/workbench.h>
 #include <proto/icon.h>
+#include <graphics/gfxbase.h>
+#include <proto/graphics.h>
 
 #if MICROPY_PY_AMIGA
 
@@ -1244,6 +1246,96 @@ static mp_obj_t amiga_readline_push_history_fn(mp_obj_t line_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_readline_push_history_obj, amiga_readline_push_history_fn);
 
+// ---------- Phase 33: platform identity (cpu/fpu/chipset/...) ----------
+//
+// Six lightweight probes feeding the frozen platform.py facade.
+// Values reflect runtime state (a 68040 running a -m68020 binary
+// reports "68040"), not compile-time targeting.
+
+// amiga.cpu() -> str. Highest CPU bit in SysBase->AttnFlags wins.
+static mp_obj_t amiga_cpu_fn(void) {
+    UWORD f = SysBase->AttnFlags;
+    const char *s = "68000";
+    if (f & AFF_68060) s = "68060";
+    else if (f & AFF_68040) s = "68040";
+    else if (f & AFF_68030) s = "68030";
+    else if (f & AFF_68020) s = "68020";
+    else if (f & AFF_68010) s = "68010";
+    return mp_obj_new_str(s, strlen(s));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_cpu_obj, amiga_cpu_fn);
+
+// amiga.fpu() -> str. AFF_FPU40 (integrated 040/060 FPU) wins over
+// the 68881/68882 coprocessor bits.
+static mp_obj_t amiga_fpu_fn(void) {
+    UWORD f = SysBase->AttnFlags;
+    const char *s = "none";
+    if (f & AFF_FPU40) s = "68040";
+    else if (f & AFF_68882) s = "68882";
+    else if (f & AFF_68881) s = "68881";
+    return mp_obj_new_str(s, strlen(s));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_fpu_obj, amiga_fpu_fn);
+
+// Lazy graphics.library base for chipset detection. Cached for the
+// process lifetime; closed in amiga_gfx_close() called from main.c
+// cleanup (matches amiga_asl_close / amiga_intuition_close).
+static struct GfxBase *AmigaGfxBase = NULL;
+
+static void amiga_gfx_ensure_open(void) {
+    if (AmigaGfxBase == NULL) {
+        AmigaGfxBase = (struct GfxBase *)OpenLibrary(
+            (CONST_STRPTR)"graphics.library", 36);
+        if (AmigaGfxBase == NULL) {
+            mp_raise_OSError(MP_ENOENT);
+        }
+    }
+}
+
+void amiga_gfx_close(void) {
+    if (AmigaGfxBase != NULL) {
+        CloseLibrary((struct Library *)AmigaGfxBase);
+        AmigaGfxBase = NULL;
+    }
+}
+
+// amiga.chipset() -> str. Reads GfxBase->ChipRevBits0; AA Alice/Lisa
+// (AGA) wins over HR Agnus/Denise (ECS), default to OCS. Bebbo's NDK
+// uses GFXF_* (not GFXG_*) naming.
+static mp_obj_t amiga_chipset_fn(void) {
+    amiga_gfx_ensure_open();
+    UBYTE bits = AmigaGfxBase->ChipRevBits0;
+    const char *s = "OCS";
+    if (bits & (GFXF_AA_ALICE | GFXF_AA_LISA)) s = "AGA";
+    else if (bits & (GFXF_HR_AGNUS | GFXF_HR_DENISE)) s = "ECS";
+    return mp_obj_new_str(s, strlen(s));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_chipset_obj, amiga_chipset_fn);
+
+// amiga.kickstart() -> str. "VV.RR" format from SysBase->LibNode.
+static mp_obj_t amiga_kickstart_fn(void) {
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%u.%u",
+        (unsigned)SysBase->LibNode.lib_Version,
+        (unsigned)SysBase->LibNode.lib_Revision);
+    if (n < 0 || n >= (int)sizeof(buf)) n = 0;
+    return mp_obj_new_str(buf, (size_t)n);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_kickstart_obj, amiga_kickstart_fn);
+
+// amiga.chipmem() -> int. Currently free MEMF_CHIP bytes (not total
+// installed). Matches OoZe1911's semantics.
+static mp_obj_t amiga_chipmem_fn(void) {
+    return mp_obj_new_int_from_uint((mp_uint_t)AvailMem(MEMF_CHIP));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_chipmem_obj, amiga_chipmem_fn);
+
+// amiga.fastmem() -> int. Currently free MEMF_FAST bytes.
+static mp_obj_t amiga_fastmem_fn(void) {
+    return mp_obj_new_int_from_uint((mp_uint_t)AvailMem(MEMF_FAST));
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_fastmem_obj, amiga_fastmem_fn);
+
 static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),    MP_ROM_QSTR(MP_QSTR__amiga) },
     { MP_ROM_QSTR(MP_QSTR_os_version),  MP_ROM_PTR(&amiga_os_version_obj) },
@@ -1290,6 +1382,13 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_client_send),  MP_ROM_PTR(&amiga_rexx_client_send_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_history),      MP_ROM_PTR(&amiga_readline_history_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_push_history), MP_ROM_PTR(&amiga_readline_push_history_obj) },
+    // Phase 33: platform identity
+    { MP_ROM_QSTR(MP_QSTR_cpu),         MP_ROM_PTR(&amiga_cpu_obj) },
+    { MP_ROM_QSTR(MP_QSTR_fpu),         MP_ROM_PTR(&amiga_fpu_obj) },
+    { MP_ROM_QSTR(MP_QSTR_chipset),     MP_ROM_PTR(&amiga_chipset_obj) },
+    { MP_ROM_QSTR(MP_QSTR_kickstart),   MP_ROM_PTR(&amiga_kickstart_obj) },
+    { MP_ROM_QSTR(MP_QSTR_chipmem),     MP_ROM_PTR(&amiga_chipmem_obj) },
+    { MP_ROM_QSTR(MP_QSTR_fastmem),     MP_ROM_PTR(&amiga_fastmem_obj) },
     // Break-signal bits (Phase 25)
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },
