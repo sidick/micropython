@@ -1206,10 +1206,10 @@ drawer = asl.file_request(drawers_only=True)
 
 ```
 ports/amiga/modasl.c                    — C module
-docs/phase31-asl-plan.md                — step plan (TBD)
+docs/phase31-asl-plan.md                — step plan
 ```
 
-Variants: all four. Trivial size cost.
+Variants: all three shipped variants. Trivial size cost (~2 KB).
 
 ---
 
