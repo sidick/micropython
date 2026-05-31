@@ -135,11 +135,13 @@ Running
 From the AmigaShell:
 
     1> micropython
-    MicroPython v1.27.0 on 2026-05-31; AmigaOS 3.x with m68k
-    Use Ctrl-D to exit, Ctrl-E for paste mode
+    MicroPython v1.29.0-preview on 2026-05-31; Amiga with 68020
+    Type "help()" for more information.
     >>> import platform
     >>> platform.amiga_info()
     'CPU: 68020 | FPU: 68881 | Chipset: AGA | Kickstart: 45.57 | Chip: 1856KB | Fast: 14336KB'
+    >>> platform.platform()
+    'AmigaOS-45.57-68020-MicroPython_1.29.0'
 
 Pass a script as the first argument to run it directly:
 
