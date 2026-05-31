@@ -61,8 +61,9 @@ etc.):
 
 ### Variant selection
 
-`AMIGA_VARIANT=minimal|standard|68040` picks build + matching `--cpu`
-flag. Default is `standard`.
+`AMIGA_VARIANT=standard|68040` picks build + matching `--cpu`
+flag. Default is `standard`. (`68020fpu` builds 68881 instructions
+that vamos can't emulate, so it's Amiberry-only.)
 
 ```sh
 AMIGA_VARIANT=68040 ./run-tests.py basics/string1.py
@@ -284,8 +285,7 @@ diff <(tr -d '\r' < captured.out) reference.exp
 
 ### SSL tests (Phase 28)
 
-TLS support is on in `standard`, `68020fpu`, `68040`; off in
-`minimal` (no `bsdsocket.library` → no SSL). Exercising `ssl` on
+TLS support is on in all three shipped variants. Exercising `ssl` on
 target needs:
 
 - **AmiSSL v5 installed.** `amisslmaster.library` must be reachable

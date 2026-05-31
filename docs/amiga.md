@@ -129,7 +129,7 @@ ports/amiga/
 ├── qstrdefsport.h        # Port-specific interned strings
 ├── manifest.py           # Frozen modules (amiga.py + _amiga_fd etc.)
 ├── modules/              # Frozen Python modules
-└── variants/{standard,minimal,68020fpu,68040}/
+└── variants/{standard,68020fpu,68040}/
 ```
 
 ---
@@ -380,7 +380,7 @@ change.
 **Running the REPL under vamos:** `tools/amiga-vamos-repl.sh` puts the host
 TTY into `-icanon -echo -isig` for the duration of the run (vamos's
 `SetMode(stdin,1)` doesn't translate to `tcsetattr` on the host TTY).
-`AMIGA_VARIANT=68040` / `=minimal` selects the build.
+`AMIGA_VARIANT=68040` selects the build.
 
 ## Phase 14 — Dynamic heap growth ✅
 
@@ -825,13 +825,11 @@ fallback.
 
 | Variant | CPU | Heap | Notes |
 |---------|-----|------|-------|
-| `standard` (default) | `-m68020 -msoft-float` | 256 KB | Any 68020+ |
-| `minimal` | `-m68020 -msoft-float` | 128 KB | Stock A1200 (68EC020, 2 MB Chip). No `bsdsocket`, no `MICROPY_EMIT_68K` |
+| `standard` (default) | `-m68020 -msoft-float` | 256 KB | Any 68020+, no FPU. Default for stock A1200 / unaccelerated 68030 |
 | `68020fpu` | `-m68020 -m68881` | 512 KB | 68020/30 + 68881/2 (A2630, A3000). No libgcc soft-float wraps |
 | `68040` | `-m68040` | 1 MB | 68040 built-in FPU (A3640, A4000/040) |
 
-Text-segment sizes: standard 356 KB, minimal 327 KB, 68020fpu 330 KB,
-68040 339 KB.
+Text-segment sizes: standard 356 KB, 68020fpu 330 KB, 68040 339 KB.
 
 **A500 isn't a target** — its 68000 lacks unaligned access. **Why 68040
 is larger than 68020fpu:** Motorola dropped transcendentals (FSIN/COS/TAN/
@@ -951,8 +949,8 @@ Don't ship a CA bundle in the binary — ~200 KB, gets stale fast.
 #define MICROPY_PY_AMIGA_SSL (MICROPY_PY_AMIGA_SOCKET)
 ```
 
-`minimal` (no socket) → no SSL. If `amisslmaster.library` isn't installed,
-`import ssl` raises `ImportError`.
+All three shipped variants link AmiSSL. If `amisslmaster.library` isn't
+installed at runtime, `import ssl` raises `ImportError`.
 
 OpenSSL 3.x is memory-hungry: `SSL_CTX` ~16 KB, each `SSL` ~48 KB, CA store
 ~200 KB. Two HTTPS connections push the 256 KB `standard` heap to the edge
@@ -1074,8 +1072,7 @@ docs/phase29-urequests-plan.md          — step plan
 tests/amiga/test_urequests_smoke.py     — on-target smoke (Amiberry, AmiSSL installed)
 ```
 
-Variants: `standard`, `68020fpu`, `68040`. The `minimal` variant
-omits it (no socket → no urequests).
+All three shipped variants include it.
 
 ---
 

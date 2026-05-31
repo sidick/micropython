@@ -65,7 +65,7 @@ jobs:
       - name: Build all variants
         run: |
           set -e
-          for v in standard minimal 68020fpu 68040; do
+          for v in standard 68020fpu 68040; do
             echo "::group::Build $v"
             make -C ports/amiga VARIANT=$v -j$(nproc)
             echo "::endgroup::"
@@ -76,13 +76,6 @@ jobs:
         with:
           name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
           path: ports/amiga/build-standard/micropython
-          if-no-files-found: error
-
-      - name: Upload minimal
-        uses: actions/upload-artifact@v7
-        with:
-          name: micropython-amiga-minimal-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-minimal/micropython
           if-no-files-found: error
 
       - name: Upload 68020fpu

@@ -79,11 +79,10 @@ LDFLAGS += $(AMIGA_FLOAT_WRAPS)
 # math-library bugs, not soft-float bugs — applies to all variants.
 LDFLAGS += -Wl,--wrap=pow,--wrap=tgamma
 
-# AmiSSL v5 TLS (Phase 28). The minimal variant overrides this to 0;
-# every other variant inherits the default and links -lamisslstubs.
-# The SDK headers and the libamisslstubs.a archive come from the
-# host cache populated by tools/amiga-fetch-amissl-sdk.sh and bind-
-# mounted into the container at /amissl-cache. Override
+# AmiSSL v5 TLS (Phase 28). Every variant inherits the default and
+# links -lamisslstubs. The SDK headers and the libamisslstubs.a archive
+# come from the host cache populated by tools/amiga-fetch-amissl-sdk.sh
+# and bind-mounted into the container at /amissl-cache. Override
 # AMISSL_SDK_DEV when building natively against a different install.
 MICROPY_PY_AMIGA_SSL ?= 1
 AMISSL_SDK_DEV ?= /amissl-cache/latest/AmiSSL/Developer
