@@ -1030,6 +1030,44 @@ static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_rexx_send_obj, amiga_rexx_send_fn);
 
+// ---------- Phase 32: ARexx polish (rexx_exists, rexx_list) ----------
+
+// amiga.rexx_exists(name) -> bool. Light-weight wrapper around
+// FindPort, fenced with Forbid/Permit so the port list can't
+// mutate between FindPort returning a stale entry and the caller
+// acting on the result.
+static mp_obj_t amiga_rexx_exists_fn(mp_obj_t name_obj) {
+    const char *name = mp_obj_str_get_str(name_obj);
+    Forbid();
+    bool ok = (FindPort((CONST_STRPTR)name) != NULL);
+    Permit();
+    return mp_obj_new_bool(ok);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_rexx_exists_obj, amiga_rexx_exists_fn);
+
+// amiga.rexx_list() -> list[str] of every public MsgPort's
+// ln_Name. Walks SysBase->PortList under Forbid so the list can't
+// mutate mid-walk. Nodes with NULL ln_Name (rare; not strictly
+// required to have one) are skipped silently. Allocating Python
+// objects inside a Forbid window matches the precedent in
+// amiga_rexx_open_fn (Phase 18) -- mp_obj_new_str / list_append
+// don't issue Forbid-unsafe calls.
+static mp_obj_t amiga_rexx_list_fn(void) {
+    mp_obj_t list = mp_obj_new_list(0, NULL);
+    Forbid();
+    struct List *plist = &SysBase->PortList;
+    struct Node *n;
+    for (n = plist->lh_Head; n->ln_Succ != NULL; n = n->ln_Succ) {
+        if (n->ln_Name != NULL) {
+            mp_obj_list_append(list,
+                mp_obj_new_str(n->ln_Name, strlen(n->ln_Name)));
+        }
+    }
+    Permit();
+    return list;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_list_obj, amiga_rexx_list_fn);
+
 // ---------- Phase 24: REPL history accessors ----------
 //
 // The readline history ring lives in `MP_STATE_PORT(readline_hist)`
@@ -1108,6 +1146,8 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_command),    MP_ROM_PTR(&amiga_rexx_command_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_reply),      MP_ROM_PTR(&amiga_rexx_reply_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_send),       MP_ROM_PTR(&amiga_rexx_send_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_exists),     MP_ROM_PTR(&amiga_rexx_exists_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_list),       MP_ROM_PTR(&amiga_rexx_list_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_history),      MP_ROM_PTR(&amiga_readline_history_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_push_history), MP_ROM_PTR(&amiga_readline_push_history_obj) },
     // Break-signal bits (Phase 25)
