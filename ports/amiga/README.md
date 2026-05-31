@@ -139,9 +139,9 @@ From the AmigaShell:
     Type "help()" for more information.
     >>> import platform
     >>> platform.amiga_info()
-    'CPU: 68020 | FPU: 68881 | Chipset: AGA | Kickstart: 45.57 | Chip: 1856KB | Fast: 14336KB'
+    'CPU: 68020 | FPU: 68882 | Chipset: AGA | Kickstart: 40.10 | Chip: 2025KB | Fast: 11860KB'
     >>> platform.platform()
-    'AmigaOS-45.57-68020-MicroPython_1.29.0'
+    'AmigaOS-40.10-68020-MicroPython_1.29.0'
 
 Pass a script as the first argument to run it directly:
 
