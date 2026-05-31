@@ -36,7 +36,7 @@ IMAGE="${AMIGA_DOCKER_IMAGE:-stefanreinauer/amiga-gcc:latest}"
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 AMISSL_CACHE_DIR="${AMISSL_CACHE_DIR:-$HOME/.cache/amissl-sdk}"
 mkdir -p "$AMISSL_CACHE_DIR"
-ALL_VARIANTS=(standard minimal 68020fpu 68040)
+ALL_VARIANTS=(standard 68020fpu 68040)
 
 # Platform hint only matters on non-amd64 hosts (e.g. Apple Silicon);
 # harmless on linux/amd64.
