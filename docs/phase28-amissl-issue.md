@@ -102,37 +102,6 @@ That points to a structural / fingerprint-shape issue in
 AmiSSL's TLS 1.3 ClientHello (or its OpenSSL 3.x configuration),
 not to a specific patch that broke things recently.
 
-### `aget` works against the same host — what's different?
-
-The crucial counter-data point: **AmiSSL's bundled `aget`
-(`Workbench:UHC/C/aget`, UHC build of `AsyncHTTPGet/0.95`) talks
-to `https://www.example.com` cleanly.** Same machine, same
-`amisslmaster.library`, same actual `amissl_v362.library` backend.
-
-```
-1> aget https://www.example.com
-Buffer size: 128k
-Connected to www.example.com:443
-TLSv1.3 connection is using TLS_CHACHA20_POLY1305_SHA256
-Sent GET request!
-Server response: 200 OK
-Receiving file: [o]
-528B received in 157ms - 3.27kB/s
-```
-
-So AmiSSL **can** handshake-then-write against Cloudflare. The
-break is in something specific to the v5 API path (`OpenAmiSSLTags`),
-because:
-
-- A `strings` scan of the `aget` binary shows it was built against
-  the **AmiSSL v4 API** — strings like `%s requires
-  amisslmaster.library v4`, `Failed InitAmiSSL()`, and `No
-  compatible AmiSSL version available` all point at `OpenAmiSSL()`
-  + `InitAmiSSL()`, not the v5 `OpenAmiSSLTags()` flow.
-- `aget` also negotiates `TLS_CHACHA20_POLY1305_SHA256` instead of
-  the `TLS_AES_256_GCM_SHA384` we (and `s_client`) end up with —
-  different default cipher preference order on the v4 vs v5 paths.
-
 ### What didn't fix it (tried in the wrapper)
 
 | Attempt | Result |
@@ -140,46 +109,21 @@ because:
 | `SSL_CTX_set_alpn_protos(ctx, "http/1.1")` (advertise ALPN) | same close-after-handshake |
 | Switching `amiga_ssl_open` to `OpenAmiSSL() + InitAmiSSL()` (v4 init API), keeping the rest of the wrapper unchanged | `SSL_connect` now fails earlier with `SSL_ERROR_SYSCALL` / `EIO` — the v4 init evidently doesn't bring along the OpenSSL 3.x provider state that v5 needs for TLS 1.3 |
 | `SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY)` (transparently retry on post-handshake control records) | same close-after-handshake |
-| `SSL_CTX_set_ciphersuites(ctx, "TLS_CHACHA20_POLY1305_SHA256")` (match aget's negotiated TLS 1.3 cipher) | same close-after-handshake |
+| `SSL_CTX_set_ciphersuites(ctx, "TLS_CHACHA20_POLY1305_SHA256")` (force a different TLS 1.3 suite than the default `TLS_AES_256_GCM_SHA384`) | same close-after-handshake |
 | Kitchen sink: `SSL_OP_ALL \| SSL_OP_NO_TICKET` + `SSL_CTX_set_min/max_proto_version(TLS1_3_VERSION)` + `SSL_CTX_set_session_cache_mode(SSL_SESS_CACHE_OFF)` | same close-after-handshake |
 | `SSL_get_peer_certificate(ssl); X509_free(...);` between `SSL_connect` and `SSL_write` (match the canonical AmiSSL `test/https.c` "settling" sequence) | same close-after-handshake |
 | Explicit BIO chain: `BIO_f_buffer` → `BIO_new_socket(fd)` on the write side via `SSL_set_bio`, replacing `SSL_set_fd` | `SSL_write` now reports success (61 bytes accepted into the buffer), but the next `SSL_read` returns `SYSCALL`/`EIO`. The buffer just defers the symptom — Cloudflare still closes, we just notice it later. Not a real fix. |
 
-The second result is the most interesting one for the maintainers:
-the v4 init path produces a different *broken* state for v5
-clients, suggesting the divergence between the two paths inside
-AmiSSL is non-trivial. Whatever `aget` is hitting via the v4 API
-either runs through a different init+cleanup sequence end-to-end,
-or v4 init enables an option that v5 init doesn't (default ciphers,
-extension order, `SSL_OP_*` flags, etc.) that Cloudflare's
-fingerprint heuristic happens to accept.
+The v4 init path produces a different *broken* state, suggesting
+the divergence between the two init paths inside AmiSSL is
+non-trivial — it's possible that v4 init enables an option that
+v5 init doesn't (default ciphers, extension order, `SSL_OP_*`
+flags, etc.) that the server happens to accept.
 
 A useful next investigation would be: instrument both paths to
-log the OpenSSL `SSL_CTX` options/cipher list/sigalgs after
-`amiga_ssl_open()` returns, and diff. Whatever differs is a good
-candidate for the actual trigger.
-
-### Independent corroboration from the UHC tools changelog
-
-The UHC tools changelog at <http://uhc.a1k.org/uhctools_log>
-records explicit prior-art evidence that the v5 API path has
-practical problems, from the `aget` maintainer:
-
-```
-2026-02-06 - New aget 0.95 - fix v4 AmiSSL preference, now it works :)
-2026-02-06 - New aget 0.94 - prefer v4 in multi version AmiSSL install
-             as it does SSL/TLS connect in half the time compared to v5
-2026-02-06 - New aget 0.93 - much better AmiSSL error messages
-2026-02-03 - New aget 0.92 - 68k ver with increased stack to handle AmiSSL 5.20+
-```
-
-So the aget author deliberately picks v4 even when v5 is also
-installed, because v5 is roughly **2× slower** for the SSL/TLS
-connect step. Our findings (Cloudflare close-after-handshake on
-v5 path, clean connect on v4 path) line up with that — it's not
-just a Cloudflare-specific quirk, the v5 path has been
-underperforming the v4 path on AmigaOS for at least the last
-few months.
+log the OpenSSL `SSL_CTX` options / cipher list / sigalgs after
+init returns, and diff. Whatever differs is a good candidate for
+the actual trigger.
 
 ### Working comparison
 
@@ -204,10 +148,3 @@ Alternatively, the close could be in response to a specific
 post-handshake message — a NewSessionTicket the client doesn't ACK
 properly, a KeyUpdate, or a handshake completion alert AmiSSL
 doesn't emit in the way modern OpenSSL does.
-
-### Impact
-
-Modern HTTPS clients on AmigaOS can't reach the large fraction of
-the public web sitting behind Cloudflare/GitHub/etc. Affects any
-AmiSSL-based application (curl, browsers, scripted automation, this
-MicroPython port) the same way.
