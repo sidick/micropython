@@ -15,6 +15,7 @@
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509.h>
 #include <proto/exec.h>
 #include <dos/dosextens.h>
 
@@ -64,10 +65,26 @@ static MP_NORETURN void raise_ssl_error(void) {
         MP_ERROR_TEXT("TLS: %s"), buf);
 }
 
-// Resolve an SSL_get_error() code into a meaningful exception. Caller
-// may have a partially-constructed SSL pointer to free first.
-static MP_NORETURN void raise_ssl_error_for(SSL *ssl, int rc) {
-    int err = SSL_get_error(ssl, rc);
+// Resolve a captured SSL_get_error() code into an exception. Take
+// the SSL_get_error and SSL_get_verify_result codes as values so
+// callers can SSL_free the ssl pointer first if they want; reading
+// them off a freed SSL is a use-after-free that silently returns
+// X509_V_OK and hides the real reason.
+static MP_NORETURN void raise_ssl_diag(int err, long verify) {
+    if (verify != X509_V_OK) {
+        // A failed cert chain shows up in the OpenSSL queue as the
+        // generic "certificate verify failed" entry; the actual
+        // reason (expired, missing issuer, hostname mismatch, etc.)
+        // lives in SSL_get_verify_result. Surface that so callers
+        // can act on it instead of staring at 0A000086.
+        const char *why = X509_verify_cert_error_string(verify);
+        if (!why) {
+            why = "unknown";
+        }
+        mp_raise_msg_varg(&mp_type_OSError,
+            MP_ERROR_TEXT("TLS verify (%ld): %s"), verify, why);
+    }
+
     unsigned long e = ERR_get_error();
     if (e != 0) {
         char buf[128];
@@ -179,6 +196,20 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(
     ssl_context_load_verify_locations_obj, 1,
     ssl_context_load_verify_locations);
 
+static mp_obj_t ssl_context_set_default_verify_paths(mp_obj_t self_in) {
+    mp_ssl_context_t *self = MP_OBJ_TO_PTR(self_in);
+    if (self->ctx == NULL) {
+        mp_raise_OSError(MP_EBADF);
+    }
+    if (SSL_CTX_set_default_verify_paths(self->ctx) != 1) {
+        raise_ssl_error();
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(
+    ssl_context_set_default_verify_paths_obj,
+    ssl_context_set_default_verify_paths);
+
 // SSLContext.verify_mode -- expose via attr handler so we can
 // translate the AmiSSL/OpenSSL SSL_VERIFY_* bitmask both ways.
 static void ssl_context_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
@@ -284,14 +315,17 @@ static mp_obj_t ssl_context_wrap_socket(
         // so a future asyncio glue knows what to do.
         int rc = SSL_connect(ssl);
         if (rc != 1) {
+            // Capture diagnostic state before SSL_free -- afterwards
+            // the ssl pointer is dangling and SSL_get_verify_result
+            // silently returns X509_V_OK off freed memory.
             int err = SSL_get_error(ssl, rc);
+            long verify = SSL_get_verify_result(ssl);
+            SSL_free(ssl);
             if (err == SSL_ERROR_WANT_READ
                 || err == SSL_ERROR_WANT_WRITE) {
-                SSL_free(ssl);
                 mp_raise_OSError(MP_EAGAIN);
             }
-            SSL_free(ssl);
-            raise_ssl_error_for(ssl, rc);
+            raise_ssl_diag(err, verify);
         }
     }
 
@@ -305,6 +339,27 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(
     ssl_context_wrap_socket_obj, 1, ssl_context_wrap_socket);
 
 // SSLSocket -- stream protocol on top of SSL_read / SSL_write.
+
+// Translate an SSL_get_error code for a read/write call into a
+// stream-protocol errcode. ZERO_RETURN is the caller's responsibility
+// (read uses it as EOF; write doesn't).
+static int ssl_stream_errcode(int err) {
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
+        return MP_EAGAIN;
+    }
+    return MP_EIO;
+}
+
+// If SSL_read / SSL_write fails, raise instead of silently returning
+// EIO -- otherwise diagnosing TLS-layer failures from Python is just
+// "OSError: EIO" with no clue what actually broke. WANT_READ/WRITE
+// stay as MP_STREAM_ERROR + MP_EAGAIN since they're a normal part of
+// non-blocking flow control.
+static MP_NORETURN void raise_stream_ssl_error(SSL *ssl, int rc) {
+    int err = SSL_get_error(ssl, rc);
+    long verify = SSL_get_verify_result(ssl);
+    raise_ssl_diag(err, verify);
+}
 
 static mp_uint_t ssl_socket_read(mp_obj_t self_in, void *buf,
                                  mp_uint_t size, int *errcode) {
@@ -322,11 +377,10 @@ static mp_uint_t ssl_socket_read(mp_obj_t self_in, void *buf,
         return 0; // clean TLS close = EOF
     }
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        *errcode = MP_EAGAIN;
+        *errcode = ssl_stream_errcode(err);
         return MP_STREAM_ERROR;
     }
-    *errcode = MP_EIO;
-    return MP_STREAM_ERROR;
+    raise_stream_ssl_error(self->ssl, rc);
 }
 
 static mp_uint_t ssl_socket_write(mp_obj_t self_in, const void *buf,
@@ -342,11 +396,10 @@ static mp_uint_t ssl_socket_write(mp_obj_t self_in, const void *buf,
     }
     int err = SSL_get_error(self->ssl, rc);
     if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        *errcode = MP_EAGAIN;
+        *errcode = ssl_stream_errcode(err);
         return MP_STREAM_ERROR;
     }
-    *errcode = MP_EIO;
-    return MP_STREAM_ERROR;
+    raise_stream_ssl_error(self->ssl, rc);
 }
 
 static mp_uint_t ssl_socket_ioctl(mp_obj_t self_in, mp_uint_t request,
@@ -408,6 +461,8 @@ static MP_DEFINE_CONST_OBJ_TYPE(
 static const mp_rom_map_elem_t ssl_context_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_load_verify_locations),
         MP_ROM_PTR(&ssl_context_load_verify_locations_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_default_verify_paths),
+        MP_ROM_PTR(&ssl_context_set_default_verify_paths_obj) },
     { MP_ROM_QSTR(MP_QSTR_wrap_socket),
         MP_ROM_PTR(&ssl_context_wrap_socket_obj) },
     { MP_ROM_QSTR(MP_QSTR_close),
