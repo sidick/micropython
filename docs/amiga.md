@@ -43,6 +43,7 @@ with file-system access, based on the `ports/minimal` template.
 | 31 | ASL file requester (`amiga.asl`) | ✅ |
 | 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | ✅ |
 | 33 | `platform.amiga_info()` + frozen `platform.py` | ✅ |
+| 34 | Frozen `os.py` extensions + AmigaOS-aware `os.path` | planned |
 
 ### Non-goals (initially)
 
@@ -1400,6 +1401,86 @@ Chip: 1856KB | Fast: 14336KB").
 Values reflect runtime AmigaOS state, not compile-time targeting:
 a `standard` (68020 / soft-float) binary running on a 68040
 reports `"68040"` / `"68040"` for `cpu()` / `fpu()`.
+
+---
+
+## Phase 34 — Frozen `os` extensions + AmigaOS-aware `os.path` (planned)
+
+Fill the remaining `os` / `os.path` gap that surfaces when comparing
+our port to OoZe1911's:
+
+```python
+import os
+os.makedirs("Work:scripts/sub/dir", exist_ok=True)
+for root, dirs, files in os.walk("Work:"):
+    print(root, len(files))
+os.chmod("DH0:foo", 0)              # AmigaDOS protection bits
+mask = os.getprotect("DH0:foo")     # readable / writable / archive / ...
+
+os.path.join("Work:", "scripts", "foo.py")   # 'Work:scripts/foo.py'
+os.path.abspath("foo.py")                    # uses cwd, knows about volumes
+os.path.isabs("Sys:Prefs")                   # True
+os.path.normpath("Work:scripts/../bin")      # 'Work:bin'
+```
+
+`extmod/modos.c` registers `os` as `MP_REGISTER_EXTENSIBLE_MODULE`, so
+a frozen `ports/amiga/modules/os.py` automatically merges into the C
+namespace: the C-side `chdir` / `getcwd` / `listdir` / `mkdir` /
+`remove` / `rename` / `rmdir` / `stat` / `statvfs` (plus our Phase 20
+`getenv` / `putenv` / `unsetenv`) stay live, and the frozen file adds
+the rest.
+
+### Scope
+
+- `os.chmod(path, mask)` and `os.getprotect(path)` as new C entries
+  on `modos.c`, backed by `SetProtection()` / `Examine()` from
+  `dos.library`. `mask` is the AmigaDOS bit set (`FIBF_*`), not a
+  Posix mode — the bits map one-to-one with the on-disk encoding so
+  round-tripping is lossless.
+- `FIBF_*` constants exposed on `os.*` for readability
+  (`FIBF_READ`, `FIBF_WRITE`, `FIBF_EXECUTE`, `FIBF_DELETE`,
+  `FIBF_ARCHIVE`, `FIBF_PURE`, `FIBF_SCRIPT`, `FIBF_HIDDEN`).
+- Frozen `os.py` adds pure-Python `makedirs(name, exist_ok=False)`
+  and `walk(top, topdown=True)` — same shapes as CPython, aware of
+  AmigaOS volume separators.
+- Frozen `_ospath.py` aliased as `os.path` providing
+  `join` / `split` / `splitext` / `basename` / `dirname` / `exists` /
+  `isfile` / `isdir` / `isabs` / `abspath` / `normpath`, all aware
+  of `Volume:dir/file` syntax (volume separator `:` once, dir
+  separator `/`).
+
+### Out of scope
+
+- Translating Posix mode bits to AmigaDOS bits for `chmod` —
+  ambiguous (no clean rwx ↔ rwed mapping). Users wanting Posix shape
+  call `chmod` with the AmigaDOS mask directly.
+- `os.path.expanduser` (no `~` concept on AmigaOS), `expandvars`
+  (would need to walk `dos.library GetVar` — separate phase if
+  needed)
+- `os.walk` follow-symlinks / on-error callback — keep minimal
+  shape; users can wrap if needed
+- Full CPython `os.path` parity (`commonpath`, `relpath`, etc.)
+  — easy to add later if a real call site needs them
+
+### Dependencies
+
+- `dos.library` (already opened for Phase 20+); `SetProtection` /
+  `Examine` are existing entry points
+
+### Files
+
+```
+ports/amiga/modos.c                     — chmod + getprotect C entries
+                                          + FIBF_* constants
+ports/amiga/modules/os.py               — frozen extension (makedirs,
+                                          walk, `import _ospath as path`)
+ports/amiga/modules/_ospath.py          — frozen AmigaOS-aware path
+                                          helpers
+tests/amiga/test_os_smoke.py            — vamos smoke
+docs/phase34-os-path-plan.md            — step plan
+```
+
+Variants: all three.
 
 ---
 
