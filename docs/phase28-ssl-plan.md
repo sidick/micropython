@@ -212,24 +212,46 @@ of HTML, clean shutdown. The pure-protocol pipeline works.
 
 ### Known limitation — TLS 1.3 against modern CDNs
 
-Tests against Cloudflare-fronted (`www.example.com`) and
-GitHub (`api.github.com`) endpoints complete the TLS 1.3 handshake
-(`CERT_REQUIRED` validation passes — the chain is verified) but
-the immediate post-handshake `SSL_write` returns EPIPE / broken
-pipe with no bytes sent. Forcing TLS 1.2 via
-`SSL_CTX_set_max_proto_version` doesn't help: those servers reject
-TLS 1.2 outright. `www.python.org` (which still negotiates TLS 1.2
-by default) works in both modes.
+Cloudflare-fronted (`www.example.com`) and GitHub
+(`api.github.com`) endpoints complete the TLS 1.3 handshake
+(`CERT_REQUIRED` validation passes — the chain is verified, with
+all four certs `verify return:1`) but the connection then dies
+before any application data can be written: OpenSSL reports
+"CONNECTION CLOSED BY SERVER" followed by
+`tls_retry_write_records:Broken pipe`
+(`ssl/record/methods/tls_common.c:1949`). The underlying socket
+recv returns errno 54 (`ECONNRESET`).
 
-The failure mode strongly suggests AmiSSL's post-handshake state
-isn't fully ready for `SSL_write` when the server sends a
-NewSessionTicket immediately after the Finished message. The
-upstream OpenSSL example (`test/https.c`) calls
-`SSL_get_peer_certificate` etc. between handshake and write — that
-extra dance may be load-bearing on AmigaOS.
+**Confirmed reproducible with AmiSSL's own `openssl s_client`** —
+this is not in our MicroPython wrapper. From an AmigaShell:
 
-Tracked as a Phase 28 follow-up. The MicroPython glue is correct;
-the bug is below our layer.
+```
+1> AmiSSL:OpenSSL s_client -connect www.example.com:443 \
+       -servername www.example.com -CApath AmiSSL:certs -brief
+... TLS 1.3 handshake completes, Verification: OK ...
+CONNECTION CLOSED BY SERVER
+tls_retry_write_records:Broken pipe ... tls_common.c:1949
+```
+
+The same trace appears against `api.github.com`. Workarounds
+attempted via `s_client`:
+
+| Attempt | Result |
+|---|---|
+| `-groups X25519` (classic, no MLKEM) | same close-after-handshake |
+| `-no_ticket` (disable session tickets) | same close-after-handshake |
+| `-tls1_2` (force TLS 1.2) | server rejects ClientHello: `unexpected eof while reading` |
+
+`www.python.org` (a direct origin that still negotiates TLS 1.2
+or TLS 1.3 without strict-fronting heuristics) handshakes,
+writes, and reads cleanly from both our wrapper and `s_client`,
+which is what the Step 4 end-to-end verification used.
+
+The pattern points to **AmiSSL's TLS 1.3 ClientHello / handshake
+producing a fingerprint that modern fronts choose not to talk to
+post-handshake.** It is below the MicroPython layer; we have no
+visible knob that helps. Reported upstream; not a Phase 28
+blocker.
 
 ### Cert path gotcha
 
