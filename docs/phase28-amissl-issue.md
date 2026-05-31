@@ -151,6 +151,28 @@ log the OpenSSL `SSL_CTX` options/cipher list/sigalgs after
 `amiga_ssl_open()` returns, and diff. Whatever differs is a good
 candidate for the actual trigger.
 
+### Independent corroboration from the UHC tools changelog
+
+The UHC tools changelog at <http://uhc.a1k.org/uhctools_log>
+records explicit prior-art evidence that the v5 API path has
+practical problems, from the `aget` maintainer:
+
+```
+2026-02-06 - New aget 0.95 - fix v4 AmiSSL preference, now it works :)
+2026-02-06 - New aget 0.94 - prefer v4 in multi version AmiSSL install
+             as it does SSL/TLS connect in half the time compared to v5
+2026-02-06 - New aget 0.93 - much better AmiSSL error messages
+2026-02-03 - New aget 0.92 - 68k ver with increased stack to handle AmiSSL 5.20+
+```
+
+So the aget author deliberately picks v4 even when v5 is also
+installed, because v5 is roughly **2× slower** for the SSL/TLS
+connect step. Our findings (Cloudflare close-after-handshake on
+v5 path, clean connect on v4 path) line up with that — it's not
+just a Cloudflare-specific quirk, the v5 path has been
+underperforming the v4 path on AmigaOS for at least the last
+few months.
+
 ### Working comparison
 
 Same `s_client` invocation against `www.python.org:443` completes
