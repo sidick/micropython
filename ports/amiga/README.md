@@ -133,6 +133,10 @@ convention for "documentation, edit to enable") plus an active
 - `SCRIPT=<path>` — Python script to execute on launch.
 - `HEAP=<bytes>` — initial garbage-collected heap size.
 - `MAXHEAP=<bytes>` — upper bound for dynamic heap growth.
+- `CON=<spec>` — override the console window opened on Workbench
+  launch. Default is `CON:0/30/640/200/MicroPython/AUTO/CLOSE`;
+  replace `AUTO/CLOSE` with `AUTO/CLOSE/WAIT` for one-shot SCRIPT=
+  use so the window stays open after the script exits.
 
 `tools/amiga-make-icon.py` regenerates the icon from
 `logo/1bit-logo.png` if you want to tweak the defaults.

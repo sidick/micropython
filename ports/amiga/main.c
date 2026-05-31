@@ -381,20 +381,36 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     // sm_ArgList[0] is the tool itself (the icon the user double-clicked);
     // its wa_Lock is already our pr_CurrentDir thanks to Workbench's
     // pre-launch CurrentDir setup, so wa_Name resolves correctly.
+    // Default CON: spec is `AUTO/CLOSE` -- defer window open until
+    // first I/O (AUTO), give it a close gadget (CLOSE), no WAIT so
+    // exit() dismisses the window immediately. The icon's CON=
+    // tooltype overrides this if the caller wants a different
+    // geometry, title, or to put WAIT back for batch-script use.
+    static const char *con_default =
+        "CON:0/30/640/200/MicroPython/AUTO/CLOSE";
+    const char *con_spec = con_default;
     const char *wb_tt_script = NULL;
     if (_WBenchMsg != NULL) {
-        // CON: spec is `AUTO/CLOSE` -- defer window open until first
-        // I/O (AUTO), give it a close gadget (CLOSE), but no WAIT so
-        // exit() dismisses the window immediately. WAIT would keep
-        // the window open after our Close() call until the user
-        // clicks the close gadget, which is the standard convention
-        // for one-shot CLI tools but wrong for an interactive REPL
-        // where the user typed exit() *because* they're done.
-        // Script-launched SCRIPT= callers who want pause-on-exit can
-        // end their script with input("press enter").
-        amiga_wb_console = Open(
-            (STRPTR)"CON:0/30/640/200/MicroPython/AUTO/CLOSE",
-            MODE_NEWFILE);
+        // Read the icon first so SCRIPT= / CON= are available before
+        // we open the console. GetDiskObject finds <wa_Name>.info
+        // relative to the current directory; wa_Lock points at the
+        // directory holding the icon and Workbench has already
+        // CurrentDir'd us there.
+        if (_WBenchMsg->sm_NumArgs > 0 && amiga_icon_open()) {
+            amiga_wb_diskobject = GetDiskObject(_WBenchMsg->sm_ArgList[0].wa_Name);
+            if (amiga_wb_diskobject != NULL && amiga_wb_diskobject->do_ToolTypes != NULL) {
+                wb_tt_script = (const char *)FindToolType(
+                    (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes,
+                    (CONST_STRPTR)"SCRIPT");
+                const char *con_tt = (const char *)FindToolType(
+                    (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes,
+                    (CONST_STRPTR)"CON");
+                if (con_tt != NULL && con_tt[0] != '\0') {
+                    con_spec = con_tt;
+                }
+            }
+        }
+        amiga_wb_console = Open((STRPTR)con_spec, MODE_NEWFILE);
         if (amiga_wb_console) {
             struct Process *me = (struct Process *)FindTask(NULL);
             me->pr_CIS = amiga_wb_console;
@@ -403,17 +419,6 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             // SetMode() path; point it at the new console's underlying task.
             struct FileHandle *fh = (struct FileHandle *)BADDR(amiga_wb_console);
             me->pr_ConsoleTask = (APTR)fh->fh_Type;
-        }
-        if (_WBenchMsg->sm_NumArgs > 0 && amiga_icon_open()) {
-            // GetDiskObject finds <wa_Name>.info relative to the current
-            // directory. wa_Lock points at the directory holding the icon
-            // and Workbench has already CurrentDir'd us there.
-            amiga_wb_diskobject = GetDiskObject(_WBenchMsg->sm_ArgList[0].wa_Name);
-            if (amiga_wb_diskobject != NULL && amiga_wb_diskobject->do_ToolTypes != NULL) {
-                wb_tt_script = (const char *)FindToolType(
-                    (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes,
-                    (CONST_STRPTR)"SCRIPT");
-            }
         }
     }
 
