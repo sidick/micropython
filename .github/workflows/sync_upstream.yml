@@ -34,10 +34,10 @@ jobs:
           # it needs to evaluate.
           fetch-depth: 0
 
-      - name: Fetch upstream master and tags
+      - name: Fetch upstream master
         run: |
           git remote add upstream https://github.com/micropython/micropython.git
-          git fetch upstream master --tags
+          git fetch upstream master
 
       - name: Fast-forward and push
         run: |
@@ -46,18 +46,19 @@ jobs:
           upstream_sha="$(git rev-parse upstream/master)"
           if [ "$local_sha" = "$upstream_sha" ]; then
             echo "Already up to date with upstream/master ($upstream_sha)."
-          else
-            # Refuse to clobber local commits. Fast-forward only.
-            if ! git merge-base --is-ancestor "$local_sha" "$upstream_sha"; then
-              echo "ERROR: fork master ($local_sha) has commits not present"
-              echo "in upstream/master ($upstream_sha). Refusing to overwrite."
-              echo "Resolve manually (rebase / reset / merge) and re-run."
-              exit 1
-            fi
-            git merge --ff-only upstream/master
-            git push origin master
+            exit 0
           fi
-          # Push any new tags. GitHub refuses to move existing tags by
-          # default so this only adds (e.g. new release tags); upstream
-          # rewriting a tag would need a force push which we don't do.
-          git push origin --tags
+          # Refuse to clobber local commits. Fast-forward only.
+          if ! git merge-base --is-ancestor "$local_sha" "$upstream_sha"; then
+            echo "ERROR: fork master ($local_sha) has commits not present"
+            echo "in upstream/master ($upstream_sha). Refusing to overwrite."
+            echo "Resolve manually (rebase / reset / merge) and re-run."
+            exit 1
+          fi
+          git merge --ff-only upstream/master
+          git push origin master
+          # Tags are NOT pushed: upstream release tags touch
+          # .github/workflows/*.yml files, and the default GITHUB_TOKEN
+          # lacks the `workflow` scope needed to push those refs.
+          # Fetch them locally with `git fetch upstream --tags` if
+          # you need a specific release.
