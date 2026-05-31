@@ -53,9 +53,53 @@ with file-system access, based on the `ports/minimal` template.
   requesters only; arbitrary window/widget surfaces stay out of scope
 - 68000 alignment-safe build — target 68020+ first
 
----
+### Surface-compatibility policy with other Amiga Python ports
 
-## Technical Context
+Two other Python-on-Amiga efforts exist and surface in design
+conversations:
+
+- **OoZe1911/micropython-amiga-port** — a parallel MicroPython
+  AmigaOS 3.x port. Different deltas (depth of `amiga.*` C
+  surface, the Phase 5 native emitter, three-variant CPU/FP
+  matrix, dynamic heap, the library proxy + `.fd` trampoline)
+  but a converging top-level shape (`amiga.intuition`,
+  `amiga.asl`, `urequests`, `platform`, ARexx surface).
+- **OS4 Python** — a port of *CPython 2.x* to AmigaOS 4 /
+  PowerPC. Six Amiga-specific module names documented on
+  [wiki.amigaos.net](https://wiki.amigaos.net/wiki/AmigaOS_Manual:_Python_Modules_and_Packages):
+  `amiga`, `arexx`, `asl`, `catalog`, `icon`, `installer`.
+
+**Policy: surface-compatible where it's cheap, not byte-compatible.**
+
+- Match their **module names** (`amiga.intuition`, `amiga.asl`,
+  `amiga.icon`, `amiga.catalog`, etc.) so users moving scripts
+  between ports find familiar import paths.
+- Match their **function signatures** where the underlying
+  AmigaOS API fits cleanly. Phases 30–36 mirror OoZe / OS4
+  shapes deliberately.
+- Where their choice doesn't fit OS3 / Python 3 / MicroPython
+  (Posix-style `chmod` translation in Phase 34; OS4-interface-
+  based library calls; CPython-2 stdlib expectations), pick the
+  shape that fits **our** target and document the divergence in
+  the per-phase out-of-scope list.
+
+**Don't promise true compatibility:**
+
+- OS4 Python is CPython 2.x with the full CPython stdlib and
+  C-extension ecosystem. We're MicroPython on OS3 / 68k. Any
+  non-trivial OS4 Python script will hit Python-2 idioms or
+  stdlib modules we can't ship; mirroring AmigaOS-specific module
+  names doesn't change that.
+- OoZe1911 has feature deltas we've deliberately chosen not to
+  match (`smtplib` + `email` module, OS-side path conventions
+  baked deeper than ours). When their choice is reasonable, we
+  copy. When ours is materially better (the library proxy, native
+  emitter, timer-backed timing), we keep ours.
+
+The win from surface-compat is *low friction* — someone with an
+`import amiga.icon; icon.read(...)` script from OS4 has a chance
+of running it without edits. The win from *not* over-committing
+is avoiding broken promises about strict portability.
 
 ### CPU and ABI
 
