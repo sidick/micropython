@@ -772,7 +772,23 @@ int main(int argc_unused, char **argv_unused) {
         BPTR stdin_fh = Input();
         SetMode(stdin_fh, 1);
         #if MICROPY_ENABLE_COMPILER
-        pyexec_friendly_repl();
+        // pyexec_friendly_repl returns 0 when the user hits Ctrl-A to
+        // switch to raw REPL (pyexec_mode_kind is now RAW_REPL); only a
+        // forced exit (Ctrl-D or sys.exit) returns non-zero. Loop on the
+        // pair so Ctrl-A actually switches modes instead of dropping
+        // the user back to the AmigaShell -- matches the ports/unix
+        // pattern.
+        for (;;) {
+            int r;
+            if (pyexec_mode_kind == PYEXEC_MODE_RAW_REPL) {
+                r = pyexec_raw_repl();
+            } else {
+                r = pyexec_friendly_repl();
+            }
+            if (r != 0) {
+                break;
+            }
+        }
         #endif
         // Restore cooked mode before returning to the CLI.
         SetMode(stdin_fh, 0);
