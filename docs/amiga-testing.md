@@ -364,17 +364,18 @@ For end-to-end visual confirmation under Amiberry, from the REPL:
 >>> from amiga import intuition
 >>> intuition.easy_request("Title", "Pick one.\nMulti-line works.",
 ...                        ["Apple", "Banana", "Cancel"])
-# requester pops on Workbench; left → 0, middle → 1, right → 2
+# requester pops; left → 0, middle → 1, right → 2
 >>> intuition.auto_request("Replace existing file?")
 # returns True for Yes, False for No
 >>> intuition.message("Done.")
 # single-button requester; clicking OK returns None
 ```
 
-If Workbench is closed when the call is made, the open of
-`intuition.library` still succeeds but the requester can't render on
-any public screen; `EasyRequestArgs` returns `-1` and the module
-raises `OSError(EIO)`. Re-opening Workbench fixes it.
+`intuition.library` opens its own screen if no public screen is
+already up, so the requester appears regardless of whether
+Workbench is loaded. `OSError(EIO)` is reserved for the rare case
+where `EasyRequestArgs` returns `-1` (genuine intuition-side
+failure, not a missing screen).
 
 ---
 
