@@ -352,7 +352,7 @@ pass.
 
 ### Intuition requester dialogs (Phase 30)
 
-`tests/amiga/test_intuition_smoke.py` covers the module-registration
+`tests/ports/amiga/test_intuition_smoke.py` covers the module-registration
 and argument-validation surface; it runs under vamos and prints `OK`
 on success. The actual modal dialog can't be tested headlessly —
 vamos's `intuition.library` stub is a no-op print, and the requester
@@ -379,7 +379,7 @@ failure, not a missing screen).
 
 ### ASL file requester (Phase 31)
 
-`tests/amiga/test_asl_smoke.py` covers the module-registration,
+`tests/ports/amiga/test_asl_smoke.py` covers the module-registration,
 arg-shape validation, and the `multi=True` + `save=True`
 ValueError guard; it runs under vamos and prints `OK` on success.
 The actual file-pick dialog needs Amiberry or real hardware.
@@ -409,7 +409,7 @@ the dialog works even from a default-stack shell prompt — no
 
 ### ARexx polish (Phase 32)
 
-`tests/amiga/test_rexx_polish.py` covers the C-primitive +
+`tests/ports/amiga/test_rexx_polish.py` covers the C-primitive +
 Python-facade surface area; it runs under vamos and prints `OK`.
 Real driving of an ARexx host needs `rexxsyslib.library` and a
 running peer, so it lives under Amiberry / real hardware.
@@ -442,7 +442,7 @@ shape for single sends.
 
 ### Platform identity (Phase 33)
 
-`tests/amiga/test_platform_smoke.py` covers the CPython-shaped
+`tests/ports/amiga/test_platform_smoke.py` covers the CPython-shaped
 `platform` surface plus the underlying `amiga.*` accessors; it
 runs under vamos. `platform.amiga_info()` and `amiga.chipset()`
 need `graphics.library` (not stubbed by vamos) and are skipped
@@ -463,6 +463,48 @@ The CPU and FPU strings reflect runtime AmigaOS state -- a
 68040 reports `'68040'` / `'68040'`, not the compile-time target.
 Memory values are *currently free* bytes (`AvailMem(MEMF_*)`),
 not total installed.
+
+### Icon manipulation (Phase 35)
+
+`tests/ports/amiga/test_icon_smoke.py` covers the `_icon` module
+registration, all `WB*` constants, the error paths (missing path,
+non-DiskObject to `write`, unknown type code to `new`, non-dict
+`tooltypes` kwarg), and -- when the host can satisfy
+`GetDefDiskObject` (i.e. `ENV:sys/def_project.info` is reachable) --
+a full `new()` → mutate → `write()` → `read()` round trip against
+`RAM:`. Vamos soft-passes the round trip when `ENV:sys` defaults
+aren't available; Amiberry exercises it end-to-end.
+
+For interactive REPL confirmation under Amiberry:
+
+```python
+>>> from amiga import icon
+>>> d = icon.read("SYS:Prefs")
+>>> d.type, d.current_x, d.current_y
+('drawer', 80, 24)
+>>> list(d.tooltypes)
+['SHOW=ICONS']
+>>> d.close()
+>>>
+>>> new = icon.new(
+...     icon.WBPROJECT,
+...     default_tool="C:Ed",
+...     stack_size=8192,
+...     tooltypes={"WINDOW": "CON:0/0/640/256/Test", "FLAG": None},
+... )
+>>> icon.write("RAM:test", new)
+>>> new.close()
+>>> back = icon.read("RAM:test")
+>>> back.default_tool, back.stack_size
+('C:Ed', 8192)
+>>> back.tooltypes["FLAG"]
+b''
+>>> back.close()
+```
+
+Tooltype values come back as `bytes` (the AmigaOS on-disk
+representation), assignments accept `str` / `bytes` / `None`
+(None ⇒ flag-style entry, no `=` separator).
 
 ---
 

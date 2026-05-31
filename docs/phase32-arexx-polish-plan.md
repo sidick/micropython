@@ -242,7 +242,7 @@ faster than 100 calls through `amiga.rexx_send`.
   registration.
 - `docs/amiga-testing.md` gains an ARexx-polish subsection under
   Amiberry, with the `RexxClient` REPL example.
-- `tests/amiga/test_rexx_polish.py` — vamos-runnable:
+- `tests/ports/amiga/test_rexx_polish.py` — vamos-runnable:
   - `amiga.rexx_exists("nonsense_no_such_port")` returns `False`
   - `amiga.rexx_list()` returns a `list[str]`
   - `RexxClient` instantiates, has `.send` / `.close` / `__enter__`

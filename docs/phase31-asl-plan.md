@@ -200,7 +200,7 @@ convention from Phases 17 and 30.
 - `docs/amiga-testing.md` gains an ASL subsection under the
   Amiberry runner: interactive-only verification with REPL snippets
   for save / multi / drawers_only.
-- `tests/amiga/test_asl_smoke.py` — argument-validation +
+- `tests/ports/amiga/test_asl_smoke.py` — argument-validation +
   module-alias chain test, runnable under vamos. Covers:
   - `_asl is amiga.asl`
   - `multi=True` + `save=True` raises `ValueError`
