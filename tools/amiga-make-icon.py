@@ -267,6 +267,12 @@ def main():
         # scripts; uncomment and edit to tune.
         "(HEAP=131072)",
         "(MAXHEAP=8388608)",
+        # CON= overrides the console window the binary opens on
+        # Workbench launch. Default is the value below minus the
+        # parentheses; replace AUTO/CLOSE with AUTO/CLOSE/WAIT to
+        # keep the window open after exit() (useful for one-shot
+        # SCRIPT= scripts whose output would otherwise flash by).
+        "(CON=CON:0/30/640/200/MicroPython/AUTO/CLOSE)",
         # DONOTWAIT keeps the launcher from blocking on this icon.
         "DONOTWAIT",
     ]
