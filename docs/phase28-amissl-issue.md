@@ -1,8 +1,11 @@
-# Draft issue for the AmiSSL repo
+# AmiSSL TLS 1.3 close-after-handshake against Cloudflare
 
-To be filed at <https://github.com/jens-maus/amissl/issues>. This file
-exists to keep the diagnostic + draft alongside the rest of the
-Phase 28 paper trail; once filed, link the GitHub issue number here.
+Filed: <https://github.com/jens-maus/amissl/issues/111> (2026-05-31).
+
+This file keeps the full diagnostic + reproduction recipe alongside
+the rest of the Phase 28 paper trail so the work doesn't have to be
+re-derived if the GitHub issue is closed or migrates. Mirror updates
+to both places when material new evidence comes in.
 
 ---
 
