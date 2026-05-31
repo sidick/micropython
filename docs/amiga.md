@@ -41,7 +41,7 @@ with file-system access, based on the `ports/minimal` template.
 | 29 | `urequests` frozen HTTP/HTTPS client | ✅ |
 | 30 | Intuition requester dialogs (`amiga.intuition`) | ✅ |
 | 31 | ASL file requester (`amiga.asl`) | ✅ |
-| 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | planned |
+| 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | ✅ |
 | 33 | `platform.amiga_info()` + frozen `platform.py` | planned |
 
 ### Non-goals (initially)
@@ -1243,7 +1243,7 @@ surfaces) to comfortably accommodate long-name filesystems
 
 ---
 
-## Phase 32 — ARexx polish (planned)
+## Phase 32 — ARexx polish ✅
 
 Three additions to the existing ARexx surface (`amiga.rexx_send`,
 `amiga.rexx_open`/`recv`/`reply` from Phase 18):
@@ -1298,14 +1298,35 @@ with amiga.RexxClient("DOPUS.1") as ib:
 ### Files
 
 ```
-ports/amiga/modamiga.c                  — three new C entries +
-                                          RexxClient instance type
-ports/amiga/modules/amiga.py            — `RexxClient` Python facade
+ports/amiga/modamiga.c                  — five new C entries
+                                          (rexx_exists, rexx_list,
+                                          rexx_client_open/close/send)
+ports/amiga/modules/amiga.py            — RexxClient Python facade
 tests/amiga/test_rexx_polish.py         — vamos arg-shape smoke
 docs/phase32-arexx-polish-plan.md       — step plan
 ```
 
-Variants: all three. Trivial size cost.
+Variants: all three. ~1.4 KB text per variant.
+
+### Status — done
+
+Five new entry points alongside the Phase 18 ARexx surface:
+
+| Entry                                | Returns      |
+|--------------------------------------|--------------|
+| `amiga.rexx_exists(name)`            | `bool` (Forbid-fenced FindPort) |
+| `amiga.rexx_list()`                  | `list[str]` (Forbid-fenced walk of `SysBase->PortList`) |
+| `amiga.RexxClient(host)`             | persistent client; `.send(cmd, check=True)`, context manager, `__del__` cleanup |
+| `amiga.rexx_client_open` / `_close` / `_send` | low-level primitives that back the class |
+
+The class's reply `MsgPort` is registered in a 16-slot static
+chain at construction. `amiga_rexx_shutdown` (already wired into
+`main.c`'s cleanup path) walks the chain on process exit and
+`DeleteMsgPort`s anything still live, so a script that forgot
+`close()` doesn't leak the port. The send body was factored out
+of `amiga_rexx_send_fn` into `amiga_rexx_send_via_port` so the
+one-shot and persistent paths share the wire format / Ctrl+C
+latch / argstring handling.
 
 ---
 

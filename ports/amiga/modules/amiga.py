@@ -762,6 +762,80 @@ def rexx(host, command, check=True):
     return (rc, result)
 
 
+class RexxClient:
+    """Persistent ARexx client.
+
+    Holds an open reply MsgPort across many sends, avoiding the
+    `CreateMsgPort` / `DeleteMsgPort` cost the one-shot `amiga.rexx`
+    helper pays per call.  Use when driving a host (DOpus, IBrowse,
+    YAM, ...) in a tight loop.  For a single send the one-shot helper
+    is enough.
+
+        with amiga.RexxClient("DOPUS.1") as ib:
+            ib.send("LISTER NEW")
+            rc, path = ib.send("LISTER QUERY 1 PATH", check=False)
+
+    `command` may be `str` (latin-1 encoded for you) or `bytes`.
+    `check=True` (default) returns the host's result-bytes on rc==0
+    and raises `OSError` otherwise -- matches `amiga.rexx`.
+    `check=False` returns `(rc, result_or_None)`.
+
+    Ctrl-C during a send is *latched* until the reply lands -- the
+    same defer that `amiga.rexx_send` uses, because abandoning the
+    wait mid-flight would have the host `PutMsg` into a freed reply
+    port.  Most hosts reply within milliseconds.
+
+    Forgotten `close()`s are picked up by the at-exit cleanup chain
+    in `amiga_rexx_shutdown` so the MsgPort doesn't leak on process
+    exit.
+    """
+
+    __slots__ = ("_host", "_handle")
+
+    def __init__(self, host):
+        self._host = host
+        self._handle = _c.rexx_client_open()
+
+    @property
+    def host(self):
+        return self._host
+
+    def send(self, command, check=True):
+        if not self._handle:
+            raise ValueError("RexxClient: closed")
+        if isinstance(command, str):
+            command = command.encode("latin-1")
+        rc, result = _c.rexx_client_send(self._handle, self._host, command)
+        if check and rc != 0:
+            raise OSError(rc,
+                "rexx %r at %s rc=%d" % (command, self._host, rc))
+        if check:
+            return result if result is not None else b""
+        return (rc, result)
+
+    def close(self):
+        if self._handle:
+            _c.rexx_client_close(self._handle)
+            self._handle = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __repr__(self):
+        state = "closed" if not self._handle else "open"
+        return "<RexxClient host=%r %s>" % (self._host, state)
+
+
 def rexx_serve(handler, timeout_ms=None):
     """Run a small dispatcher loop on the open port.
 
