@@ -36,12 +36,6 @@ jobs:
       - name: Confirm toolchain
         run: m68k-amigaos-gcc --version
 
-      - name: Init required submodules
-        # The port's manifest.py only freezes ports/amiga/modules, but the
-        # frozen-content build rule unconditionally checks for
-        # lib/micropython-lib/README.md whenever FROZEN_MANIFEST is set.
-        run: make -C ports/amiga submodules
-
       - name: Cache AmiSSL SDK
         # The fetcher pins the version; key on the version string baked
         # into the script so a version bump automatically invalidates
@@ -53,11 +47,18 @@ jobs:
 
       - name: Fetch AmiSSL SDK
         # Idempotent. Downloads on cache miss, ~0.25 s short-circuit
-        # on cache hit. Phase 28 code consumes the headers + stubs;
-        # earlier variants don't, but the fetcher still runs to keep
-        # the cache warm. Default cache dir is $HOME/.cache/amissl-sdk
-        # which matches the actions/cache path above.
+        # on cache hit. Must run BEFORE 'make submodules' because the
+        # Makefile's MICROPY_PY_AMIGA_SSL=1 guard fires on every make
+        # invocation, including the submodule sub-target. Default cache
+        # dir is $HOME/.cache/amissl-sdk which matches the actions/cache
+        # path above.
         run: tools/amiga-fetch-amissl-sdk.sh
+
+      - name: Init required submodules
+        # The port's manifest.py only freezes ports/amiga/modules, but the
+        # frozen-content build rule unconditionally checks for
+        # lib/micropython-lib/README.md whenever FROZEN_MANIFEST is set.
+        run: make -C ports/amiga submodules
 
       - name: Build mpy-cross
         run: make -C mpy-cross -j$(nproc)
