@@ -199,11 +199,11 @@ Size cost: ~1.5 KB text.
   matches the design intent ("modal only"). If a future caller
   wants non-blocking, that needs `BuildEasyRequestArgs` +
   `SysReqHandler` — separate phase.
-- **Workbench dependency.** The requester pops on the default
-  public screen, which is normally the Workbench screen. If the
-  user has explicitly closed Workbench (rare, but possible on
-  custom boots), the requester open will fail — surface as
-  `OSError`. Document in the cross-port test plan.
+- **Screen independence.** `intuition.library` renders on the
+  default public screen if one is up, and opens its own if not —
+  so the requester appears regardless of whether Workbench is
+  loaded. `OSError(EIO)` only fires if `EasyRequestArgs` itself
+  returns `-1` (genuine intuition-side failure, very rare).
 - **Latin-1 codec choice.** AmigaOS's stock Topaz font and the
   console driver are largely CP1252-compatible for the printable
   range; treating Python strings as Latin-1 covers

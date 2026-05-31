@@ -1150,8 +1150,10 @@ than interpreted as a printf directive.
 
 Vamos has a no-op `EasyRequest` stub — useful for confirming the call
 threads through cleanly but not for end-to-end visual checks. Those
-need Amiberry or real hardware (the requester pops on the default
-public screen, normally Workbench).
+need Amiberry or real hardware. Verified working under Amiberry
+2026-05-31; intuition.library opens its own screen if no public
+screen is currently up, so the requester appears regardless of
+whether Workbench is loaded.
 
 ---
 
