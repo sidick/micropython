@@ -84,8 +84,12 @@ is paperwork.
     picked, FALSE if cancelled).
   - On TRUE: walk `req->ifr_Drawer` + `req->ifr_File`, join via
     `AddPart(buf, drawer, sizeof buf)` then
-    `AddPart(buf, file, sizeof buf)`. Buffer is 512 bytes — same
-    sizing as `amiga.match` uses for `AnchorPath` paths.
+    `AddPart(buf, file, sizeof buf)`. Buffer is **1024 bytes** —
+    larger than the 512 used by `amiga.match` / WBStartup-arg
+    handling, because long-name filesystems (SFS / PFS3 / FFS2)
+    allow ~105-byte filenames per component, so a deeply-nested
+    path can plausibly exceed 512. 1024 covers the worst case
+    with comfortable headroom and the stack cost is negligible.
   - Return `mp_obj_new_str(buf, strlen(buf))`.
   - On FALSE: return `mp_const_none`.
   - Always `FreeAslRequest(req)` in a clean-up path.
@@ -233,10 +237,13 @@ cost: ~2 KB text.
 - **Latin-1 codec for strings.** Same rationale as Phase 30
   (AmigaOS Topaz is CP1252-ish). Filenames with non-ASCII bytes
   pass through as-is.
-- **Pre-allocated 512-byte path buffers.** Long enough for the
-  deepest practical AmigaOS path. `AddPart` truncates safely on
-  overflow; we treat that as the caller's problem and don't
-  pre-validate.
+- **Pre-allocated 1024-byte path buffers.** Long-name filesystems
+  (SFS, PFS3, FFS2) allow ~105-byte filenames per component, so a
+  deeply-nested path on a modern volume can plausibly approach
+  500+ bytes. 1024 covers that with headroom; stack cost is
+  negligible. `AddPart` truncates safely on overflow if the
+  caller does somehow exceed it, and we treat that overflow as
+  the caller's problem (no pre-validation).
 - **Memory lifecycle.** `AllocAslRequestTags` returns a request
   struct that must be `FreeAslRequest`'d. Tag and string buffers
   are caller-owned stack memory; ASL copies what it needs during
