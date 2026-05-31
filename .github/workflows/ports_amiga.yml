@@ -79,23 +79,38 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Stage artifacts
+        # Build each variant's release directory next to the binary:
+        # the WBTOOL icon ships alongside `micropython`, and the
+        # WBPROJECT icon goes under `icons/` for users to copy
+        # next to their `.py` files (renamed `*.py.info`).
+        run: |
+          set -e
+          for v in standard 68020fpu 68040; do
+            mkdir -p artifacts/$v/icons
+            cp ports/amiga/build-$v/micropython artifacts/$v/
+            cp ports/amiga/micropython.info    artifacts/$v/
+            cp ports/amiga/python_script.info  artifacts/$v/icons/
+          done
+          ls -la artifacts/*/
+
       - name: Upload standard
         uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-standard/micropython
+          path: artifacts/standard/
           if-no-files-found: error
 
       - name: Upload 68020fpu
         uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-68020fpu-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-68020fpu/micropython
+          path: artifacts/68020fpu/
           if-no-files-found: error
 
       - name: Upload 68040
         uses: actions/upload-artifact@v7
         with:
           name: micropython-amiga-68040-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-68040/micropython
+          path: artifacts/68040/
           if-no-files-found: error
