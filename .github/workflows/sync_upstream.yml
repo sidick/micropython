@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork master
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           # Full history so the fast-forward merge has the ancestry
