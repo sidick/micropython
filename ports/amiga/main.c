@@ -383,8 +383,17 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     // pre-launch CurrentDir setup, so wa_Name resolves correctly.
     const char *wb_tt_script = NULL;
     if (_WBenchMsg != NULL) {
+        // CON: spec is `AUTO/CLOSE` -- defer window open until first
+        // I/O (AUTO), give it a close gadget (CLOSE), but no WAIT so
+        // exit() dismisses the window immediately. WAIT would keep
+        // the window open after our Close() call until the user
+        // clicks the close gadget, which is the standard convention
+        // for one-shot CLI tools but wrong for an interactive REPL
+        // where the user typed exit() *because* they're done.
+        // Script-launched SCRIPT= callers who want pause-on-exit can
+        // end their script with input("press enter").
         amiga_wb_console = Open(
-            (STRPTR)"CON:0/30/640/200/MicroPython/AUTO/CLOSE/WAIT",
+            (STRPTR)"CON:0/30/640/200/MicroPython/AUTO/CLOSE",
             MODE_NEWFILE);
         if (amiga_wb_console) {
             struct Process *me = (struct Process *)FindTask(NULL);
