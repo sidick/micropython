@@ -49,7 +49,7 @@ Step 1: single-pick file_request → Step 2: save / drawers_only / multi
 | # | Step | Output | On-target smoke |
 |---|------|--------|-----------------|
 | **1** | `modasl.c` opens `asl.library` lazily, exposes `file_request(title, initial_drawer, initial_file, pattern)` — single-pick, no flags. Latin-1 codec on the strings; `AddPart()` to join drawer + file into the full path. Returns `str` or `None`. | New `_asl` C module wired into the build, registered with `MP_REGISTER_MODULE(MP_QSTR__asl, ...)`. | A no-arg `file_request()` under Amiberry — confirms the dialog renders, the OK path returns a path, Cancel returns None. |
-| **2** | Add `save=False` (ASLFR_DoSaveMode), `drawers_only=False` (ASLFR_DrawersOnly), `multi=False` (ASLFR_DoMultiSelect). multi changes the return type to `list[str]`; iterate `ifr_ArgList` joining each entry against `ifr_Drawer` with `AddPart`. | Same C file extended; `amiga.py` adds `import _asl as asl`. | Save dialog (`save=True` + `initial_file="foo.txt"`) and a `multi=True` pick under Amiberry. |
+| **2** | Add `save=False` (ASLFR_DoSaveMode), `drawers_only=False` (ASLFR_DrawersOnly), `multi=False` (ASLFR_DoMultiSelect). multi changes the return type to `list[str]`; iterate `fr_ArgList` joining each entry against `fr_Drawer` with `AddPart`. | Same C file extended; `amiga.py` adds `import _asl as asl`. | Save dialog (`save=True` + `initial_file="foo.txt"`) and a `multi=True` pick under Amiberry. |
 | **3** | Docs flip, manifest verification, arg-shape tests. | `docs/amiga.md` Phase 31 → ✅, `docs/amiga-testing.md` gains a short ASL subsection. | vamos-runnable arg-shape / module-alias test; Amiberry visual confirmation noted as interactive. |
 
 Each step is small (~80 LOC C + a one-line Python alias). Step 3
@@ -82,7 +82,7 @@ is paperwork.
     a `struct FileRequester *` or NULL.
   - Call `AslRequest(req, NULL)` → returns `BOOL` (TRUE if user
     picked, FALSE if cancelled).
-  - On TRUE: walk `req->ifr_Drawer` + `req->ifr_File`, join via
+  - On TRUE: walk `req->fr_Drawer` + `req->fr_File`, join via
     `AddPart(buf, drawer, sizeof buf)` then
     `AddPart(buf, file, sizeof buf)`. Buffer is **1024 bytes** —
     larger than the 512 used by `amiga.match` / WBStartup-arg
@@ -152,15 +152,15 @@ Same `modasl.c`, extended kwargs:
 | `multi=False` | `ASLFR_DoMultiSelect=TRUE` | User can shift-click multiple files. Result type changes to `list[str]`. |
 
 `multi=True` post-processing:
-- After `AslRequest` returns TRUE, walk `req->ifr_NumArgs` /
-  `req->ifr_ArgList` (a `struct WBArg[]`).
+- After `AslRequest` returns TRUE, walk `req->fr_NumArgs` /
+  `req->fr_ArgList` (a `struct WBArg[]`).
 - For each `WBArg`, ignore `wa_Lock` (always 0 from ASL) and use
   `wa_Name` as the file component, joined against
-  `req->ifr_Drawer` via `AddPart` into a fresh 512-byte buffer.
+  `req->fr_Drawer` via `AddPart` into a fresh 512-byte buffer.
 - Append each full path to a Python list.
 - Return the list.
 
-`multi=False` + `drawers_only=True` returns just `req->ifr_Drawer`
+`multi=False` + `drawers_only=True` returns just `req->fr_Drawer`
 (no file component to join in).
 
 Validation:
@@ -226,6 +226,16 @@ cost: ~2 KB text.
   return until the user clicks OK or Cancel. Matches the design
   intent. ASL has an async hook mechanism (`ASLFR_IntuiMsgFunc`)
   for receiving IDCMP messages mid-request; out of scope.
+- **Stack-hungry — runs on a 32 KB scratch stack via `StackSwap`.**
+  The default AmigaShell stack (often 4 KB) is too small for ASL's
+  directory-listing / font-loading code — the dialog *renders*
+  fine, but the post-pick code path trips a CHK exception
+  (`0x80000006`) inside ASL. Doing the swap inside `file_request`
+  means callers don't need to remember `Stack 32768` at the shell.
+  Only the bare `AllocAslRequest` / `AslRequest` calls run on the
+  scratch stack; path-building and `mp_obj_new_str` happen back on
+  the original stack so MicroPython's GC stack-scan range
+  (`gc_stack_top` in main.c) stays correct.
 - **Screen independence.** Same as Phase 30: ASL renders on the
   default public screen, opening its own if none is available.
   No Workbench dependency.
@@ -247,8 +257,8 @@ cost: ~2 KB text.
 - **Memory lifecycle.** `AllocAslRequestTags` returns a request
   struct that must be `FreeAslRequest`'d. Tag and string buffers
   are caller-owned stack memory; ASL copies what it needs during
-  the call. Once `AslRequest` returns, only the `ifr_Drawer` /
-  `ifr_File` / `ifr_ArgList` fields of the request struct hold
+  the call. Once `AslRequest` returns, only the `fr_Drawer` /
+  `fr_File` / `fr_ArgList` fields of the request struct hold
   live data (those are inside the request itself), and they all
   go away on `FreeAslRequest`.
 
