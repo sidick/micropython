@@ -47,6 +47,7 @@ with file-system access, based on the `ports/minimal` template.
 | 35 | `amiga.icon` — `.info` file read / write / manipulation | ✅ |
 | 36 | `amiga.catalog` — `locale.library` catalog lookup | ✅ |
 | 37 | `amiga.datatypes` — `datatypes.library` file recognition | planned (low priority) |
+| 38 | `ports/amiga/README.md` for upstreaming | planned |
 
 ### Non-goals (initially)
 
@@ -1827,6 +1828,66 @@ been taught about (third-party PNG / JPEG / WebP `.datatype`s), and
 that lives or dies by which datatypes are installed on the target
 host. Land Phase 35 / 36 first; pick up Phase 37 if a real caller
 shows up.
+
+---
+
+## Phase 38 — `ports/amiga/README.md` (planned)
+
+A `ports/amiga/README.md` that matches the style of the other
+port READMEs (rp2, stm32, esp32, unix, ...) and is suitable for
+merging into upstream. The existing `docs/amiga.md` is a phase log
+plus design notes -- valuable for in-port iteration, not the right
+shape for a casual visitor opening `ports/amiga/`.
+
+### Surface
+
+Per the upstream-README convention:
+
+* **Heading** — `MicroPython port to AmigaOS 3.x` with an `====`
+  underline.
+* **Intro paragraph** — what the port is (AmigaOS 3.x / 3.1+,
+  68020+, bebbo gcc 6.5 toolchain) and how to think about it
+  (it produces a regular AmigaDOS executable; runs from Shell or
+  Workbench).
+* **Supported features** — bullet list covering REPL line
+  editing, frozen modules, 68k native code emitter, dynamic heap,
+  Pythonic VFS file I/O, AmigaOS APIs (`amiga.library`, ARexx,
+  Intuition / ASL / icon / catalog wrappers, env-var integration,
+  volume / assign / pattern primitives, persistent REPL history),
+  networking (`bsdsocket.library`), TLS (AmiSSL v5), `urequests`.
+* **Build instructions** — bebbo install pointer, mpy-cross
+  prerequisite, the three variants (`standard`, `68020fpu`,
+  `68040`), CI parity via `tools/amiga-build.sh`.
+* **Running / accessing** — drop the binary on a real Amiga or
+  Amiberry image, invoke from Shell. Brief Workbench-launch note.
+* **Testing** — pointer to vamos / Amiberry harness with
+  one-paragraph summaries; full runbook stays in
+  `docs/amiga-testing.md`.
+* **Further reading** — links to `docs/amiga.md` (design and phase
+  status) and `docs/amiga-testing.md`.
+
+Target length is ~150–200 lines (matches stm32's 176, esp8266's
+251 -- not as short as rp2's 109, because the AmigaOS surface is
+broader).
+
+### Out of scope
+
+- Phase-by-phase history (lives in `docs/amiga.md`).
+- Detailed test runbook / known-good failures
+  (lives in `docs/amiga-testing.md`).
+- Architecture deep-dives (the trampoline, FD parser, native
+  emitter internals).
+- Build matrix per board — there's only one board (any AmigaOS
+  3.x machine), so no `boards/` subdirectory.
+
+### Files
+
+```
+ports/amiga/README.md                   — the README itself
+docs/phase38-readme-plan.md             — step plan (TBD)
+```
+
+No variant-size impact (documentation only).
 
 ---
 
