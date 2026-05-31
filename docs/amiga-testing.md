@@ -464,6 +464,41 @@ The CPU and FPU strings reflect runtime AmigaOS state -- a
 Memory values are *currently free* bytes (`AvailMem(MEMF_*)`),
 not total installed.
 
+### `os` extensions and `os.path` (Phase 34)
+
+`tests/ports/amiga/test_os_smoke.py` covers the surface of the
+frozen `os.py` / `_ospath.py` extensions: module assembly via
+`from uos import *`, the `_osamiga` re-exports (`chmod`,
+`getprotect`, `FIBF_*`), `makedirs`, `walk`, and every `os.path`
+helper. Under vamos the test also round-trips `makedirs` / `walk`
+against `RAM:` (vamos's RAM disk maps to a host temp directory).
+`chmod` round-tripping only fully exercises on Amiberry because
+vamos's `SetProtection` is a partial stub.
+
+For interactive REPL confirmation under Amiberry:
+
+```python
+>>> import os
+>>> os.makedirs("RAM:t/a/b", exist_ok=True)
+>>> os.path.isdir("RAM:t/a/b")
+True
+>>> os.chmod("RAM:t/a/b", os.FIBF_DELETE)
+>>> hex(os.getprotect("RAM:t/a/b"))
+'0x1'
+>>> os.chmod("RAM:t/a/b", 0)
+>>> hex(os.getprotect("RAM:t/a/b"))
+'0x0'
+>>> list(os.walk("RAM:t"))
+[('RAM:t', ['a'], []), ('RAM:t/a', ['b'], []), ('RAM:t/a/b', [], [])]
+```
+
+`getprotect` returns the raw `fib_Protection` ULONG;
+**a set bit denies the operation** for RWED, so `mask == 0`
+means "everything allowed". The APSH bits (`FIBF_ARCHIVE`,
+`FIBF_PURE`, `FIBF_SCRIPT`, `FIBF_HOLD`) follow the conventional
+"set means yes". This matches the AmigaShell `Protect`
+command's encoding.
+
 ### Icon manipulation (Phase 35)
 
 `tests/ports/amiga/test_icon_smoke.py` covers the `_icon` module

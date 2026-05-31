@@ -36,7 +36,7 @@ Step 1: os.chmod + os.getprotect (C entries) + FIBF_* constants
 
 | # | Step | Output | On-target smoke |
 |---|------|--------|-----------------|
-| **1** | Two new C entries in `modos.c`: `os.chmod(path, mask)` (SetProtection) and `os.getprotect(path)` (Examine + read fib_Protection). `FIBF_*` constants exposed on the module. | New entries via the existing port-local module-globals append (modos already registers via the locals_dict callback that extmod/modos.c provides for extensible modules). | From the REPL under Amiberry: `os.getprotect("S:Startup-Sequence")` returns a non-zero mask; `os.chmod` round-trips. |
+| **1** | New port-local `modosamiga.c` registering `_osamiga` with `chmod(path, mask)` (SetProtection), `getprotect(path)` (Lock+Examine+fib_Protection), and the `FIBF_*` constants. Surfaced via the frozen `os.py` `from _osamiga import ...` in Step 2 (rather than amending `extmod/modos.c`, which would violate the port-separation rule). | New port-local C module. | From the REPL under Amiberry: `os.getprotect("S:Startup-Sequence")` returns a mask; `os.chmod` round-trips. |
 | **2** | Frozen `ports/amiga/modules/os.py` with `makedirs` (recursive mkdir, AmigaOS volume-aware) and `walk` (recursive listdir + stat tree generator). Frozen `ports/amiga/modules/_ospath.py` with `join` / `split` / `splitext` / `basename` / `dirname` / `exists` / `isfile` / `isdir` / `isabs` / `abspath` / `normpath`. `os.py` does `import _ospath as path` so `os.path` Just Works. | Two frozen modules. | `os.makedirs` + `os.walk` against a temp tree. `os.path.normpath` collapses `..` correctly across volume separators. |
 | **3** | Docs flip, manifest verification, smoke test. | `docs/amiga.md` Phase 34 → ✅. `docs/amiga-testing.md` gains a short `os` / `os.path` subsection. | `tests/ports/amiga/test_os_smoke.py` covers the surface and the volume-separator edge cases under vamos. |
 
@@ -49,11 +49,14 @@ Step 3 is paperwork.
 
 ### Deliverables
 
-- Two C functions in `modos.c`:
+- Two C functions in `ports/amiga/modosamiga.c`:
   ```c
-  static mp_obj_t mp_os_chmod(mp_obj_t path_obj, mp_obj_t mask_obj);
-  static mp_obj_t mp_os_getprotect(mp_obj_t path_obj);
+  static mp_obj_t mod_osamiga_chmod(mp_obj_t path_obj, mp_obj_t mask_obj);
+  static mp_obj_t mod_osamiga_getprotect(mp_obj_t path_obj);
   ```
+  Registered as the `_osamiga` module via `MP_REGISTER_MODULE`. The
+  frozen `os.py` (Step 2) does `from _osamiga import chmod,
+  getprotect, FIBF_*` so callers see them on `os`.
 - `os.chmod(path, mask)`:
   - Suppress AmigaDOS auto-requesters (`pr_WindowPtr = -1`) around
     the call so a path on an unmounted volume gets a clean OSError
@@ -65,11 +68,12 @@ Step 3 is paperwork.
     `fib.fib_Protection`. UnLock on the way out.
   - Same auto-requester suppression.
   - Returns the raw `fib_Protection` ULONG.
-- `FIBF_*` constants added to the module globals via the same
-  append mechanism Phase 20 uses for `getenv` / `putenv` / `unsetenv`:
+- `FIBF_*` constants exposed on `_osamiga` and pulled into `os.*`
+  via the frozen `os.py` star-list import:
   - `os.FIBF_READ`, `os.FIBF_WRITE`, `os.FIBF_EXECUTE`,
     `os.FIBF_DELETE`, `os.FIBF_ARCHIVE`, `os.FIBF_PURE`,
-    `os.FIBF_SCRIPT`, `os.FIBF_HIDDEN`.
+    `os.FIBF_SCRIPT`, `os.FIBF_HOLD` (the NDK ships `HOLD`, not
+    `HIDDEN`; the plan was wrong here).
 
 ### Bit semantics caveat
 
