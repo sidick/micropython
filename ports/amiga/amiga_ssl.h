@@ -22,6 +22,14 @@ extern struct Library *AmiSSLMasterBase;
 extern struct Library *AmiSSLBase;
 extern struct Library *AmiSSLExtBase;
 
+// Diagnostic: override the AMISSL APIVersion passed to OpenAmiSSLTags.
+// Default (0) uses AMISSL_CURRENT_VERSION baked in from the SDK we
+// built against. Set to e.g. AMISSL_V352 (=41 for SDK 5.27) to force
+// the master library to negotiate a specific older amissl_vXYZ.library.
+// Wired up via -X sslver=<N> in main.c, intended for bisecting the
+// Cloudflare TLS 1.3 close.
+extern int amiga_ssl_version_override;
+
 // Open amisslmaster.library, then OpenAmiSSLTags() with our SocketBase
 // and errno pointer. Returns false if amisslmaster.library is missing
 // (a user can run MicroPython without AmiSSL installed; `import ssl`
