@@ -38,10 +38,14 @@ with file-system access, based on the `ports/minimal` template.
 | 26 | `PROGDIR:` on `sys.path` | ✅ |
 | 27 | Additional build variants | ✅ |
 | 28 | TLS/SSL via AmiSSL v5 | ✅ |
+| 29 | `urequests` frozen HTTP/HTTPS client | planned |
+| 30 | Intuition requester dialogs (`amiga.intuition`) | planned |
+| 31 | ASL file requester (`amiga.asl`) | planned |
 
 ### Non-goals (initially)
 
-- Workbench GUI / Intuition window — CLI only
+- Full Workbench GUI / Intuition windows — Phases 30/31 add modal
+  requesters only; arbitrary window/widget surfaces stay out of scope
 - 68000 alignment-safe build — target 68020+ first
 
 ---
@@ -1007,7 +1011,169 @@ Pick when Phase 28 actually starts; option 1 is the current preference.
   — punt to a follow-up.
 - **Async-friendly handshake** — tied to asyncio gating.
 - **`urequests` / `mip`** — pure-Python, freeze into variant manifests
-  once `ssl` lands.
+  once `ssl` lands. (Phase 29 picks up `urequests`.)
+
+---
+
+## Phase 29 — `urequests` frozen HTTP/HTTPS client (planned)
+
+Convenience client built on top of Phase 9 (`socket`) and Phase 28
+(`ssl`). Same shape as upstream `micropython-lib`'s `requests`:
+
+```python
+import urequests
+r = urequests.get("https://www.python.org/")
+print(r.status_code)
+print(r.text[:200])
+r.close()
+```
+
+### Scope
+
+- `urequests.get / post / put / delete / patch / head`
+- `Response` with `.status_code`, `.reason`, `.headers`, `.text`,
+  `.content`, `.json()`, `.close()`
+- HTTP/1.0 wire format (`Connection: close`), HTTP/1.1 read tolerance
+- `https://` via the existing `ssl.SSLContext` setup
+  (`CERT_REQUIRED` + `set_default_verify_paths()` against the AmiSSL
+  trust store)
+- Optional gzip decompression via the existing `deflate` module
+- POSTing `data=` (urlencoded), `json=` (auto-serialised), `headers=` overrides
+
+### Out of scope
+
+- Persistent / keep-alive connections — needs HTTP/1.1 keep-alive
+  state-machine, deferred
+- Sessions / cookies — deferred
+- Streaming uploads / `multipart/form-data` — deferred
+- HTTP/2, async — deferred (no asyncio yet)
+
+### Known limitation
+
+Inherits the Phase 28 AmiSSL ↔ modern-CDN issue
+([phase28-ssl-plan](phase28-ssl-plan.md)): `urequests.get` against
+TLS-1.3-eager hosts (Cloudflare, GitHub) will succeed the handshake
+then fail the write. Direct origins that still negotiate TLS 1.2 by
+default work.
+
+### Files
+
+```
+ports/amiga/modules/urequests.py        — frozen pure-Python module
+docs/phase29-urequests-plan.md          — step plan
+tests/amiga/test_urequests_smoke.py     — on-target smoke (Amiberry, AmiSSL installed)
+```
+
+Variants: `standard`, `68020fpu`, `68040`. The `minimal` variant
+omits it (no socket → no urequests).
+
+---
+
+## Phase 30 — Intuition requester dialogs (planned)
+
+`amiga.intuition` C sub-module exposing `intuition.library`'s
+`EasyRequest` family. Three entry points:
+
+```python
+from amiga import intuition
+
+idx = intuition.easy_request("Title", "Body line one.\nBody line two.",
+                             ["Yes", "No", "Cancel"])
+ok  = intuition.auto_request("Replace existing file?", yes="Yes", no="No")
+intuition.message("Done.", button="OK")
+```
+
+### Scope
+
+- `easy_request(title, body, buttons)` → int (0-based button index;
+  rightmost button is always the "cancel" / 0 convention)
+- `auto_request(body, yes="Yes", no="No")` → bool, two-button wrapper
+- `message(body, button="OK")` → None, single-button notice
+- printf-escape safety (raw user strings are passed as `%s` args,
+  not as the format string)
+- Latin-1 codec for the title/body so non-ASCII text renders
+  cleanly under AmigaOS Topaz/CP-1252 displays
+
+### Out of scope
+
+- Arbitrary window/widget surfaces — see "Non-goals"
+- Custom gadgets, file/font/screen pickers (Phase 31 handles file)
+- Non-blocking / async requesters — modal only
+
+### Dependencies
+
+- `intuition.library` opened lazily on first call (cached base)
+- Uses Phase 17's library-calling infrastructure as fallback if
+  preferred over explicit C, but a direct C module is probably
+  simpler given how concentrated the API surface is
+
+### Files
+
+```
+ports/amiga/modintuition.c              — C module
+docs/phase30-intuition-plan.md          — step plan (TBD)
+```
+
+Variants: all four. Trivial size cost, no network/SSL deps.
+
+---
+
+## Phase 31 — ASL file requester (planned)
+
+`amiga.asl` C sub-module wrapping `asl.library`'s
+`AslRequest(ASL_FileRequest, ...)`. Native Amiga file chooser
+dialog usable from both CLI and Workbench launches.
+
+```python
+from amiga import asl
+
+path = asl.file_request(title="Pick a script",
+                        initial_drawer="Work:scripts/",
+                        pattern="#?.py")
+if path is None:
+    print("cancelled")
+
+# Save dialog
+out = asl.file_request(title="Save as", save=True,
+                       initial_file="output.txt")
+
+# Multi-select returns list
+paths = asl.file_request(multi=True)
+
+# Drawer-only
+drawer = asl.file_request(drawers_only=True)
+```
+
+### Scope
+
+- `file_request(...)` keyword args:
+  `title`, `initial_drawer`, `initial_file`, `pattern`,
+  `save=False`, `multi=False`, `drawers_only=False`
+- Returns `str` for single-pick, `list[str]` for `multi=True`,
+  `None` for user-cancelled
+- Paths joined via `dos.library AddPart()` so volume separators
+  come out right on AmigaOS
+- Latin-1 codec for filenames
+
+### Out of scope
+
+- Font / screen / draw mode / palette requesters — file is the only
+  one with clear practical use from a scripted REPL
+- Custom hooks / per-entry filter callbacks — `pattern` is enough
+
+### Dependencies
+
+- `asl.library` opened lazily on first call (cached base)
+- Same C-or-Phase-17 trade-off as Phase 30
+
+### Files
+
+```
+ports/amiga/modasl.c                    — C module
+docs/phase31-asl-plan.md                — step plan (TBD)
+```
+
+Variants: all four. Trivial size cost.
 
 ---
 
