@@ -45,7 +45,7 @@ with file-system access, based on the `ports/minimal` template.
 | 33 | `platform.amiga_info()` + frozen `platform.py` | ✅ |
 | 34 | Frozen `os.py` extensions + AmigaOS-aware `os.path` | planned |
 | 35 | `amiga.icon` — `.info` file read / write / manipulation | ✅ |
-| 36 | `amiga.catalog` — `locale.library` catalog lookup | planned |
+| 36 | `amiga.catalog` — `locale.library` catalog lookup | ✅ |
 | 37 | `amiga.datatypes` — `datatypes.library` file recognition | planned (low priority) |
 
 ### Non-goals (initially)
@@ -1637,37 +1637,50 @@ mapping protocol + write + new).
 
 ---
 
-## Phase 36 — `amiga.catalog` (planned)
+## Phase 36 — `amiga.catalog` ✅
 
-Wrap `locale.library`'s catalog lookup so localized apps can
-read their translated strings.
+`amiga.catalog` wraps `locale.library`'s catalog lookup so
+localized apps can read their translated strings, plus surfaces
+the system's preferred language.
 
 ```python
 from amiga import catalog
 
-cat = catalog.open("MyApp.catalog", version=1)
-print(cat.lookup(1, "Default English string"))
-print(cat.lookup(2, "Cancel"))
-cat.close()
-
-# Or use the system-wide language list.
 print(catalog.language())          # 'english' / 'german' / 'français'
+
+# Stock-Workbench tip: pass built_in_language= so locale.library
+# actually loads a translation file rather than short-circuiting
+# on "you already have English built in".
+with catalog.open("MyApp.catalog", version=1,
+                  language="english",
+                  built_in_language="german") as cat:
+    print(cat.lookup(1, "Default English string"))
+    print(cat.lookup(2, "Cancel"))
 ```
 
-### Scope
+### Surface
 
-- `amiga.catalog.open(name, version=0, language=None)` → `Catalog`
-  wrapper. `OpenCatalog(NULL, name, OC_Version, OC_BuiltInLanguage,
-  OC_Language, TAG_DONE)`; the `language` kwarg overrides the
-  system default if passed.
-- `Catalog.lookup(id, default)` → str. `GetCatalogStr(cat, id, default)`.
-  Returns `default` if the catalog or string is missing — matches
-  the AmigaOS contract.
-- `Catalog.close()` → None. `CloseCatalog`.
-- `Catalog.__enter__` / `__exit__` for `with` use.
-- `amiga.catalog.language()` → str. First preferred language from
-  `Locale->loc_PrefLanguages[0]`, or `"english"` if no preference
-  set.
+| Call | Returns | Notes |
+|------|---------|-------|
+| `catalog.open(name, version=0, language=None, built_in_language=None)` | `Catalog` | `OpenCatalogA(NULL, name, [OC_Version, OC_BuiltInLanguage?, OC_Language?, TAG_DONE])`. `OSError(ENOENT)` if `locale.library` returns NULL (catalog not found, or language matches `built_in_language` so nothing to load). `OSError(EIO)` if `locale.library` itself can't open. |
+| `catalog.language()` | `str` | First preferred language from `Locale->loc_PrefLanguages[0]`. Returns `"english"` if no preference is set or `locale.library` is unavailable. |
+| `catalog.Catalog` | type | Re-exported so `isinstance(c, catalog.Catalog)` works. |
+
+`Catalog` methods:
+
+| Op | Notes |
+|----|-------|
+| `cat.lookup(id, default)` | `GetCatalogStr(cat, id, default)`. Returns the catalog string or the `default` if `id` is absent. Defaults to AmigaOS contract: never raises on a missing entry. A closed catalog also returns the default (the NULL is forwarded straight into `GetCatalogStr`). |
+| `cat.close()` / `__del__` | `CloseCatalog`. Idempotent. |
+| `with catalog.open(...) as cat:` | `__enter__` / `__exit__` close the catalog on block exit. |
+
+`built_in_language=` kwarg note: AmigaOS `OpenCatalog` short-circuits
+when the requested `language` matches the catalog's built-in
+language — there's nothing to load, so it returns NULL. To force a
+translation lookup even when asking for the "same" language as the
+binary's built-in strings (e.g. when probing English-only catalogs
+on an English Workbench), pass a different code via
+`built_in_language`. The plan-doc walk-through has an example.
 
 ### Out of scope
 
@@ -1676,23 +1689,25 @@ print(catalog.language())          # 'english' / 'german' / 'français'
 - Conversion of locale-specific date / number / currency formats
   — separate phase if needed; would wrap `FormatString` etc.
 - Multi-catalog merging / fallback chains — `OpenCatalog` already
-  picks the right language automatically; the user just calls
-  `lookup`.
+  picks the right language automatically.
+- Exposing `Locale` directly. `language()` covers the one field
+  callers actually want; the rest of `struct Locale` is a
+  read-only system snapshot that would invite lifetime confusion.
 
 ### Dependencies
 
-- `locale.library` v38+. Lazy open.
+- `locale.library` v38+ (OS 2.1). Lazy open; no explicit close.
 
 ### Files
 
 ```
 ports/amiga/modcatalog.c                — C module + Catalog type
-ports/amiga/modules/amiga.py            — adds `import _catalog as catalog`
-tests/ports/amiga/test_catalog_smoke.py       — vamos arg-shape smoke
-docs/phase36-catalog-plan.md            — step plan (TBD)
+ports/amiga/modules/amiga.py            — `import _catalog as catalog`
+tests/ports/amiga/test_catalog_smoke.py — vamos arg-shape smoke
+docs/phase36-catalog-plan.md            — step plan
 ```
 
-Variants: all three. ~1.5 KB text per variant.
+Variants: all three. ~1 KB text per variant.
 
 ---
 

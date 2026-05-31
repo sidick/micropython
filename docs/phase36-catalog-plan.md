@@ -142,9 +142,17 @@ Amiberry interactive verification:
   - Module + alias + `Catalog` type re-export.
   - Missing-catalog OSError path.
   - `language()` returns str.
-  - With-statement / `__enter__` / `__exit__` round trip on a
-    closed-and-reopened catalog.
-  - Closed-object `.lookup` raises ValueError (defensive).
+  - With-statement / `__enter__` / `__exit__` round trip.
+  - Closed-object `.lookup` returns the default (`GetCatalogStr`
+    forwards a NULL catalog to the caller's default; no exception
+    — matches the AmigaOS contract).
+
+Step 1 added a `built_in_language=` kwarg beyond the original
+scope so on-target round-trip testing works on a stock English
+Workbench. AmigaOS `OpenCatalog` refuses to open when the
+requested `language` matches the catalog's built-in language
+(nothing to load); the kwarg surfaces `OC_BuiltInLanguage` so
+callers can force a translation file lookup anyway.
 
 ---
 

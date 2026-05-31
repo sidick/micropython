@@ -506,6 +506,38 @@ Tooltype values come back as `bytes` (the AmigaOS on-disk
 representation), assignments accept `str` / `bytes` / `None`
 (None ⇒ flag-style entry, no `=` separator).
 
+### Catalog lookup (Phase 36)
+
+`tests/ports/amiga/test_catalog_smoke.py` covers the `_catalog`
+module registration, the `language()` accessor, error paths
+(missing catalog, missing `name`, non-str `language` kwarg), the
+context-manager surface, and -- when the host can satisfy a
+catalog open -- a `lookup` round trip. Vamos has no real
+`locale.library`, so it soft-passes the round-trip block;
+Amiberry covers it end-to-end against `Sys/monitors.catalog`.
+
+For interactive REPL confirmation under Amiberry:
+
+```python
+>>> from amiga import catalog
+>>> catalog.language()
+'english'
+>>> # Stock Workbench is English -- declaring the binary's built-in
+>>> # language as "german" forces a translation lookup that actually
+>>> # loads the file rather than treating it as already in place.
+>>> with catalog.open("Sys/monitors.catalog",
+...                   language="english",
+...                   built_in_language="german") as cat:
+...     print(cat.lookup(99999, "FALLBACK"))
+...
+FALLBACK
+```
+
+Closed catalogs are safe to call `lookup` on — `GetCatalogStr`
+treats NULL as "no catalog" and returns the caller's default. The
+context manager closes on block exit so the underlying
+`locale.library` allocation is released promptly.
+
 ---
 
 ## 3. CI (cross-compile only)
