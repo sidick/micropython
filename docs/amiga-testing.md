@@ -407,6 +407,39 @@ None                          # cancelled
 the dialog works even from a default-stack shell prompt — no
 `Stack 32768` prelude required.
 
+### ARexx polish (Phase 32)
+
+`tests/amiga/test_rexx_polish.py` covers the C-primitive +
+Python-facade surface area; it runs under vamos and prints `OK`.
+Real driving of an ARexx host needs `rexxsyslib.library` and a
+running peer, so it lives under Amiberry / real hardware.
+
+For end-to-end visual confirmation:
+
+```python
+>>> import amiga
+>>> amiga.rexx_open()              # so we have a port to be queried
+'MICROPYTHON.1'
+>>> amiga.rexx_exists("MICROPYTHON.1")
+True
+>>> "MICROPYTHON.1" in amiga.rexx_list()
+True
+
+>>> from amiga import RexxClient
+>>> with RexxClient("MICROPYTHON.1") as c:
+...     # ... a `rexx_serve()` loop on another task would handle this
+...     pass
+
+>>> # Forgetting close() is OK -- amiga_rexx_shutdown picks it up
+>>> # on process exit so the MsgPort doesn't leak.
+```
+
+Driving a real host (DOpus, IBrowse, YAM) in a tight loop is what
+`RexxClient` was built for: the persistent reply `MsgPort` saves
+the `CreateMsgPort` / `DeleteMsgPort` cost per send. The one-shot
+`amiga.rexx_send` / `amiga.rexx` helpers are still the right
+shape for single sends.
+
 ---
 
 ## 3. CI (cross-compile only)

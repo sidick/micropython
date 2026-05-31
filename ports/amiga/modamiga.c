@@ -740,6 +740,12 @@ struct RxsLib *RexxSysBase = NULL;
 static struct MsgPort *amiga_rexx_port = NULL;
 static char            amiga_rexx_port_name[40];
 
+// Phase 32 persistent ARexx clients (definitions below near the
+// client primitives); kept here so amiga_rexx_shutdown() -- which
+// walks the array on process exit -- sees them.
+#define AMIGA_REXX_CLIENT_MAX 16
+static struct MsgPort *amiga_rexx_client_ports[AMIGA_REXX_CLIENT_MAX];
+
 void amiga_rexx_shutdown(void);  // forward-declared for main.c cleanup
 
 // amiga.rexx_open(stem="MICROPYTHON") -> str of the assigned port name.
@@ -797,7 +803,21 @@ static mp_obj_t amiga_rexx_close_fn(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_close_obj, amiga_rexx_close_fn);
 
 void amiga_rexx_shutdown(void) {
+    // Tear down any RexxClient reply ports the user forgot to close.
+    // The MsgPort is private to the client (no inbound messages
+    // queue there) so DeleteMsgPort is sufficient -- no need to
+    // drain/reply.
+    for (int i = 0; i < AMIGA_REXX_CLIENT_MAX; i++) {
+        if (amiga_rexx_client_ports[i] != NULL) {
+            DeleteMsgPort(amiga_rexx_client_ports[i]);
+            amiga_rexx_client_ports[i] = NULL;
+        }
+    }
     if (amiga_rexx_port == NULL) {
+        if (RexxSysBase != NULL) {
+            CloseLibrary((struct Library *)RexxSysBase);
+            RexxSysBase = NULL;
+        }
         return;
     }
     RemPort(amiga_rexx_port);
@@ -931,11 +951,11 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_reply_obj, 3, 4, amiga_rex
 
 // ---------- Phase 18 outbound: drive another app's ARexx port ----------
 //
-// FindPort(host) → CreateMsgPort() (our reply port) → CreateRexxMsg →
+// FindPort(host) → CreateRexxMsg referencing a reply port →
 // CreateArgstring for the command → PutMsg to the target → Wait for
-// the reply on our port (with Ctrl+C latched but deferred so we don't
-// orphan the message in the host's queue) → unpack rm_Result1/2 and
-// clean everything up.
+// the reply on the reply port (with Ctrl+C latched but deferred so
+// we don't orphan the message in the host's queue) → unpack
+// rm_Result1/2 and clean up.
 //
 // Returns a `(rc, result_or_None)` tuple.  `result` is the bytes of
 // the argstring at rm_Result2 when rc==0 and the host returned a
@@ -948,40 +968,46 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_reply_obj, 3, 4, amiga_rex
 // raise KeyboardInterrupt only after the reply is in hand and the
 // cleanup has run.  Most ARexx hosts reply within milliseconds, so
 // the user-visible delay is minimal.
-static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
-    const char *port_name = mp_obj_str_get_str(port_obj);
-    mp_buffer_info_t cmd_bi;
-    mp_get_buffer_raise(cmd_obj, &cmd_bi, MP_BUFFER_READ);
 
-    struct MsgPort *target = FindPort((CONST_STRPTR)port_name);
-    if (target == NULL) {
-        mp_raise_OSError(MP_ENOENT);
-    }
+static bool amiga_rexx_ensure_rexxsys(void) {
     if (RexxSysBase == NULL) {
         RexxSysBase = (struct RxsLib *)OpenLibrary(
             (CONST_STRPTR)"rexxsyslib.library", 0);
         if (RexxSysBase == NULL) {
             mp_raise_msg(&mp_type_OSError,
                 MP_ERROR_TEXT("rexxsyslib.library unavailable"));
+            return false;
         }
     }
+    return true;
+}
 
-    struct MsgPort *reply = CreateMsgPort();
-    if (reply == NULL) {
-        mp_raise_msg(&mp_type_OSError,
-            MP_ERROR_TEXT("CreateMsgPort failed"));
+// Core send: takes an already-open reply MsgPort and runs the full
+// CreateRexxMsg → CreateArgstring → PutMsg → Wait → cleanup dance
+// against it.  Shared by `amiga_rexx_send_fn` (which owns its reply
+// port for the duration of the call) and Phase 32's persistent
+// RexxClient C primitives (which reuse the same reply port across
+// many sends).
+static mp_obj_t amiga_rexx_send_via_port(struct MsgPort *reply,
+                                         const char *host,
+                                         const mp_buffer_info_t *cmd_bi) {
+    struct MsgPort *target = FindPort((CONST_STRPTR)host);
+    if (target == NULL) {
+        mp_raise_OSError(MP_ENOENT);
     }
+    if (!amiga_rexx_ensure_rexxsys()) {
+        return mp_const_none;  // unreachable; ensure_rexxsys raised
+    }
+
     struct RexxMsg *msg = CreateRexxMsg(reply, NULL, NULL);
     if (msg == NULL) {
-        DeleteMsgPort(reply);
         mp_raise_msg(&mp_type_OSError,
             MP_ERROR_TEXT("CreateRexxMsg failed"));
     }
     msg->rm_Args[0] = (STRPTR)CreateArgstring(
-        (CONST_STRPTR)cmd_bi.buf, (ULONG)cmd_bi.len);
+        (CONST_STRPTR)cmd_bi->buf, (ULONG)cmd_bi->len);
     if (msg->rm_Args[0] == NULL) {
         DeleteRexxMsg(msg);
-        DeleteMsgPort(reply);
         mp_raise_msg(&mp_type_MemoryError,
             MP_ERROR_TEXT("CreateArgstring failed"));
     }
@@ -1017,7 +1043,6 @@ static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
     DeleteArgstring((UBYTE *)msg->rm_Args[0]);
     msg->rm_Args[0] = NULL;
     DeleteRexxMsg(msg);
-    DeleteMsgPort(reply);
 
     if (ctrl_c_pending) {
         mp_raise_type(&mp_type_KeyboardInterrupt);
@@ -1028,7 +1053,119 @@ static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
     };
     return mp_obj_new_tuple(2, pair);
 }
+
+static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
+    const char *port_name = mp_obj_str_get_str(port_obj);
+    mp_buffer_info_t cmd_bi;
+    mp_get_buffer_raise(cmd_obj, &cmd_bi, MP_BUFFER_READ);
+
+    struct MsgPort *reply = CreateMsgPort();
+    if (reply == NULL) {
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("CreateMsgPort failed"));
+    }
+
+    mp_obj_t result;
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        result = amiga_rexx_send_via_port(reply, port_name, &cmd_bi);
+        nlr_pop();
+    } else {
+        // Make sure the reply port is freed before re-raising; the
+        // helper has already cleaned up its own RexxMsg/argstring
+        // before raising in any of its error paths.
+        DeleteMsgPort(reply);
+        nlr_jump(nlr.ret_val);
+    }
+    DeleteMsgPort(reply);
+    return result;
+}
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_rexx_send_obj, amiga_rexx_send_fn);
+
+// ---------- Phase 32: persistent ARexx client ----------
+//
+// `RexxClient` (Python) holds an open reply MsgPort across many
+// sends. Driving a host (DOpus, IBrowse, YAM, ...) in a tight loop
+// thus avoids paying CreateMsgPort/DeleteMsgPort per call.
+//
+// Bookkeeping: every open client port is registered in a small
+// static array (declared near amiga_rexx_shutdown above; 16 slots,
+// far more than any realistic use would open simultaneously).
+// amiga_rexx_shutdown() walks the array on process exit and
+// DeleteMsgPort's anything still live, so a script that forgot
+// to call .close() doesn't leak the port.
+
+static void amiga_rexx_client_register(struct MsgPort *port) {
+    for (int i = 0; i < AMIGA_REXX_CLIENT_MAX; i++) {
+        if (amiga_rexx_client_ports[i] == NULL) {
+            amiga_rexx_client_ports[i] = port;
+            return;
+        }
+    }
+    // Array exhausted -- shouldn't happen in practice; drop the
+    // registration silently. The MsgPort itself is still usable;
+    // the only consequence is that a forgotten close on this
+    // particular instance would leak it on process exit.
+}
+
+static void amiga_rexx_client_unregister(struct MsgPort *port) {
+    for (int i = 0; i < AMIGA_REXX_CLIENT_MAX; i++) {
+        if (amiga_rexx_client_ports[i] == port) {
+            amiga_rexx_client_ports[i] = NULL;
+            return;
+        }
+    }
+}
+
+// amiga.rexx_client_open() -> int (handle = MsgPort *)
+static mp_obj_t amiga_rexx_client_open_fn(void) {
+    if (!amiga_rexx_ensure_rexxsys()) {
+        return mp_const_none;  // unreachable
+    }
+    struct MsgPort *reply = CreateMsgPort();
+    if (reply == NULL) {
+        mp_raise_msg(&mp_type_OSError,
+            MP_ERROR_TEXT("CreateMsgPort failed"));
+    }
+    amiga_rexx_client_register(reply);
+    return mp_obj_new_int_from_uint((uintptr_t)reply);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_client_open_obj,
+    amiga_rexx_client_open_fn);
+
+// amiga.rexx_client_close(handle) -> None. Tolerates a zero handle
+// so Python __del__ paths can be unconditional.
+static mp_obj_t amiga_rexx_client_close_fn(mp_obj_t handle_obj) {
+    struct MsgPort *reply = (struct MsgPort *)(uintptr_t)
+        mp_obj_get_int(handle_obj);
+    if (reply == NULL) {
+        return mp_const_none;
+    }
+    amiga_rexx_client_unregister(reply);
+    DeleteMsgPort(reply);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(amiga_rexx_client_close_obj,
+    amiga_rexx_client_close_fn);
+
+// amiga.rexx_client_send(handle, host, cmd) -> (rc, result_or_None).
+// Reuses the reply port at `handle`; otherwise identical to
+// amiga.rexx_send.
+static mp_obj_t amiga_rexx_client_send_fn(size_t n_args,
+                                          const mp_obj_t *args) {
+    (void)n_args;
+    struct MsgPort *reply = (struct MsgPort *)(uintptr_t)
+        mp_obj_get_int(args[0]);
+    if (reply == NULL) {
+        mp_raise_ValueError(MP_ERROR_TEXT("RexxClient: closed"));
+    }
+    const char *host = mp_obj_str_get_str(args[1]);
+    mp_buffer_info_t cmd_bi;
+    mp_get_buffer_raise(args[2], &cmd_bi, MP_BUFFER_READ);
+    return amiga_rexx_send_via_port(reply, host, &cmd_bi);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_client_send_obj,
+    3, 3, amiga_rexx_client_send_fn);
 
 // ---------- Phase 32: ARexx polish (rexx_exists, rexx_list) ----------
 
@@ -1146,8 +1283,11 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_command),    MP_ROM_PTR(&amiga_rexx_command_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_reply),      MP_ROM_PTR(&amiga_rexx_reply_obj) },
     { MP_ROM_QSTR(MP_QSTR_rexx_send),       MP_ROM_PTR(&amiga_rexx_send_obj) },
-    { MP_ROM_QSTR(MP_QSTR_rexx_exists),     MP_ROM_PTR(&amiga_rexx_exists_obj) },
-    { MP_ROM_QSTR(MP_QSTR_rexx_list),       MP_ROM_PTR(&amiga_rexx_list_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_exists),       MP_ROM_PTR(&amiga_rexx_exists_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_list),         MP_ROM_PTR(&amiga_rexx_list_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_client_open),  MP_ROM_PTR(&amiga_rexx_client_open_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_client_close), MP_ROM_PTR(&amiga_rexx_client_close_obj) },
+    { MP_ROM_QSTR(MP_QSTR_rexx_client_send),  MP_ROM_PTR(&amiga_rexx_client_send_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_history),      MP_ROM_PTR(&amiga_readline_history_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_push_history), MP_ROM_PTR(&amiga_readline_push_history_obj) },
     // Break-signal bits (Phase 25)
