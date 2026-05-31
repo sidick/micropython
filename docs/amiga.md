@@ -41,6 +41,8 @@ with file-system access, based on the `ports/minimal` template.
 | 29 | `urequests` frozen HTTP/HTTPS client | ✅ |
 | 30 | Intuition requester dialogs (`amiga.intuition`) | ✅ |
 | 31 | ASL file requester (`amiga.asl`) | ✅ |
+| 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | planned |
+| 33 | `platform.amiga_info()` + frozen `platform.py` | planned |
 
 ### Non-goals (initially)
 
@@ -1238,6 +1240,121 @@ correct.
 Path buffer is 1024 bytes (vs the 512 used by older `modamiga.c`
 surfaces) to comfortably accommodate long-name filesystems
 (SFS / PFS3 / FFS2).
+
+---
+
+## Phase 32 — ARexx polish (planned)
+
+Three additions to the existing ARexx surface (`amiga.rexx_send`,
+`amiga.rexx_open`/`recv`/`reply` from Phase 18):
+
+```python
+import amiga
+
+# Phase 32 additions:
+if amiga.rexx_exists("IBROWSE"):
+    rc, html = amiga.rexx_send("IBROWSE", "QUERY ITEM=URL")
+
+for port in amiga.rexx_list():
+    print(port)
+
+# Persistent client -- caches the reply MsgPort across sends so a
+# tight loop doesn't pay CreateMsgPort/DeleteMsgPort per call.
+with amiga.RexxClient("DOPUS.1") as ib:
+    ib.send("LISTER NEW")
+    rc, result = ib.send("LISTER QUERY 1 PATH", check=False)
+```
+
+### Scope
+
+- `amiga.rexx_exists(name)` → `bool`. Thin wrapper around
+  `FindPort(name)` with `Forbid()` / `Permit()` braces.
+- `amiga.rexx_list()` → `list[str]`. Walks `SysBase->PortList`,
+  returning every public port's `ln_Name`.
+- `amiga.RexxClient(host)` class:
+  - Opens a reply `MsgPort` in `__init__`; reuses it across calls.
+  - `.send(command, check=True)` returns the same shape as
+    `amiga.rexx(host, command)`.
+  - `.close()` / `__exit__` / `__del__` tear down the reply port.
+  - Tracked in an at-exit cleanup chain so a forgotten close
+    doesn't leak the MsgPort on process exit.
+
+### Out of scope
+
+- Migrating the existing `amiga.rexx_*` surface into an
+  `amiga.rexx.*` sub-module — breaking change for callers and
+  the inbound server side (Phase 18) is already deeply embedded
+  in the module flat namespace
+- Reshaping the one-shot `amiga.rexx_send` / `amiga.rexx` helpers
+  to use the client class internally — the per-call MsgPort
+  cost is invisible for a single send; the polish is for tight
+  loops
+
+### Dependencies
+
+- `rexxsyslib.library` (already opened lazily by Phase 18
+  `amiga.rexx_send`)
+
+### Files
+
+```
+ports/amiga/modamiga.c                  — three new C entries +
+                                          RexxClient instance type
+ports/amiga/modules/amiga.py            — `RexxClient` Python facade
+tests/amiga/test_rexx_polish.py         — vamos arg-shape smoke
+docs/phase32-arexx-polish-plan.md       — step plan
+```
+
+Variants: all three. Trivial size cost.
+
+---
+
+## Phase 33 — `platform.amiga_info()` (planned)
+
+Frozen CPython-shaped `platform.py` module surfacing AmigaOS
+identity. Modeled on OoZe1911's port:
+
+```python
+>>> import platform
+>>> platform.system()
+'AmigaOS'
+>>> platform.machine()
+'68020'
+>>> platform.amiga_info()
+'CPU: 68020 | FPU: 68881 | Chipset: AGA | Kickstart: 45.57 | Chip: 1856KB | Fast: 14336KB'
+```
+
+### Scope
+
+- Six new C accessors on the `amiga` module:
+  - `amiga.cpu()` → `str` (e.g. `"68020"`, `"68040"`)
+  - `amiga.fpu()` → `str` (e.g. `"none"`, `"68881"`, `"68040"`)
+  - `amiga.chipset()` → `str` (`"OCS"` / `"ECS"` / `"AGA"`)
+  - `amiga.kickstart()` → `str` (e.g. `"45.57"`)
+  - `amiga.chipmem()` → `int` (bytes available)
+  - `amiga.fastmem()` → `int` (bytes available)
+- Frozen `platform.py` wrapping the above with the CPython API
+  shape (`system()`, `machine()`, `processor()`, `version()`,
+  `release()`, `python_implementation()`, `python_version()`,
+  `platform()`, `node()`) plus the convenience `amiga_info()`.
+
+### Out of scope
+
+- Full CPython `platform` parity (`uname()`, `linux_distribution()`,
+  etc.) — beyond what's meaningful on AmigaOS
+- Caching the strings; they're cheap to recompute and the input
+  state can change (memory free shifts continuously)
+
+### Files
+
+```
+ports/amiga/modamiga.c                  — six accessor functions
+ports/amiga/modules/platform.py         — frozen facade
+tests/amiga/test_platform_smoke.py      — vamos smoke
+docs/phase33-platform-plan.md           — step plan (TBD)
+```
+
+Variants: all three.
 
 ---
 
