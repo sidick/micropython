@@ -61,9 +61,20 @@ extern bool amiga_icon_open(void);
 
 // ---------- DiskObject Python type ----------
 
+// The Python DiskObject wraps an icon.library-allocated `struct
+// DiskObject *`.  Ownership tracking lets us replace `do_DefaultTool`
+// and `do_ToolTypes` with our own AllocVec'd buffers without
+// confusing `FreeDiskObject`: the original pointers are saved at
+// construction time, and `.close()` swaps them back before calling
+// `FreeDiskObject` so the icon.library teardown only sees memory it
+// allocated itself.
 typedef struct _amiga_diskobject_obj_t {
     mp_obj_base_t base;
-    struct DiskObject *dobj;   // NULL after .close()
+    struct DiskObject *dobj;        // NULL after .close()
+    STRPTR original_default_tool;   // icon.library-owned, restored on close
+    STRPTR *original_tool_types;    // icon.library-owned, restored on close
+    bool owns_default_tool;
+    bool owns_tool_types;
 } amiga_diskobject_obj_t;
 
 static const mp_obj_type_t amiga_diskobject_type;
@@ -75,6 +86,10 @@ static mp_obj_t amiga_diskobject_make(struct DiskObject *dobj) {
     amiga_diskobject_obj_t *self = mp_obj_malloc(
         amiga_diskobject_obj_t, &amiga_diskobject_type);
     self->dobj = dobj;
+    self->original_default_tool = dobj->do_DefaultTool;
+    self->original_tool_types   = dobj->do_ToolTypes;
+    self->owns_default_tool = false;
+    self->owns_tool_types   = false;
     return MP_OBJ_FROM_PTR(self);
 }
 
@@ -97,11 +112,196 @@ static mp_obj_t amiga_diskobject_type_str(UBYTE t) {
 // Build the DiskObjectTooltypes mapping bound to this DiskObject.
 static mp_obj_t amiga_tooltypes_make(amiga_diskobject_obj_t *parent);
 
+// Free any Python-owned tooltype buffers and restore the original
+// pointers we saved at construction time, so FreeDiskObject only
+// sees icon.library-owned memory.
 static void amiga_diskobject_close_inplace(amiga_diskobject_obj_t *self) {
-    if (self->dobj != NULL) {
-        FreeDiskObject(self->dobj);
-        self->dobj = NULL;
+    if (self->dobj == NULL) {
+        return;
     }
+    if (self->owns_default_tool && self->dobj->do_DefaultTool != NULL) {
+        FreeVec(self->dobj->do_DefaultTool);
+    }
+    self->dobj->do_DefaultTool = self->original_default_tool;
+    if (self->owns_tool_types && self->dobj->do_ToolTypes != NULL) {
+        for (STRPTR *p = self->dobj->do_ToolTypes; *p != NULL; p++) {
+            FreeVec(*p);
+        }
+        FreeVec(self->dobj->do_ToolTypes);
+    }
+    self->dobj->do_ToolTypes = self->original_tool_types;
+    FreeDiskObject(self->dobj);
+    self->dobj = NULL;
+}
+
+// ---------- mutation helpers ----------
+
+// Replace do_DefaultTool with a Python-owned buffer.  Pass value==NULL
+// to clear it (icon.library treats NULL/empty as "no default tool").
+static void amiga_diskobject_set_default_tool(amiga_diskobject_obj_t *self,
+                                              const char *value,
+                                              size_t value_len) {
+    if (self->owns_default_tool && self->dobj->do_DefaultTool != NULL) {
+        FreeVec(self->dobj->do_DefaultTool);
+        self->dobj->do_DefaultTool = NULL;
+    }
+    if (value == NULL) {
+        // Keep an empty AllocVec'd buffer rather than leaving NULL --
+        // some icon.library implementations crash on a NULL
+        // do_DefaultTool when called from PutDiskObject.
+        STRPTR buf = AllocVec(1, MEMF_ANY);
+        if (buf == NULL) {
+            m_malloc_fail(1);
+        }
+        buf[0] = '\0';
+        self->dobj->do_DefaultTool = buf;
+    } else {
+        STRPTR buf = AllocVec(value_len + 1, MEMF_ANY);
+        if (buf == NULL) {
+            m_malloc_fail(value_len + 1);
+        }
+        memcpy(buf, value, value_len);
+        buf[value_len] = '\0';
+        self->dobj->do_DefaultTool = buf;
+    }
+    self->owns_default_tool = true;
+}
+
+// On first mutation, clone the icon.library-owned do_ToolTypes array
+// into a Python-owned one (each entry deep-copied via AllocVec).
+// Subsequent mutations operate on the Python-owned array directly.
+static void amiga_tooltypes_ensure_owned(amiga_diskobject_obj_t *self) {
+    if (self->owns_tool_types) {
+        return;
+    }
+    size_t n = 0;
+    if (self->dobj->do_ToolTypes != NULL) {
+        while (self->dobj->do_ToolTypes[n] != NULL) {
+            n++;
+        }
+    }
+    STRPTR *new_array = AllocVec((n + 1) * sizeof(STRPTR), MEMF_ANY);
+    if (new_array == NULL) {
+        m_malloc_fail((n + 1) * sizeof(STRPTR));
+    }
+    for (size_t i = 0; i < n; i++) {
+        const char *src = (const char *)self->dobj->do_ToolTypes[i];
+        size_t len = strlen(src);
+        STRPTR buf = AllocVec(len + 1, MEMF_ANY);
+        if (buf == NULL) {
+            for (size_t j = 0; j < i; j++) {
+                FreeVec(new_array[j]);
+            }
+            FreeVec(new_array);
+            m_malloc_fail(len + 1);
+        }
+        memcpy(buf, src, len + 1);
+        new_array[i] = buf;
+    }
+    new_array[n] = NULL;
+    self->dobj->do_ToolTypes = new_array;
+    self->owns_tool_types = true;
+}
+
+// Build a "KEY=VALUE" or "KEY" buffer (flag-style if value==NULL).
+static STRPTR amiga_tooltypes_format_entry(const char *key, size_t key_len,
+                                           const char *value, size_t value_len,
+                                           bool flag_style) {
+    size_t entry_len = flag_style ? key_len : (key_len + 1 + value_len);
+    STRPTR buf = AllocVec(entry_len + 1, MEMF_ANY);
+    if (buf == NULL) {
+        m_malloc_fail(entry_len + 1);
+    }
+    memcpy(buf, key, key_len);
+    if (!flag_style) {
+        buf[key_len] = '=';
+        memcpy(buf + key_len + 1, value, value_len);
+    }
+    buf[entry_len] = '\0';
+    return buf;
+}
+
+// Insert or replace a tooltype.  `flag_style=true` writes "KEY" only
+// (value/value_len are ignored); `flag_style=false` writes "KEY=VALUE".
+static void amiga_tooltypes_set_entry(amiga_diskobject_obj_t *self,
+                                      const char *key, size_t key_len,
+                                      const char *value, size_t value_len,
+                                      bool flag_style) {
+    amiga_tooltypes_ensure_owned(self);
+    STRPTR *tt = self->dobj->do_ToolTypes;
+    // Replace existing entry if the key matches.
+    for (STRPTR *p = tt; *p != NULL; p++) {
+        const char *entry = (const char *)*p;
+        const char *eq = strchr(entry, '=');
+        size_t elen = (eq != NULL) ? (size_t)(eq - entry) : strlen(entry);
+        if (elen == key_len && memcmp(entry, key, key_len) == 0) {
+            STRPTR new_buf = amiga_tooltypes_format_entry(
+                key, key_len, value, value_len, flag_style);
+            FreeVec(*p);
+            *p = new_buf;
+            return;
+        }
+    }
+    // Key absent: grow the array by one slot.
+    size_t n = 0;
+    while (tt[n] != NULL) {
+        n++;
+    }
+    STRPTR *new_array = AllocVec((n + 2) * sizeof(STRPTR), MEMF_ANY);
+    if (new_array == NULL) {
+        m_malloc_fail((n + 2) * sizeof(STRPTR));
+    }
+    for (size_t i = 0; i < n; i++) {
+        new_array[i] = tt[i];
+    }
+    STRPTR new_entry;
+    {
+        // Backout if entry allocation fails after array alloc succeeded.
+        size_t entry_len = flag_style ? key_len : (key_len + 1 + value_len);
+        new_entry = AllocVec(entry_len + 1, MEMF_ANY);
+        if (new_entry == NULL) {
+            FreeVec(new_array);
+            m_malloc_fail(entry_len + 1);
+        }
+        memcpy(new_entry, key, key_len);
+        if (!flag_style) {
+            new_entry[key_len] = '=';
+            memcpy(new_entry + key_len + 1, value, value_len);
+        }
+        new_entry[entry_len] = '\0';
+    }
+    new_array[n]     = new_entry;
+    new_array[n + 1] = NULL;
+    FreeVec(self->dobj->do_ToolTypes);
+    self->dobj->do_ToolTypes = new_array;
+}
+
+// Remove a tooltype.  Returns true if the key was present.
+static bool amiga_tooltypes_del_entry(amiga_diskobject_obj_t *self,
+                                      const char *key, size_t key_len) {
+    amiga_tooltypes_ensure_owned(self);
+    STRPTR *tt = self->dobj->do_ToolTypes;
+    if (tt == NULL) {
+        return false;
+    }
+    size_t idx = 0;
+    while (tt[idx] != NULL) {
+        const char *entry = (const char *)tt[idx];
+        const char *eq = strchr(entry, '=');
+        size_t elen = (eq != NULL) ? (size_t)(eq - entry) : strlen(entry);
+        if (elen == key_len && memcmp(entry, key, key_len) == 0) {
+            FreeVec(tt[idx]);
+            // Shift the remaining entries down.
+            while (tt[idx + 1] != NULL) {
+                tt[idx] = tt[idx + 1];
+                idx++;
+            }
+            tt[idx] = NULL;
+            return true;
+        }
+        idx++;
+    }
+    return false;
 }
 
 static mp_obj_t amiga_diskobject_close(mp_obj_t self_in) {
@@ -156,7 +356,40 @@ static void amiga_diskobject_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
         dest[1] = MP_OBJ_SENTINEL;
         return;
     }
-    // store / delete: nothing settable in Step 1.
+    if (dest[0] == MP_OBJ_SENTINEL && dest[1] != MP_OBJ_NULL) {
+        // store
+        if (self->dobj == NULL) {
+            mp_raise_ValueError(MP_ERROR_TEXT("DiskObject: closed"));
+        }
+        if (attr == MP_QSTR_default_tool) {
+            if (dest[1] == mp_const_none) {
+                amiga_diskobject_set_default_tool(self, NULL, 0);
+            } else {
+                size_t len;
+                const char *s = mp_obj_str_get_data(dest[1], &len);
+                amiga_diskobject_set_default_tool(self, s, len);
+            }
+            dest[0] = MP_OBJ_NULL;
+            return;
+        }
+        if (attr == MP_QSTR_stack_size) {
+            self->dobj->do_StackSize = mp_obj_get_int(dest[1]);
+            dest[0] = MP_OBJ_NULL;
+            return;
+        }
+        if (attr == MP_QSTR_current_x) {
+            self->dobj->do_CurrentX = mp_obj_get_int(dest[1]);
+            dest[0] = MP_OBJ_NULL;
+            return;
+        }
+        if (attr == MP_QSTR_current_y) {
+            self->dobj->do_CurrentY = mp_obj_get_int(dest[1]);
+            dest[0] = MP_OBJ_NULL;
+            return;
+        }
+        // Anything else: leave dest[0] as MP_OBJ_SENTINEL so the
+        // framework raises AttributeError.
+    }
 }
 
 static const mp_rom_map_elem_t amiga_diskobject_locals_dict_table[] = {
@@ -215,26 +448,48 @@ static void amiga_tooltypes_split(const char *entry, size_t *key_len,
 
 static mp_obj_t amiga_tooltypes_subscr(mp_obj_t self_in, mp_obj_t key_in,
                                        mp_obj_t value) {
-    if (value != MP_OBJ_SENTINEL) {
-        // store / delete -- deferred to Step 2.
-        mp_raise_TypeError(MP_ERROR_TEXT("tooltypes is read-only"));
-    }
     amiga_tooltypes_obj_t *self = MP_OBJ_TO_PTR(self_in);
-    STRPTR *tt = amiga_tooltypes_array(self);
-    if (tt == NULL) {
-        mp_raise_type(&mp_type_KeyError);
-    }
     size_t klen;
     const char *kdata = mp_obj_str_get_data(key_in, &klen);
-    for (STRPTR *p = tt; *p != NULL; p++) {
-        size_t elen;
-        const char *evalue;
-        amiga_tooltypes_split((const char *)*p, &elen, &evalue);
-        if (elen == klen && memcmp(*p, kdata, klen) == 0) {
-            return mp_obj_new_bytes((const byte *)evalue, strlen(evalue));
+    if (value == MP_OBJ_SENTINEL) {
+        // load: tt["KEY"]
+        STRPTR *tt = amiga_tooltypes_array(self);
+        if (tt == NULL) {
+            mp_raise_type_arg(&mp_type_KeyError, key_in);
         }
+        for (STRPTR *p = tt; *p != NULL; p++) {
+            size_t elen;
+            const char *evalue;
+            amiga_tooltypes_split((const char *)*p, &elen, &evalue);
+            if (elen == klen && memcmp(*p, kdata, klen) == 0) {
+                return mp_obj_new_bytes((const byte *)evalue, strlen(evalue));
+            }
+        }
+        mp_raise_type_arg(&mp_type_KeyError, key_in);
     }
-    mp_raise_type_arg(&mp_type_KeyError, key_in);
+    if (self->parent->dobj == NULL) {
+        mp_raise_ValueError(MP_ERROR_TEXT("DiskObject: closed"));
+    }
+    if (value == MP_OBJ_NULL) {
+        // delete: del tt["KEY"]
+        if (!amiga_tooltypes_del_entry(self->parent, kdata, klen)) {
+            mp_raise_type_arg(&mp_type_KeyError, key_in);
+        }
+        return mp_const_none;
+    }
+    // store: tt["KEY"] = value.  None -> flag-style ("KEY" with no
+    // "="); str/bytes -> "KEY=VALUE".  Anything else is a type error.
+    if (value == mp_const_none) {
+        amiga_tooltypes_set_entry(self->parent, kdata, klen, NULL, 0, true);
+        return mp_const_none;
+    }
+    if (mp_obj_is_str_or_bytes(value)) {
+        size_t vlen;
+        const char *vdata = mp_obj_str_get_data(value, &vlen);
+        amiga_tooltypes_set_entry(self->parent, kdata, klen, vdata, vlen, false);
+        return mp_const_none;
+    }
+    mp_raise_TypeError(MP_ERROR_TEXT("tooltype value must be str / bytes / None"));
 }
 
 static mp_obj_t amiga_tooltypes_contains(amiga_tooltypes_obj_t *self,
@@ -439,11 +694,127 @@ static mp_obj_t mod_icon_read(mp_obj_t path_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(mod_icon_read_obj, mod_icon_read);
 
+// ---------- _icon.write(path, dobj) ----------
+//
+// Writes the DiskObject back through PutDiskObject.  Raises OSError
+// if PutDiskObject fails (e.g. write-protected volume, full disk).
+// Doesn't touch the in-memory DiskObject -- the caller can carry on
+// mutating it afterwards.
+static mp_obj_t mod_icon_write(mp_obj_t path_in, mp_obj_t dobj_in) {
+    const char *path = mp_obj_str_get_str(path_in);
+    if (!mp_obj_is_type(dobj_in, &amiga_diskobject_type)) {
+        mp_raise_TypeError(MP_ERROR_TEXT("expected DiskObject"));
+    }
+    amiga_diskobject_obj_t *self = MP_OBJ_TO_PTR(dobj_in);
+    if (self->dobj == NULL) {
+        mp_raise_ValueError(MP_ERROR_TEXT("DiskObject: closed"));
+    }
+    if (!amiga_icon_open()) {
+        mp_raise_OSError(MP_EIO);
+    }
+    BOOL ok = PutDiskObject((STRPTR)path, self->dobj);
+    if (!ok) {
+        mp_raise_OSError(MP_EIO);
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(mod_icon_write_obj, mod_icon_write);
+
+// ---------- _icon.new(type, **kwargs) ----------
+//
+// Fresh DiskObject built from the system's default icon for `type`
+// (via GetDefDiskObject; reads ENV:sys/def_*.info if present).
+// Optional kwargs apply field updates immediately so callers can
+// chain straight into icon.write() without a second pass.
+static mp_obj_t mod_icon_new(size_t n_args, const mp_obj_t *pos_args,
+                             mp_map_t *kw_args) {
+    static const mp_arg_t allowed_args[] = {
+        { MP_QSTR_type,         MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0} },
+        { MP_QSTR_default_tool, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+        { MP_QSTR_stack_size,   MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+        { MP_QSTR_current_x,    MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+        { MP_QSTR_current_y,    MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+        { MP_QSTR_tooltypes,    MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
+    };
+    mp_arg_val_t arg_vals[MP_ARRAY_SIZE(allowed_args)];
+    mp_arg_parse_all(n_args, pos_args, kw_args,
+        MP_ARRAY_SIZE(allowed_args), allowed_args, arg_vals);
+
+    if (!amiga_icon_open()) {
+        mp_raise_OSError(MP_EIO);
+    }
+    struct DiskObject *dobj = GetDefDiskObject(arg_vals[0].u_int);
+    if (dobj == NULL) {
+        // GetDefDiskObject returns NULL for an unsupported type code
+        // (or if icon.library is too old to recognise it -- V36+).
+        mp_raise_OSError(MP_EINVAL);
+    }
+    mp_obj_t obj = amiga_diskobject_make(dobj);
+    amiga_diskobject_obj_t *self = MP_OBJ_TO_PTR(obj);
+
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        if (arg_vals[1].u_obj != MP_OBJ_NULL) {
+            if (arg_vals[1].u_obj == mp_const_none) {
+                amiga_diskobject_set_default_tool(self, NULL, 0);
+            } else {
+                size_t len;
+                const char *s = mp_obj_str_get_data(arg_vals[1].u_obj, &len);
+                amiga_diskobject_set_default_tool(self, s, len);
+            }
+        }
+        if (arg_vals[2].u_obj != MP_OBJ_NULL) {
+            self->dobj->do_StackSize = mp_obj_get_int(arg_vals[2].u_obj);
+        }
+        if (arg_vals[3].u_obj != MP_OBJ_NULL) {
+            self->dobj->do_CurrentX = mp_obj_get_int(arg_vals[3].u_obj);
+        }
+        if (arg_vals[4].u_obj != MP_OBJ_NULL) {
+            self->dobj->do_CurrentY = mp_obj_get_int(arg_vals[4].u_obj);
+        }
+        if (arg_vals[5].u_obj != MP_OBJ_NULL) {
+            if (!mp_obj_is_type(arg_vals[5].u_obj, &mp_type_dict)) {
+                mp_raise_TypeError(
+                    MP_ERROR_TEXT("tooltypes must be a dict"));
+            }
+            mp_map_t *m = mp_obj_dict_get_map(arg_vals[5].u_obj);
+            for (size_t i = 0; i < m->alloc; i++) {
+                if (!mp_map_slot_is_filled(m, i)) {
+                    continue;
+                }
+                size_t klen;
+                const char *kdata = mp_obj_str_get_data(m->table[i].key, &klen);
+                mp_obj_t v = m->table[i].value;
+                if (v == mp_const_none) {
+                    amiga_tooltypes_set_entry(self, kdata, klen, NULL, 0, true);
+                } else if (mp_obj_is_str_or_bytes(v)) {
+                    size_t vlen;
+                    const char *vdata = mp_obj_str_get_data(v, &vlen);
+                    amiga_tooltypes_set_entry(self, kdata, klen, vdata, vlen, false);
+                } else {
+                    mp_raise_TypeError(MP_ERROR_TEXT(
+                        "tooltype value must be str / bytes / None"));
+                }
+            }
+        }
+        nlr_pop();
+    } else {
+        // If kwarg application threw, drop the half-built object so
+        // we don't leak the GetDefDiskObject allocation.
+        amiga_diskobject_close_inplace(self);
+        nlr_jump(nlr.ret_val);
+    }
+    return obj;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(mod_icon_new_obj, 1, mod_icon_new);
+
 // ---------- module globals ----------
 
 static const mp_rom_map_elem_t mod_icon_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),  MP_ROM_QSTR(MP_QSTR__icon) },
     { MP_ROM_QSTR(MP_QSTR_read),      MP_ROM_PTR(&mod_icon_read_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write),     MP_ROM_PTR(&mod_icon_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_new),       MP_ROM_PTR(&mod_icon_new_obj) },
     { MP_ROM_QSTR(MP_QSTR_DiskObject),
         MP_ROM_PTR(&amiga_diskobject_type) },
     // do_Type values from <workbench/workbench.h>.
