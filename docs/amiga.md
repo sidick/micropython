@@ -1219,6 +1219,7 @@ Variants: all three shipped variants. Trivial size cost (~2 KB).
 |-------|--------|-----|
 | `try/except` in `@micropython.native` crashes | Known bug | Needs a 68k assembly NLR (`nlr68k.S`) saving D2–D7/A2–A5 in `nlr_buf_t` |
 | `@micropython.viper` limited to 1 register local (D7) | `MAX_REGS_FOR_LOCAL_VARS = 1` | 68k-specific viper register allocator, or accept stack-based locals |
+| 512-byte path buffers in `modamiga.c` (`amiga.wb_selected_files`, `amiga.match` / `amiga.imatch` via `AMIGA_MATCH_BUFSIZE`) and `amiga_history.c` are tight for long-name filesystems (SFS/PFS3/FFS2 allow ~105-byte filenames per component) | Pending follow-on (Phase 31 raised the issue) | Bump to 1024 to match the Phase 31 `modasl.c` buffer; stack cost is negligible |
 
 ---
 
