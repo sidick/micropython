@@ -52,7 +52,14 @@ jobs:
         # invocation, including the submodule sub-target. Default cache
         # dir is $HOME/.cache/amissl-sdk which matches the actions/cache
         # path above.
-        run: tools/amiga-fetch-amissl-sdk.sh
+        #
+        # The Makefile default AMISSL_SDK_DEV points at /amissl-cache,
+        # which is where tools/amiga-build.sh bind-mounts the host cache
+        # locally. CI doesn't bind-mount, so symlink the host cache into
+        # /amissl-cache so the Makefile's default path resolves.
+        run: |
+          tools/amiga-fetch-amissl-sdk.sh
+          ln -sfn "$HOME/.cache/amissl-sdk" /amissl-cache
 
       - name: Init required submodules
         # The port's manifest.py only freezes ports/amiga/modules, but the
