@@ -1,0 +1,59 @@
+name: Sync master with upstream
+
+# Runs on this fork's clock to keep `master` in sync with
+# `micropython/micropython`'s `master`. Fast-forward only -- if local
+# `master` has diverged the job fails loudly rather than risking a
+# silent overwrite.
+#
+# Note: GitHub disables scheduled workflows on forks after 60 days of
+# *repository* inactivity. The amiga-port branch is active so this is
+# unlikely to bite us, but if the sync stops firing check the
+# Actions tab for a disabled banner.
+#
+# Trigger manually any time via the "Run workflow" button.
+
+on:
+  schedule:
+    # 06:17 UTC daily -- off-peak, avoids the top of the hour rush
+    # that GitHub Actions cron tends to be late on.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          # Full history so the fast-forward merge has the ancestry
+          # it needs to evaluate.
+          fetch-depth: 0
+
+      - name: Fetch upstream master
+        run: |
+          git remote add upstream https://github.com/micropython/micropython.git
+          git fetch upstream master
+
+      - name: Fast-forward and push
+        run: |
+          set -euo pipefail
+          local_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse upstream/master)"
+          if [ "$local_sha" = "$upstream_sha" ]; then
+            echo "Already up to date with upstream/master ($upstream_sha)."
+            exit 0
+          fi
+          # Refuse to clobber local commits. Fast-forward only.
+          if ! git merge-base --is-ancestor "$local_sha" "$upstream_sha"; then
+            echo "ERROR: fork master ($local_sha) has commits not present"
+            echo "in upstream/master ($upstream_sha). Refusing to overwrite."
+            echo "Resolve manually (rebase / reset / merge) and re-run."
+            exit 1
+          fi
+          git merge --ff-only upstream/master
+          git push origin master
