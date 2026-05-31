@@ -139,6 +139,8 @@ because:
 | `SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY)` (transparently retry on post-handshake control records) | same close-after-handshake |
 | `SSL_CTX_set_ciphersuites(ctx, "TLS_CHACHA20_POLY1305_SHA256")` (match aget's negotiated TLS 1.3 cipher) | same close-after-handshake |
 | Kitchen sink: `SSL_OP_ALL \| SSL_OP_NO_TICKET` + `SSL_CTX_set_min/max_proto_version(TLS1_3_VERSION)` + `SSL_CTX_set_session_cache_mode(SSL_SESS_CACHE_OFF)` | same close-after-handshake |
+| `SSL_get_peer_certificate(ssl); X509_free(...);` between `SSL_connect` and `SSL_write` (match the canonical AmiSSL `test/https.c` "settling" sequence) | same close-after-handshake |
+| Explicit BIO chain: `BIO_f_buffer` → `BIO_new_socket(fd)` on the write side via `SSL_set_bio`, replacing `SSL_set_fd` | `SSL_write` now reports success (61 bytes accepted into the buffer), but the next `SSL_read` returns `SYSCALL`/`EIO`. The buffer just defers the symptom — Cloudflare still closes, we just notice it later. Not a real fix. |
 
 The second result is the most interesting one for the maintainers:
 the v4 init path produces a different *broken* state for v5
