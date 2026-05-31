@@ -390,6 +390,14 @@ static int amiga_main(int argc_unused, char **argv_unused) {
         "CON:0/30/640/200/MicroPython/AUTO/CLOSE";
     const char *con_spec = con_default;
     const char *wb_tt_script = NULL;
+    // Project-icon path. When the user double-clicks a WBPROJECT
+    // icon, Workbench launches our binary (named in the project's
+    // default_tool) with sm_ArgList[0] = the tool, sm_ArgList[1] =
+    // the project file. We compute the project's full path from
+    // wa_Lock + wa_Name and run it as the script, the same way
+    // SCRIPT= would.
+    char wb_project_path[AMIGA_PATH_MAX];
+    wb_project_path[0] = '\0';
     if (_WBenchMsg != NULL) {
         // Read the icon first so SCRIPT= / CON= are available before
         // we open the console. GetDiskObject finds <wa_Name>.info
@@ -407,6 +415,24 @@ static int amiga_main(int argc_unused, char **argv_unused) {
                     (CONST_STRPTR)"CON");
                 if (con_tt != NULL && con_tt[0] != '\0') {
                     con_spec = con_tt;
+                }
+            }
+            // Project-icon launch: sm_ArgList[1] is the project file.
+            // Resolve to an absolute path so cwd-relative argv tricks
+            // later don't break the lookup.
+            if (_WBenchMsg->sm_NumArgs > 1) {
+                struct WBArg *arg = &_WBenchMsg->sm_ArgList[1];
+                if (arg->wa_Lock != 0) {
+                    if (!NameFromLock(arg->wa_Lock, (STRPTR)wb_project_path,
+                                      sizeof(wb_project_path))) {
+                        wb_project_path[0] = '\0';
+                    }
+                }
+                if (arg->wa_Name != NULL && arg->wa_Name[0] != '\0') {
+                    if (!AddPart((STRPTR)wb_project_path, (STRPTR)arg->wa_Name,
+                                 sizeof(wb_project_path))) {
+                        wb_project_path[0] = '\0';
+                    }
                 }
             }
         }
@@ -753,15 +779,25 @@ static int amiga_main(int argc_unused, char **argv_unused) {
         }
     }
 
-    if (!ran_something && wb_tt_script != NULL && wb_tt_script[0] != '\0') {
-        // Workbench launch with SCRIPT=<path> tooltype. Run that script as
-        // if it had been given on the command line. The argv loop above
-        // doesn't see it because we never inject a positional, so we mirror
-        // its behaviour here. sys.argv ends up as ["micropython"] (no
-        // user-supplied script args — selected files come back via
-        // amiga.wb_selected_files()).
+    // SCRIPT= tooltype takes precedence over a project-icon launch.
+    // In practice they don't overlap (tool icons carry SCRIPT=, project
+    // icons don't), so this only matters when a user has both.
+    const char *wb_script_to_run = NULL;
+    if (wb_tt_script != NULL && wb_tt_script[0] != '\0') {
+        wb_script_to_run = wb_tt_script;
+    } else if (wb_project_path[0] != '\0') {
+        wb_script_to_run = wb_project_path;
+    }
+
+    if (!ran_something && wb_script_to_run != NULL) {
+        // Workbench launch with SCRIPT=<path> tooltype or project-icon
+        // file. Run it as if it had been given on the command line.
+        // The argv loop above doesn't see it because we never inject a
+        // positional, so we mirror its behaviour here. sys.argv ends up
+        // as ["micropython"] (no user-supplied script args — selected
+        // files come back via amiga.wb_selected_files()).
         char dir[256];
-        path_dir(wb_tt_script, dir, sizeof(dir));
+        path_dir(wb_script_to_run, dir, sizeof(dir));
         if (!dir[0]) {
             struct Process *me_p = (struct Process *)FindTask(NULL);
             if (!NameFromLock(me_p->pr_CurrentDir, (STRPTR)dir, sizeof(dir))) {
@@ -772,7 +808,7 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
                 mp_obj_new_str(dir, strlen(dir)));
         }
-        exit_code = pyexec_file(wb_tt_script);
+        exit_code = pyexec_file(wb_script_to_run);
         ran_something = true;
     }
 
