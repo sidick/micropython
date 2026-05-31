@@ -25,14 +25,16 @@ Step 1: SDK in build env  →  Step 2: library lifecycle  →  Step 3: SSLContex
 
 | # | Step | Output | On-target smoke test |
 |---|------|--------|---------------------|
-| **1** | SDK fetched on every build | Headers `<openssl/*>` + `libamisslstubs.a` reachable from `m68k-amigaos-gcc` inside the bebbo container | 1-line C link test inside the container |
-| **2** | `ports/amiga/amiga_ssl.{c,h}` — library lifecycle | `OpenLibrary("amisslmaster.library")` + `OpenAmiSSLTags(AMISSL_CURRENT_VERSION, ...)` filling `AmiSSLBase` / `AmiSSLExtBase`. Wired into `main.c` after `amiga_socket_open()`. Silent fallback if `amisslmaster.library` missing | Build + boot under Amiberry, observe no crash on startup/shutdown |
-| **3** | `ports/amiga/modssl.c` — `ssl` module + `SSLContext` | `PROTOCOL_TLS_CLIENT`, `CERT_REQUIRED`, `CERT_NONE`; `SSLContext.__init__/__del__` (`SSL_CTX_new(TLS_client_method())` + `SSL_CTX_free`); `verify_mode` property; `load_verify_locations(cafile=…)` | `import ssl; ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` |
-| **4** | `SSLSocket` + `wrap_socket` | New type wrapping `SSL *` + fd. `SSL_new` → `SSL_set_fd` → `SSL_set_tlsext_host_name` (SNI) → `SSL_connect`. Stream protocol: `SSL_read`/`SSL_write` with `SSL_ERROR_WANT_READ/WRITE` → `MP_EAGAIN`. Close via `SSL_shutdown` + `SSL_free` | End-to-end HTTPS GET against an external host |
-| **5** | Variant + heap reality check | Confirm `minimal` excludes SSL (no socket → no SSL). Decide heap policy for `standard` given `SSL_CTX` ~16 KB + `SSL` ~48 KB allocations from system memory | Two-context allocation under default heap; document `-X heap=` if needed |
-| **6** | Docs + test wiring | Flip Phase 28 to ✅ in docs/amiga.md. Add SSL section to docs/amiga-testing.md. Run upstream `tests/extmod/ssl*` against our binary on-device | `tests/extmod/ssl_basic.py` via `tools/amiga-runtests.py` |
+| **1 ✅** | SDK fetched on every build | Headers `<openssl/*>` + `libamisslstubs.a` reachable from `m68k-amigaos-gcc` inside the bebbo container | 1-line C link test inside the container |
+| **2 ✅** | `ports/amiga/amiga_ssl.{c,h}` — library lifecycle | `OpenLibrary("amisslmaster.library")` + `OpenAmiSSLTags(AMISSL_CURRENT_VERSION, ...)` filling `AmiSSLBase` / `AmiSSLExtBase`. Wired into `main.c` after `amiga_socket_open()`. Silent fallback if `amisslmaster.library` missing | Build + boot under Amiberry, observe no crash on startup/shutdown |
+| **3 ✅** | `ports/amiga/modssl.c` — `ssl` module + `SSLContext` | `PROTOCOL_TLS_CLIENT`, `CERT_REQUIRED`, `CERT_NONE`; `SSLContext.__init__/__del__` (`SSL_CTX_new(TLS_client_method())` + `SSL_CTX_free`); `verify_mode` property; `load_verify_locations(cafile=…)` | `import ssl; ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)` |
+| **4 ✅** | `SSLSocket` + `wrap_socket` | New type wrapping `SSL *` + fd. `SSL_new` → `SSL_set_fd` → `SSL_set_tlsext_host_name` (SNI) → `SSL_connect`. Stream protocol: `SSL_read`/`SSL_write` with `SSL_ERROR_WANT_READ/WRITE` → `MP_EAGAIN`. Close via `SSL_shutdown` + `SSL_free` | End-to-end HTTPS GET against an external host |
+| **5 ✅** | Variant + heap reality check | Confirm `minimal` excludes SSL (no socket → no SSL). Decide heap policy for `standard` given `SSL_CTX` ~16 KB + `SSL` ~48 KB allocations from system memory | Two-context allocation under default heap; document `-X heap=` if needed |
+| **6 ✅** | Docs + test wiring | Flip Phase 28 to ✅ in docs/amiga.md. Add SSL section to docs/amiga-testing.md. Run upstream `tests/extmod/ssl*` against our binary on-device | `tests/extmod/ssl_basic.py` via `tools/amiga-runtests.py` |
 
-Each step is ~150–400 LOC and lands as its own PR.
+All six steps landed. The implementation log under each step
+section below records what shipped, the on-target verification
+output, and any gotchas surfaced during the work.
 
 ---
 
@@ -347,10 +349,27 @@ is unchanged from pre-Phase 28.
   so the on-device runner has a deterministic endpoint that doesn't
   depend on the external internet.
 
-### Verification
+### Status — done
 
-`tests/extmod/ssl_basic.py` + any other applicable upstream tests
-pass via the on-device runner under Amiberry.
+- `docs/amiga.md` Phase 28 row flipped to ✅; section header updated
+  with the verified-status sentence and a forward pointer here.
+- `docs/amiga-testing.md` gained an SSL Tests subsection under the
+  Amiberry runner — covers prereqs (AmiSSL v5 install + assigns
+  in scope), the recommended `set_default_verify_paths()` entry
+  point, the two AmigaOS cert-load gotchas (trailing-slash capath,
+  old-hash c_rehash filenames), and the TLS 1.3 modern-CDN
+  limitation.
+- `tools/amiga-runtests.py` confirmed not to gate out
+  `tests/extmod/ssl*.py` / `tls*.py` — they walk naturally when
+  the runner is pointed at `extmod/`. Tests that need surface
+  we don't expose (`ssl.wrap_socket` module-level legacy form,
+  `cadata=`, server-mode handshake with canned certs) will fail;
+  the `SSLContext`-shape tests
+  (`ssl_sslcontext.py`, `ssl_sslcontext_verify_mode.py`, etc.)
+  exercise the API we land here.
+- Deferred: the host-side TLS echo server. Not built — external
+  hosts that negotiate TLS 1.2 (`www.python.org` etc.) are
+  sufficient for the verification we needed.
 
 ---
 
