@@ -52,7 +52,7 @@ with file-system access, based on the `ports/minimal` template.
 | 35 | `amiga.icon` — `.info` file read / write / manipulation | ✅ |
 | 36 | `amiga.catalog` — `locale.library` catalog lookup | ✅ |
 | 37 | `amiga.datatypes` — `datatypes.library` file recognition | planned (low priority) |
-| 38 | `ports/amiga/README.md` for upstreaming | planned |
+| 38 | `ports/amiga/README.md` for upstreaming | ✅ |
 
 ### Non-goals (initially)
 
@@ -1836,7 +1836,7 @@ shows up.
 
 ---
 
-## Phase 38 — `ports/amiga/README.md` (planned)
+## Phase 38 — `ports/amiga/README.md` ✅
 
 A `ports/amiga/README.md` that matches the style of the other
 port READMEs (rp2, stm32, esp32, unix, ...) and is suitable for
