@@ -63,6 +63,21 @@ void amiga_arm_banner_inject(int after_n_writes) {
 }
 
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
+    // shared/readline emits the 3-byte CSI "erase line from cursor"
+    // (ESC [ K) after backing the cursor up to delete characters. On
+    // AmigaOS the console wraps the cursor up across row boundaries
+    // when it's stepped past column 0, so deleting characters that had
+    // wrapped to a second screen row lands the cursor back at the
+    // start of input on the first row -- and ESC [ K only clears that
+    // first row, leaving the wrap-overflow visible below.
+    //
+    // Substitute ESC [ J (erase from cursor to end of screen) so the
+    // wrap-overflow rows are wiped too. The REPL is the only thing in
+    // the CON: window so there's nothing below the prompt that we'd
+    // accidentally clobber.
+    if (len == 3 && str[0] == '\x1b' && str[1] == '[' && str[2] == 'K') {
+        str = "\x1b[J";
+    }
     LONG written = Write(Output(), (APTR)str, (LONG)len);
     if (amiga_banner_inject_countdown > 0) {
         if (--amiga_banner_inject_countdown == 0) {
