@@ -1,8 +1,15 @@
+#include <stdio.h>
+#include <string.h>
 #include <dos/dos.h>
 #include <proto/dos.h>
+#include <proto/exec.h>
 #include "py/mphal.h"
 #include "py/runtime.h"
 #include "shared/runtime/interrupt_char.h"
+
+// Initial GC heap size, captured by main.c after argv/env/tooltype
+// parsing and read by the banner injector below.
+extern size_t amiga_initial_heap;
 
 // Called by MICROPY_VM_HOOK_LOOP every 1024 bytecodes.
 void amiga_check_ctrl_c(void) {
@@ -42,8 +49,33 @@ int mp_hal_stdin_rx_chr(void) {
     return (int)c;
 }
 
+// One-shot banner injection: when armed, fires after the next N writes.
+// Used by main.c to slot a Heap-info line into the upstream
+// pyexec_friendly_repl banner without modifying shared code. pyexec
+// emits three writes -- MICROPY_BANNER_NAME_AND_VERSION, "; <machine>",
+// "\r\n" -- before the "Type help()" line, so arming with N=3 lands
+// the inject between them. If pyexec ever changes the write count,
+// update the call site.
+static int amiga_banner_inject_countdown = 0;
+
+void amiga_arm_banner_inject(int after_n_writes) {
+    amiga_banner_inject_countdown = after_n_writes;
+}
+
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     LONG written = Write(Output(), (APTR)str, (LONG)len);
+    if (amiga_banner_inject_countdown > 0) {
+        if (--amiga_banner_inject_countdown == 0) {
+            char buf[80];
+            int n = snprintf(buf, sizeof(buf),
+                "Heap: %luK initial; system free: %luK\r\n",
+                (unsigned long)(amiga_initial_heap / 1024),
+                (unsigned long)(AvailMem(MEMF_ANY) / 1024));
+            if (n > 0 && n < (int)sizeof(buf)) {
+                Write(Output(), (APTR)buf, (LONG)n);
+            }
+        }
+    }
     return written < 0 ? 0 : (mp_uint_t)written;
 }
 
