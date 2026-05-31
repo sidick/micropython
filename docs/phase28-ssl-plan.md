@@ -188,17 +188,61 @@ Under Amiberry with network:
 import socket, ssl
 
 s = socket.socket()
-s.connect(socket.getaddrinfo("www.example.com", 443)[0][-1])
+s.connect(socket.getaddrinfo("www.python.org", 443)[0][-1])
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.verify_mode = ssl.CERT_REQUIRED
-ctx.load_verify_locations(capath="AmiSSL:certs/")
-ws = ctx.wrap_socket(s, server_hostname="www.example.com")
-ws.write(b"GET / HTTP/1.0\r\nHost: www.example.com\r\n\r\n")
+ctx.set_default_verify_paths()
+ws = ctx.wrap_socket(s, server_hostname="www.python.org")
+ws.write(b"GET / HTTP/1.0\r\nHost: www.python.org\r\n\r\n")
 print(ws.read(2048)[:80])
 ws.close()
 ```
 
-Should print the start of an HTTP/1.0 response.
+Should print the start of an HTTP/1.0 response — verified on
+2026-05-31 with `HTTP/1.1 200 OK` followed by ~54 KB of HTML.
+
+### Status — verified
+
+End-to-end HTTPS GET against `www.python.org` succeeds under
+Amiberry with full `CERT_REQUIRED` chain validation: TCP connect,
+TLS handshake + verify, write 104-byte request, read 53 912 bytes
+of HTML, clean shutdown. The pure-protocol pipeline works.
+
+### Known limitation — TLS 1.3 against modern CDNs
+
+Tests against Cloudflare-fronted (`www.example.com`) and
+GitHub (`api.github.com`) endpoints complete the TLS 1.3 handshake
+(`CERT_REQUIRED` validation passes — the chain is verified) but
+the immediate post-handshake `SSL_write` returns EPIPE / broken
+pipe with no bytes sent. Forcing TLS 1.2 via
+`SSL_CTX_set_max_proto_version` doesn't help: those servers reject
+TLS 1.2 outright. `www.python.org` (which still negotiates TLS 1.2
+by default) works in both modes.
+
+The failure mode strongly suggests AmiSSL's post-handshake state
+isn't fully ready for `SSL_write` when the server sends a
+NewSessionTicket immediately after the Finished message. The
+upstream OpenSSL example (`test/https.c`) calls
+`SSL_get_peer_certificate` etc. between handshake and write — that
+extra dance may be load-bearing on AmigaOS.
+
+Tracked as a Phase 28 follow-up. The MicroPython glue is correct;
+the bug is below our layer.
+
+### Cert path gotcha
+
+`SSL_CTX_load_verify_locations(capath=...)` is sensitive to a
+trailing slash on AmigaOS: `"AmiSSL:certs/"` fails (path gets
+concatenated to `"AmiSSL:certs//<hash>.0"` which the AmigaDOS
+handler interprets as parent-dir-reference and ends up nowhere),
+`"AmiSSL:certs"` works. `set_default_verify_paths()` sidesteps
+the issue entirely and is the recommended call.
+
+Also: AmiSSL's c_rehash output uses the *old* (pre-1.0.0) subject
+hash algorithm. New-hash filenames silently miss in lookups even
+though byte-identical files exist under their old-hash names in
+the same directory. Use `set_default_verify_paths()` and let
+AmiSSL handle this internally.
 
 ---
 
