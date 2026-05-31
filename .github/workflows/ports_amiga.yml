@@ -79,38 +79,46 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Stage artifacts
-        # Build each variant's release directory next to the binary:
-        # the WBTOOL icon ships alongside `micropython`, and the
-        # WBPROJECT icon goes under `icons/` for users to copy
-        # next to their `.py` files (renamed `*.py.info`).
+      - name: Install lha
+        # Debian's `lha` is the maintained Tsugio Okamoto fork
+        # (lha-1.14i). It speaks the same archive format Amiga
+        # tooling expects.
+        run: apt-get update && apt-get install -y --no-install-recommends lha
+
+      - name: Stage release tree
+        # Assemble a single deployment-ready tree:
+        #   README.md                     (port README at top)
+        #   icons/python_script.info      (WBPROJECT icon to rename)
+        #   examples/                     (Amiga-port examples)
+        #   micropython.<variant>         (each variant binary)
+        #   micropython.<variant>.info    (WBTOOL icon for that variant)
         run: |
           set -e
+          mkdir -p release/icons release/examples
+          cp ports/amiga/README.md release/
+          cp ports/amiga/python_script.info release/icons/
+          cp -a examples/amiga/. release/examples/
           for v in standard 68020fpu 68040; do
-            mkdir -p artifacts/$v/icons
-            cp ports/amiga/build-$v/micropython artifacts/$v/
-            cp ports/amiga/micropython.info    artifacts/$v/
-            cp ports/amiga/python_script.info  artifacts/$v/icons/
+            cp ports/amiga/build-$v/micropython release/micropython.$v
+            cp ports/amiga/micropython.info release/micropython.$v.info
           done
-          ls -la artifacts/*/
+          ls -laR release/
 
-      - name: Upload standard
+      - name: Pack LHA
+        run: |
+          set -e
+          archive="micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}.lha"
+          cd release
+          # `a` = add, `r` recursive, `q` quiet. The archive lives one
+          # level up so its own path isn't in the file list.
+          lha aq ../$archive .
+          cd ..
+          ls -la "$archive"
+          lha v "$archive"
+
+      - name: Upload LHA
         uses: actions/upload-artifact@v7
         with:
-          name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: artifacts/standard/
-          if-no-files-found: error
-
-      - name: Upload 68020fpu
-        uses: actions/upload-artifact@v7
-        with:
-          name: micropython-amiga-68020fpu-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: artifacts/68020fpu/
-          if-no-files-found: error
-
-      - name: Upload 68040
-        uses: actions/upload-artifact@v7
-        with:
-          name: micropython-amiga-68040-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: artifacts/68040/
+          name: micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}.lha
           if-no-files-found: error
