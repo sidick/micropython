@@ -324,16 +324,21 @@ gotchas with manual cert loading:
 #### Known limitation: TLS 1.3 against modern CDNs
 
 `CERT_REQUIRED` HTTPS against TLS-1.3-eager fronts (Cloudflare,
-GitHub) completes the handshake (cert chain verifies fine) but the
-subsequent `ws.write` returns `EPIPE` / broken pipe with zero
-bytes sent. Forcing TLS 1.2 doesn't help — those servers reject
-TLS 1.2. Hosts that still negotiate TLS 1.2 by default
-(`www.python.org`, etc.) work cleanly in both directions.
+GitHub) completes the handshake (cert chain verifies fine) but
+the server closes the connection before any application data can
+be written: `ws.write` returns `EPIPE` / broken pipe with zero
+bytes sent. Hosts that don't strict-front like this (e.g.
+`www.python.org`) work cleanly.
 
-Tracked in `docs/phase28-ssl-plan.md` as a Phase 28 follow-up
-(likely AmiSSL's post-handshake state isn't fully ready for
-`SSL_write` when the server pushes a NewSessionTicket
-immediately after `Finished`).
+**Reproducible with AmiSSL's own `openssl s_client`** — same
+`CONNECTION CLOSED BY SERVER` + `tls_retry_write_records:Broken
+pipe` trace, with all four certs in the chain reporting
+`verify return:1`. So it is below the MicroPython layer. Workaround
+attempts inside `s_client` (forcing classic `X25519` to skip the
+post-quantum MLKEM hybrid, disabling session tickets, forcing
+TLS 1.2) either reproduce the same close or get rejected outright
+at ClientHello. See `docs/phase28-ssl-plan.md` for the full
+diagnostic log.
 
 #### Upstream extmod/ssl* and tls* tests
 
