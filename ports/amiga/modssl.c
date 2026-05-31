@@ -443,6 +443,12 @@ static const mp_rom_map_elem_t ssl_socket_locals_dict_table[] = {
         MP_ROM_PTR(&mp_stream_unbuffered_readline_obj) },
     { MP_ROM_QSTR(MP_QSTR_write),
         MP_ROM_PTR(&mp_stream_write_obj) },
+    // send/recv aliases so SSLSocket is drop-in compatible with the
+    // BSD-socket idiom used by urequests and any user code mirroring
+    // modsocket.c's surface. They route through the same stream
+    // protocol callbacks as write/read, so semantics match exactly.
+    { MP_ROM_QSTR(MP_QSTR_send),    MP_ROM_PTR(&mp_stream_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_recv),    MP_ROM_PTR(&mp_stream_read_obj) },
     { MP_ROM_QSTR(MP_QSTR_close),
         MP_ROM_PTR(&ssl_socket_close_obj) },
     { MP_ROM_QSTR(MP_QSTR___del__),

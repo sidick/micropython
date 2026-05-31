@@ -1,19 +1,25 @@
 # urequests -- HTTP/1.0 client for the MicroPython Amiga port.
 #
-# Phase 29 Step 1: plain HTTP only, GET / HEAD verbs, fixed-length
-# body via Content-Length (read-until-EOF fallback for responses
-# that omit it). Chunked Transfer-Encoding + gzip decompression
-# arrive in Step 2; HTTPS in Step 3; POST/PUT/DELETE/PATCH and
-# data=/json=/headers= kwargs in Step 4.
+# Phase 29 covers Steps 1-5: GET / HEAD / POST / PUT / DELETE / PATCH
+# verbs, fixed-length and chunked response bodies, gzip / deflate
+# response decompression, HTTPS via ssl.SSLContext, plus
+# data= / json= / headers= keyword arguments on request().
 #
-# Shape mirrors upstream `micropython-lib`'s requests / urequests
-# so existing examples and tutorials transfer:
+# Shape mirrors upstream `micropython-lib`'s requests / urequests so
+# existing examples and tutorials transfer:
 #
 #     import urequests
-#     r = urequests.get("http://www.example.com/")
+#     r = urequests.get("https://www.python.org/")
 #     print(r.status_code, r.reason)
 #     print(r.text[:80])
 #     r.close()
+#
+# Known limitation: HTTPS against modern CDNs that gate on TLS-1.3
+# client fingerprinting (Cloudflare, GitHub) inherits the Phase 28
+# AmiSSL issue tracked at https://github.com/jens-maus/amissl/issues/111
+# -- the handshake completes, then the next write returns broken
+# pipe. Direct origins that still negotiate TLS 1.2 by default
+# (e.g. www.python.org) work cleanly.
 
 import socket
 
@@ -83,24 +89,61 @@ class Response:
             k, _, v = line.partition(b":")
             self.headers[k.decode().lower()] = v.strip().decode()
 
+    def _read_chunked(self):
+        # chunked = (chunk-size [;ext] CRLF chunk-data CRLF)* 0 CRLF
+        #           trailer-headers CRLF
+        chunks = []
+        while True:
+            line = self._read_line()
+            size_str = line.strip()
+            if b";" in size_str:
+                size_str = size_str.split(b";", 1)[0]
+            if not size_str:
+                break
+            chunk_size = int(size_str, 16)
+            if chunk_size == 0:
+                # Final chunk -- drain optional trailer headers then stop.
+                while True:
+                    trailer = self._read_line()
+                    if not trailer or trailer == b"\r\n" or trailer == b"\n":
+                        break
+                break
+            chunks.append(self._read_raw(chunk_size))
+            # CRLF after each chunk's data.
+            self._read_line()
+        return b"".join(chunks)
+
     @property
     def content(self):
         if self._cached is None:
-            cl = self.headers.get("content-length")
-            if cl is not None:
-                data = self._read_raw(int(cl))
+            te = self.headers.get("transfer-encoding", "").lower()
+            if "chunked" in te:
+                data = self._read_chunked()
             else:
-                # No Content-Length: read until EOF. Safe because
-                # we send Connection: close, so the server FINs
-                # after sending the body.
-                chunks = [self._buf]
-                self._buf = b""
-                while True:
-                    chunk = self.raw.recv(4096)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                data = b"".join(chunks)
+                cl = self.headers.get("content-length")
+                if cl is not None:
+                    data = self._read_raw(int(cl))
+                else:
+                    # No Content-Length: read until EOF. Safe because
+                    # we send Connection: close, so the server FINs
+                    # after sending the body.
+                    chunks = [self._buf]
+                    self._buf = b""
+                    while True:
+                        chunk = self.raw.recv(4096)
+                        if not chunk:
+                            break
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+            ce = self.headers.get("content-encoding", "").lower()
+            if "gzip" in ce or "deflate" in ce:
+                # Lazy import keeps the module light when no compression
+                # is in play. Most AmiSSL-served pages don't compress.
+                import deflate
+                import io
+
+                fmt = deflate.GZIP if "gzip" in ce else deflate.ZLIB
+                data = deflate.DeflateIO(io.BytesIO(data), fmt).read()
             if self.raw is not None:
                 self.raw.close()
                 self.raw = None
@@ -133,11 +176,17 @@ class Response:
 
 
 def _parse_url(url):
-    # Returns (host, port, path). Step 1: http:// only.
-    if url.startswith("http://"):
+    # Returns (use_ssl, host, port, path).
+    if url.startswith("https://"):
+        body = url[8:]
+        use_ssl = True
+        default_port = 443
+    elif url.startswith("http://"):
         body = url[7:]
+        use_ssl = False
+        default_port = 80
     else:
-        raise ValueError("only http:// URLs are supported")
+        raise ValueError("only http:// and https:// URLs are supported")
     slash = body.find("/")
     if slash < 0:
         hostport = body
@@ -150,30 +199,105 @@ def _parse_url(url):
         port = int(port_s)
     else:
         host = hostport
-        port = 80
-    return host, port, path
+        port = default_port
+    return use_ssl, host, port, path
 
 
-def request(method, url, *, headers=None):
-    host, port, path = _parse_url(url)
+_QUOTE_SAFE = (
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+
+
+def _quote(s):
+    # Minimal percent-encoding for the unreserved set; everything else
+    # gets %XX (UTF-8 byte by byte). Enough for application/
+    # x-www-form-urlencoded payloads in Step 4.
+    if isinstance(s, str):
+        s = s.encode("utf-8")
+    out = []
+    for b in s:
+        if b in _QUOTE_SAFE:
+            out.append(bytes([b]))
+        else:
+            out.append(b"%%%02X" % b)
+    return b"".join(out)
+
+
+def _urlencode(d):
+    parts = []
+    for k, v in d.items():
+        parts.append(_quote(str(k)) + b"=" + _quote(str(v)))
+    return b"&".join(parts)
+
+
+def request(method, url, *, data=None, json=None, headers=None):
+    use_ssl, host, port, path = _parse_url(url)
 
     addr = socket.getaddrinfo(host, port)[0][-1]
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(addr)
 
-    # HTTP/1.0 + Connection: close lets us read-until-EOF when the
-    # response has no Content-Length, and keeps us out of the
-    # HTTP/1.1 keep-alive state machine until/unless Step 6 adds it.
+    if use_ssl:
+        import ssl
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        ctx.set_default_verify_paths()
+        s = ctx.wrap_socket(s, server_hostname=host)
+
+    # Resolve the request body once so we can set Content-Length up
+    # front. dict body -> urlencoded; str body -> utf-8 bytes; bytes
+    # body -> as-is; json= -> JSON serialisation + auto Content-Type.
+    body = None
+    auto_content_type = None
+    if json is not None:
+        import json as _json
+
+        body = _json.dumps(json).encode()
+        auto_content_type = "application/json"
+    elif isinstance(data, dict):
+        body = _urlencode(data)
+        auto_content_type = "application/x-www-form-urlencoded"
+    elif isinstance(data, str):
+        body = data.encode()
+    elif isinstance(data, (bytes, bytearray, memoryview)):
+        body = bytes(data)
+    elif data is None:
+        body = None
+    else:
+        raise TypeError("data must be dict/str/bytes/None")
+
+    # Apply caller-supplied headers on top of our defaults
+    # case-insensitively. Caller wins -- e.g. headers={"User-Agent": "x"}
+    # replaces our default UA, not stacks on top.
+    final = {
+        "Host": host,
+        "Connection": "close",
+        "User-Agent": _DEFAULT_UA,
+        "Accept-Encoding": "gzip",
+    }
+    if auto_content_type is not None:
+        final["Content-Type"] = auto_content_type
+    if body is not None:
+        final["Content-Length"] = str(len(body))
+    if headers:
+        # Drop any of our defaults whose key is overridden by the caller.
+        caller_keys_lc = {k.lower() for k in headers}
+        for key in list(final):
+            if key.lower() in caller_keys_lc:
+                del final[key]
+        for k, v in headers.items():
+            final[k] = str(v)
+
+    # Send request head.
     if isinstance(method, str):
         method = method.encode()
     s.send(method + b" " + path.encode() + b" HTTP/1.0\r\n")
-    s.send(b"Host: " + host.encode() + b"\r\n")
-    s.send(b"Connection: close\r\n")
-    s.send(b"User-Agent: " + _DEFAULT_UA.encode() + b"\r\n")
-    if headers:
-        for k, v in headers.items():
-            s.send(k.encode() + b": " + str(v).encode() + b"\r\n")
+    for k, v in final.items():
+        s.send(k.encode() + b": " + str(v).encode() + b"\r\n")
     s.send(b"\r\n")
+    if body is not None:
+        s.send(body)
 
     resp = Response(s)
     resp._read_status_line()
@@ -187,3 +311,19 @@ def get(url, **kw):
 
 def head(url, **kw):
     return request("HEAD", url, **kw)
+
+
+def post(url, **kw):
+    return request("POST", url, **kw)
+
+
+def put(url, **kw):
+    return request("PUT", url, **kw)
+
+
+def delete(url, **kw):
+    return request("DELETE", url, **kw)
+
+
+def patch(url, **kw):
+    return request("PATCH", url, **kw)
