@@ -750,6 +750,18 @@ int main(int argc_unused, char **argv_unused) {
 
     if (!ran_something) {
         // No script or command: start the interactive REPL.
+        // Show the initial GC heap and how much system memory is left
+        // for dynamic growth (Phase 14 grows a chain of AllocVec chunks
+        // up to MEMF_LARGEST or -X maxheap, whichever's smaller). Only
+        // printed in REPL mode -- scripted runs keep stdout clean.
+        {
+            char buf[80];
+            snprintf(buf, sizeof(buf),
+                "Heap: %luK initial; system free: %luK\r\n",
+                (unsigned long)(initial_heap / 1024),
+                (unsigned long)(AvailMem(MEMF_ANY) / 1024));
+            mp_hal_stdout_tx_str(buf);
+        }
         // Switch console to raw mode so readline gets characters immediately
         // rather than waiting for a full line. readline.c handles echo itself.
         BPTR stdin_fh = Input();
