@@ -354,7 +354,10 @@ static int run_str(const char *str) {
     return ret;
 }
 
-int main(int argc_unused, char **argv_unused) {
+// Body of main(); see main() below for the stack-swap wrapper that
+// guarantees enough headroom even when launched from a shell with the
+// AmigaDOS 4 KiB default stack.
+static int amiga_main(int argc_unused, char **argv_unused) {
     (void)argc_unused;
     (void)argv_unused;
 
@@ -884,6 +887,56 @@ int main(int argc_unused, char **argv_unused) {
         amiga_wb_console = 0;
     }
     return exit_code & 0xff;
+}
+
+// Stack-swap wrapper. The AmigaDOS Shell default stack is ~4 KiB which
+// isn't enough headroom for deeply-nested frozen imports (`import
+// platform` → `import amiga` → six `_X` submodules) or recursive
+// Python frames -- both crash with a 0x80000005 software-failure guru
+// well before MICROPY_STACK_CHECK's voluntary limit fires, because
+// the actual machine stack underflows.
+//
+// On entry we check the task's current stack size; if it's less than
+// 64 KiB we AllocVec a fresh scratch stack and StackSwap to it for the
+// duration of amiga_main(). The struct and scratch pointer are
+// `static` so they live in BSS rather than on the stack we're about
+// to abandon -- after StackSwap, locals in this frame are no longer
+// addressable via SP, and a frame pointer would let us reach them
+// only if gcc kept one.
+static struct StackSwapStruct amiga_main_sss;
+static APTR amiga_main_scratch = NULL;
+
+#define AMIGA_MAIN_STACK_BYTES (64 * 1024)
+#define AMIGA_MAIN_STACK_MIN   (32 * 1024)
+
+int main(int argc, char **argv) {
+    struct Task *task = FindTask(NULL);
+    size_t current = (size_t)((char *)task->tc_SPUpper - (char *)task->tc_SPLower);
+    // Skip the swap if the caller already gave us a comfortable stack
+    // (Workbench launches, `Stack 65536`, or vamos's --stack=). The
+    // 32 KiB threshold is generous enough to cover all known import
+    // depths in this port plus the test suite's nested recursion.
+    if (current >= AMIGA_MAIN_STACK_MIN) {
+        return amiga_main(argc, argv);
+    }
+    amiga_main_scratch = AllocVec(AMIGA_MAIN_STACK_BYTES,
+                                  MEMF_ANY | MEMF_PUBLIC);
+    if (amiga_main_scratch == NULL) {
+        // Out of memory -- fall through with the small stack and hope
+        // the script doesn't import deeply. Better than refusing to
+        // start.
+        return amiga_main(argc, argv);
+    }
+    amiga_main_sss.stk_Lower   = amiga_main_scratch;
+    amiga_main_sss.stk_Upper   = (APTR)((char *)amiga_main_scratch
+                                        + AMIGA_MAIN_STACK_BYTES);
+    amiga_main_sss.stk_Pointer = amiga_main_sss.stk_Upper;
+    StackSwap(&amiga_main_sss);
+    int rc = amiga_main(argc, argv);
+    StackSwap(&amiga_main_sss);
+    FreeVec(amiga_main_scratch);
+    amiga_main_scratch = NULL;
+    return rc;
 }
 
 void nlr_jump_fail(void *val) {
