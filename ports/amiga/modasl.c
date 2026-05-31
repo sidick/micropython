@@ -53,11 +53,8 @@ void amiga_asl_close(void) {
     }
 }
 
-// Long-name filesystems (SFS / PFS3 / FFS2) allow ~105-byte filenames
-// per component, so a deeply-nested path can plausibly exceed the
-// 512-byte buffer used by amiga.match / amiga.wb_selected_files.
-// 1024 covers the worst case with comfortable headroom.
-#define ASL_PATH_BUFSIZE 1024
+// Path buffer policy: see AMIGA_PATH_MAX in mpconfigport.h. Shared
+// across modasl.c / modamiga.c so a future bump is a single edit.
 
 // asl.library is notoriously stack-hungry: the file requester loads
 // directory listings, font code, etc. and can easily blow a default
@@ -199,7 +196,7 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
     // stack-scan range stays correct.
     mp_obj_t result = mp_const_none;
     if (ctx.ok) {
-        char buf[ASL_PATH_BUFSIZE];
+        char buf[AMIGA_PATH_MAX];
         const char *drawer_str = (ctx.req->fr_Drawer != NULL)
             ? (const char *)ctx.req->fr_Drawer : "";
         if (multi) {
