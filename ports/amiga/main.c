@@ -771,6 +771,14 @@ int main(int argc_unused, char **argv_unused) {
         // rather than waiting for a full line. readline.c handles echo itself.
         BPTR stdin_fh = Input();
         SetMode(stdin_fh, 1);
+        // Discard the trailing newline of the shell's "micropython<Enter>"
+        // command line. The console handler buffers this byte at a level
+        // WaitForChar can't see, so the drain has to happen via FGetC
+        // itself -- which we don't want to do here (it'd block on a real
+        // launch with nothing queued). Instead, mp_hal_stdin_rx_chr does
+        // a one-shot skip of a leading CR/LF the first time it's called;
+        // this flag arms it.
+        amiga_arm_stdin_first_nl_skip();
         #if MICROPY_ENABLE_COMPILER
         // pyexec_friendly_repl returns 0 when the user hits Ctrl-A to
         // switch to raw REPL (pyexec_mode_kind is now RAW_REPL); only a

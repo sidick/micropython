@@ -19,6 +19,11 @@ void amiga_check_ctrl_c(void);
 // banner writes to elapse before the inject fires. See mphalport.c.
 void amiga_arm_banner_inject(int after_n_writes);
 
+// Arm a one-shot CR/LF skip on the next mp_hal_stdin_rx_chr call. Used
+// before entering the REPL so the shell's command-line terminator
+// doesn't bleed through as a phantom Enter and cause a duplicate prompt.
+void amiga_arm_stdin_first_nl_skip(void);
+
 // timer.device lifecycle (Phase 23). main.c calls these around mp_init() /
 // mp_deinit().
 bool amiga_timer_open(void);

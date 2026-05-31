@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <dos/dos.h>
 #include <proto/dos.h>
@@ -18,6 +19,21 @@ void amiga_check_ctrl_c(void) {
     }
 }
 
+// One-slot push-back buffer used by the AmigaOS CSI translation
+// (0x9b -> ESC '[') in mp_hal_stdin_rx_chr.
+static int amiga_stdin_pending = -1;
+
+// Armed by main.c before entering the REPL. The first call to
+// mp_hal_stdin_rx_chr after this flag is set silently discards a leading
+// CR or LF (the leftover from the shell's "micropython<Enter>" command
+// line). The flag is consumed on the first real call regardless of
+// whether the discard fired.
+static bool amiga_stdin_first_nl_skip = false;
+
+void amiga_arm_stdin_first_nl_skip(void) {
+    amiga_stdin_first_nl_skip = true;
+}
+
 int mp_hal_stdin_rx_chr(void) {
     // AmigaOS console emits CSI sequences as a single byte 0x9B followed by
     // parameters, where xterm-style consoles use ESC '['. shared/readline/
@@ -25,10 +41,9 @@ int mp_hal_stdin_rx_chr(void) {
     // hand '[' to the next call. Other bytes pass through unchanged, so
     // hosts that already emit ESC '[' (e.g. vamos's host xterm pass-through)
     // are unaffected.
-    static int pending = -1;
-    if (pending >= 0) {
-        int c = pending;
-        pending = -1;
+    if (amiga_stdin_pending >= 0) {
+        int c = amiga_stdin_pending;
+        amiga_stdin_pending = -1;
         return c;
     }
 
@@ -36,11 +51,17 @@ int mp_hal_stdin_rx_chr(void) {
     // In raw mode, Ctrl+C arrives as ASCII 3 so no separate break-signal
     // poll is needed here; the VM hook handles Ctrl+C during computation.
     LONG c = FGetC(Input());
+    if (amiga_stdin_first_nl_skip) {
+        amiga_stdin_first_nl_skip = false;
+        if (c == '\r' || c == '\n') {
+            c = FGetC(Input());
+        }
+    }
     if (c < 0 || c == 28) {
         return 4;  // EOF or Ctrl+\ -> Ctrl+D
     }
     if (c == 0x9b) {
-        pending = '[';
+        amiga_stdin_pending = '[';
         return 0x1b;  // ESC
     }
     if ((int)c == mp_interrupt_char) {
