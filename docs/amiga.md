@@ -44,6 +44,8 @@ with file-system access, based on the `ports/minimal` template.
 | 32 | ARexx polish (`rexx_exists` / `rexx_list` / persistent `RexxClient`) | ✅ |
 | 33 | `platform.amiga_info()` + frozen `platform.py` | ✅ |
 | 34 | Frozen `os.py` extensions + AmigaOS-aware `os.path` | planned |
+| 35 | `amiga.icon` — `.info` file read / write / manipulation | planned |
+| 36 | `amiga.catalog` — `locale.library` catalog lookup | planned |
 
 ### Non-goals (initially)
 
@@ -1481,6 +1483,156 @@ docs/phase34-os-path-plan.md            — step plan
 ```
 
 Variants: all three.
+
+---
+
+## Phase 35 — `amiga.icon` (planned)
+
+`amiga.icon` C sub-module wrapping `icon.library` for full
+`.info` file manipulation. Goes beyond the read-only
+`amiga.tooltype()` we ship today (which only looks up *one*
+tooltype on the *launched* tool icon).
+
+```python
+from amiga import icon
+
+# Read a .info file (path without the .info suffix, AmigaOS convention)
+dobj = icon.read("Work:Tools/Editor")
+print(dobj.type)            # 'tool' / 'project' / 'drawer' / ...
+print(dobj.default_tool)    # 'C:Ed' or similar for project icons
+print(dobj.stack_size)      # 8192
+
+# Tooltypes are exposed as a dict-shaped accessor.
+print(dobj.tooltypes["WINDOW"])
+dobj.tooltypes["FONT"] = "topaz.font/8"
+dobj.tooltypes["NEW_THING"] = ""        # bare flag tooltype
+
+# Position on the parent drawer.
+dobj.current_x, dobj.current_y = 16, 24
+
+# Write back.
+icon.write("Work:Tools/Editor", dobj)
+
+# Create a fresh project icon from scratch.
+new = icon.new(icon.WBPROJECT, default_tool="C:Ed",
+               tooltypes={"WINDOW": "CON:0/0/640/256/Title"})
+icon.write("Work:Notes", new)
+```
+
+### Scope
+
+- `amiga.icon.read(path)` → `DiskObject` wrapper (Python facade
+  around the underlying `struct DiskObject *`).
+- `amiga.icon.write(path, dobj)` → None. Uses `PutDiskObject` then
+  refreshes the parent drawer's Workbench display if it's open.
+- `amiga.icon.new(type, **kwargs)` → fresh `DiskObject` with the
+  given `type` and optional `default_tool` / `tooltypes` /
+  `stack_size` etc.; backed by `GetDefDiskObject(type)` so the
+  icon image comes from `ENV:sys/def_*.info`.
+- `DiskObject` Python class:
+  - `.type` (str) and corresponding `icon.WB*` constants
+    (`WBDISK`, `WBDRAWER`, `WBTOOL`, `WBPROJECT`, `WBGARBAGE`,
+    `WBDEVICE`, `WBKICK`, `WBAPPICON`).
+  - `.default_tool` (str, read/write) for project icons.
+  - `.stack_size` (int, read/write).
+  - `.current_x`, `.current_y` (int, read/write).
+  - `.tooltypes` — a Python mapping that wraps the underlying
+    NULL-terminated `STRPTR[]`; supports `[k]` get / set,
+    `del [k]`, `in`, iteration. Reallocates the underlying array
+    via `AllocVec` when keys are added.
+  - Releases the underlying `DiskObject` on `.close()` /
+    `__del__`.
+
+### Out of scope
+
+- Editing the icon's image data (`do_Gadget->GadgetRender` /
+  `SelectRender`) — that's a substantial surface (planar image
+  munging, palette handling); separate phase if ever needed.
+- App icons (`AddAppIcon`) — that's
+  `workbench.library`, not `icon.library`. Could ride along if a
+  caller asks but not in the initial Phase 35.
+- NewIcon / GlowIcon / OS3.5+ ColorIcon extended IFF chunks —
+  the basic `do_Gadget` planar icon is enough for round-tripping.
+- Drag-and-drop position / IDCMP integration — out of scope for
+  a one-shot manipulation API.
+
+### Dependencies
+
+- `icon.library` (lazy open, same pattern as Phases 30 / 31 / 33).
+  Already partially used internally for `amiga.tooltype` /
+  `amiga.wb_selected_files` via the cached DiskObject in main.c —
+  Phase 35 exposes the broader surface.
+
+### Files
+
+```
+ports/amiga/modicon.c                   — C module + DiskObject type
+ports/amiga/modules/amiga.py            — adds `import _icon as icon`
+tests/amiga/test_icon_smoke.py          — vamos arg-shape smoke
+docs/phase35-icon-plan.md               — step plan (TBD)
+```
+
+Variants: all three. ~2.5 KB text per variant (DiskObject type +
+tooltype mapping protocol is the bulk).
+
+---
+
+## Phase 36 — `amiga.catalog` (planned)
+
+Wrap `locale.library`'s catalog lookup so localized apps can
+read their translated strings.
+
+```python
+from amiga import catalog
+
+cat = catalog.open("MyApp.catalog", version=1)
+print(cat.lookup(1, "Default English string"))
+print(cat.lookup(2, "Cancel"))
+cat.close()
+
+# Or use the system-wide language list.
+print(catalog.language())          # 'english' / 'german' / 'français'
+```
+
+### Scope
+
+- `amiga.catalog.open(name, version=0, language=None)` → `Catalog`
+  wrapper. `OpenCatalog(NULL, name, OC_Version, OC_BuiltInLanguage,
+  OC_Language, TAG_DONE)`; the `language` kwarg overrides the
+  system default if passed.
+- `Catalog.lookup(id, default)` → str. `GetCatalogStr(cat, id, default)`.
+  Returns `default` if the catalog or string is missing — matches
+  the AmigaOS contract.
+- `Catalog.close()` → None. `CloseCatalog`.
+- `Catalog.__enter__` / `__exit__` for `with` use.
+- `amiga.catalog.language()` → str. First preferred language from
+  `Locale->loc_PrefLanguages[0]`, or `"english"` if no preference
+  set.
+
+### Out of scope
+
+- Writing catalogs (`flexcat`-style compilation). That's a build-
+  time tool, not a runtime API.
+- Conversion of locale-specific date / number / currency formats
+  — separate phase if needed; would wrap `FormatString` etc.
+- Multi-catalog merging / fallback chains — `OpenCatalog` already
+  picks the right language automatically; the user just calls
+  `lookup`.
+
+### Dependencies
+
+- `locale.library` v38+. Lazy open.
+
+### Files
+
+```
+ports/amiga/modcatalog.c                — C module + Catalog type
+ports/amiga/modules/amiga.py            — adds `import _catalog as catalog`
+tests/amiga/test_catalog_smoke.py       — vamos arg-shape smoke
+docs/phase36-catalog-plan.md            — step plan (TBD)
+```
+
+Variants: all three. ~1.5 KB text per variant.
 
 ---
 
