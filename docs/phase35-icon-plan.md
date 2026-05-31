@@ -37,7 +37,7 @@ Step 1: icon.read + DiskObject (read-only) + WB* constants
 |---|------|--------|-----------------|
 | **1** | `ports/amiga/modicon.c` registering `_icon`. `icon.read(path)` returns a `DiskObject` Python type. Read-only attrs `.type`, `.default_tool`, `.stack_size`, `.current_x`, `.current_y`, and a read-only `.tooltypes` mapping (FindToolType-backed). WB* constants on the module. Wired through `Makefile` + frozen `amiga.py`. | New C module + facade entry. | Under vamos: import works, alias `amiga.icon is _icon`, WB* constants are ints, missing path → OSError. Under Amiberry: `icon.read("PROGDIR:micropython")` returns a `DiskObject` whose `.type == "tool"` and whose tooltypes round-trip the SCRIPT= / HEAP= entries the runtime already consumes. |
 | **2** | Mutation. Settable `.default_tool` / `.stack_size` / `.current_x` / `.current_y`; mutable `.tooltypes` mapping with `[k] = v`, `del [k]`, `in`, iteration. `icon.write(path, dobj)` via `PutDiskObject`. `icon.new(type, **kwargs)` via `GetDefDiskObject`. | Mutation surface complete. | Round-trip on `RAM:test`: create a fresh `WBPROJECT` icon, set `default_tool` + tooltypes, write, re-read, verify field equality. |
-| **3** | Docs flip + comprehensive tests. | `docs/amiga.md` Phase 35 → ✅; `docs/amiga-testing.md` gains an `icon` subsection; `tests/amiga/test_icon_smoke.py` covers the surface. | `make -C ports/amiga test` (or the vamos-based runner) is green. |
+| **3** | Docs flip + comprehensive tests. | `docs/amiga.md` Phase 35 → ✅; `docs/amiga-testing.md` gains an `icon` subsection; `tests/ports/amiga/test_icon_smoke.py` covers the surface. | `make -C ports/amiga test` (or the vamos-based runner) is green. |
 
 Each step is small: Step 1 is ~250 LOC C plus ~5 LOC Python, Step 2
 adds another ~200 LOC C and ~30 LOC Python, Step 3 is paperwork.
@@ -110,7 +110,7 @@ adds another ~200 LOC C and ~30 LOC Python, Step 3 is paperwork.
 
 ### Verification
 
-Vamos smoke (`tests/amiga/test_icon_smoke.py`):
+Vamos smoke (`tests/ports/amiga/test_icon_smoke.py`):
 
 ```python
 import _icon
@@ -200,7 +200,7 @@ new.close(); back.close()
   full surface matrix (which calls / which type / what they return).
 - `docs/amiga-testing.md` short `icon` subsection covering
   `icon.read`, `icon.write`, `icon.new`, and the tooltype mapping.
-- `tests/amiga/test_icon_smoke.py` expanded:
+- `tests/ports/amiga/test_icon_smoke.py` expanded:
   - Module + alias + constants.
   - Missing-path OSError.
   - Round-trip against `RAM:` (icon.library is available under

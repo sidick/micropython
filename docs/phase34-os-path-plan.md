@@ -38,7 +38,7 @@ Step 1: os.chmod + os.getprotect (C entries) + FIBF_* constants
 |---|------|--------|-----------------|
 | **1** | Two new C entries in `modos.c`: `os.chmod(path, mask)` (SetProtection) and `os.getprotect(path)` (Examine + read fib_Protection). `FIBF_*` constants exposed on the module. | New entries via the existing port-local module-globals append (modos already registers via the locals_dict callback that extmod/modos.c provides for extensible modules). | From the REPL under Amiberry: `os.getprotect("S:Startup-Sequence")` returns a non-zero mask; `os.chmod` round-trips. |
 | **2** | Frozen `ports/amiga/modules/os.py` with `makedirs` (recursive mkdir, AmigaOS volume-aware) and `walk` (recursive listdir + stat tree generator). Frozen `ports/amiga/modules/_ospath.py` with `join` / `split` / `splitext` / `basename` / `dirname` / `exists` / `isfile` / `isdir` / `isabs` / `abspath` / `normpath`. `os.py` does `import _ospath as path` so `os.path` Just Works. | Two frozen modules. | `os.makedirs` + `os.walk` against a temp tree. `os.path.normpath` collapses `..` correctly across volume separators. |
-| **3** | Docs flip, manifest verification, smoke test. | `docs/amiga.md` Phase 34 → ✅. `docs/amiga-testing.md` gains a short `os` / `os.path` subsection. | `tests/amiga/test_os_smoke.py` covers the surface and the volume-separator edge cases under vamos. |
+| **3** | Docs flip, manifest verification, smoke test. | `docs/amiga.md` Phase 34 → ✅. `docs/amiga-testing.md` gains a short `os` / `os.path` subsection. | `tests/ports/amiga/test_os_smoke.py` covers the surface and the volume-separator edge cases under vamos. |
 
 Each step is small: Step 1 is ~50 LOC C, Step 2 is ~150 LOC Python,
 Step 3 is paperwork.
@@ -194,7 +194,7 @@ False
 - `docs/amiga-testing.md` short `os` / `os.path` subsection
   with REPL examples and a note about the AmigaDOS inverted-bit
   semantics.
-- `tests/amiga/test_os_smoke.py` — vamos-runnable:
+- `tests/ports/amiga/test_os_smoke.py` — vamos-runnable:
   - `os.path.isabs("Sys:")` is True; `isabs("foo.py")` is False
   - `os.path.join` / `split` / `normpath` corner cases
   - `os.makedirs` round-trip against `mp:` tree
