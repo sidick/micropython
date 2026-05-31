@@ -136,6 +136,9 @@ because:
 |---|---|
 | `SSL_CTX_set_alpn_protos(ctx, "http/1.1")` (advertise ALPN) | same close-after-handshake |
 | Switching `amiga_ssl_open` to `OpenAmiSSL() + InitAmiSSL()` (v4 init API), keeping the rest of the wrapper unchanged | `SSL_connect` now fails earlier with `SSL_ERROR_SYSCALL` / `EIO` — the v4 init evidently doesn't bring along the OpenSSL 3.x provider state that v5 needs for TLS 1.3 |
+| `SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY)` (transparently retry on post-handshake control records) | same close-after-handshake |
+| `SSL_CTX_set_ciphersuites(ctx, "TLS_CHACHA20_POLY1305_SHA256")` (match aget's negotiated TLS 1.3 cipher) | same close-after-handshake |
+| Kitchen sink: `SSL_OP_ALL \| SSL_OP_NO_TICKET` + `SSL_CTX_set_min/max_proto_version(TLS1_3_VERSION)` + `SSL_CTX_set_session_cache_mode(SSL_SESS_CACHE_OFF)` | same close-after-handshake |
 
 The second result is the most interesting one for the maintainers:
 the v4 init path produces a different *broken* state for v5
