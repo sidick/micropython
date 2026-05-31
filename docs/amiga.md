@@ -39,7 +39,7 @@ with file-system access, based on the `ports/minimal` template.
 | 27 | Additional build variants | ✅ |
 | 28 | TLS/SSL via AmiSSL v5 | ✅ |
 | 29 | `urequests` frozen HTTP/HTTPS client | ✅ |
-| 30 | Intuition requester dialogs (`amiga.intuition`) | planned |
+| 30 | Intuition requester dialogs (`amiga.intuition`) | ✅ |
 | 31 | ASL file requester (`amiga.asl`) | planned |
 
 ### Non-goals (initially)
@@ -1079,7 +1079,7 @@ omits it (no socket → no urequests).
 
 ---
 
-## Phase 30 — Intuition requester dialogs (planned)
+## Phase 30 — Intuition requester dialogs ✅
 
 `amiga.intuition` C sub-module exposing `intuition.library`'s
 `EasyRequest` family. Three entry points:
@@ -1120,11 +1120,38 @@ intuition.message("Done.", button="OK")
 ### Files
 
 ```
-ports/amiga/modintuition.c              — C module
-docs/phase30-intuition-plan.md          — step plan (TBD)
+ports/amiga/modintuition.c              — C module (~180 LOC)
+ports/amiga/modules/amiga.py            — adds `import _intuition as intuition`
+tests/amiga/test_intuition_smoke.py     — vamos arg-shape smoke test
+docs/phase30-intuition-plan.md          — step plan
 ```
 
-Variants: all four. Trivial size cost, no network/SSL deps.
+Variants: all four. ~1.5 KB text per variant, no network/SSL deps.
+
+### Status — done
+
+Three Python entry points, all backed by a single `EasyRequestArgs`
+call through `intuition.library` v36+:
+
+| Function | Returns |
+|---|---|
+| `intuition.easy_request(title, body, buttons)` | int — 0-based leftmost button index |
+| `intuition.auto_request(body, yes="Yes", no="No")` | bool — True iff Yes clicked |
+| `intuition.message(body, button="OK")` | None |
+
+Translation: AmigaOS conventionally numbers buttons rightmost-is-0
+(`EasyRequest` returns 0 for the right gadget, 1 for the next, …,
+N-1 for the leftmost). The module flips that to Python's natural
+0-based-leftmost so `buttons[easy_request(...)]` does the right thing.
+
+`es_TextFormat` is hard-coded to `"%s"` and the body is passed as the
+single varargs arg, so a `%` in the body is rendered literally rather
+than interpreted as a printf directive.
+
+Vamos has a no-op `EasyRequest` stub — useful for confirming the call
+threads through cleanly but not for end-to-end visual checks. Those
+need Amiberry or real hardware (the requester pops on the default
+public screen, normally Workbench).
 
 ---
 

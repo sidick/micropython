@@ -123,6 +123,7 @@ SRC_C = \
 	amiga_timer.c \
 	modjson.c \
 	modamiga.c \
+	modintuition.c \
 	vfs_amiga.c \
 	modsocket.c \
 	sysstdio.c \
@@ -136,7 +137,7 @@ ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_C += amiga_ssl.c modssl.c
 endif
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modsocket.c sysstdio.c
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modintuition.c modsocket.c sysstdio.c
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_QSTR += modssl.c
 endif

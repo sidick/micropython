@@ -350,6 +350,32 @@ canned cert pair) and will fail; the `SSLContext`-shape tests
 (`ssl_sslcontext.py`, `ssl_sslcontext_verify_mode.py` etc.) should
 pass.
 
+### Intuition requester dialogs (Phase 30)
+
+`tests/amiga/test_intuition_smoke.py` covers the module-registration
+and argument-validation surface; it runs under vamos and prints `OK`
+on success. The actual modal dialog can't be tested headlessly —
+vamos's `intuition.library` stub is a no-op print, and the requester
+needs a real public screen.
+
+For end-to-end visual confirmation under Amiberry, from the REPL:
+
+```python
+>>> from amiga import intuition
+>>> intuition.easy_request("Title", "Pick one.\nMulti-line works.",
+...                        ["Apple", "Banana", "Cancel"])
+# requester pops on Workbench; left → 0, middle → 1, right → 2
+>>> intuition.auto_request("Replace existing file?")
+# returns True for Yes, False for No
+>>> intuition.message("Done.")
+# single-button requester; clicking OK returns None
+```
+
+If Workbench is closed when the call is made, the open of
+`intuition.library` still succeeds but the requester can't render on
+any public screen; `EasyRequestArgs` returns `-1` and the module
+raises `OSError(EIO)`. Re-opening Workbench fixes it.
+
 ---
 
 ## 3. CI (cross-compile only)
