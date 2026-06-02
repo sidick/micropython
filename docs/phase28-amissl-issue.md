@@ -7,6 +7,46 @@ the rest of the Phase 28 paper trail so the work doesn't have to be
 re-derived if the GitHub issue is closed or migrates. Mirror updates
 to both places when material new evidence comes in.
 
+## Upstream response (2026-06-01, Futaura, AmiSSL maintainer)
+
+The original report framed this as an AmiSSL or Cloudflare-specific
+bug; the maintainer pushed back on that framing:
+
+1. **AmiSSL is OpenSSL.** "There are very few differences" between
+   AmiSSL and stock OpenSSL, and "no functional differences between
+   the Amiga-specific AmiSSL v4 and v5 APIs." The fingerprinting /
+   ClientHello speculation below is wrong.
+
+2. **Root cause is processor speed**, not Cloudflare strict-fronting.
+   "Broken pipe usually means the processor is too slow" — the
+   server's request-read timeout fires before the Amiga finishes
+   the handshake + writes the request. The maintainer notes that
+   `api.github.com` closes after 4-5 seconds; `example.com` is a
+   little longer. The "Cloudflare-specific" pattern is a side
+   effect of who happens to use the shortest timeouts, not a
+   fingerprinting heuristic. Their own sites behind Cloudflare
+   don't time out at modern desktop speeds.
+
+3. **The `s_client <T:req.txt` reproduction may itself be broken.**
+   The maintainer notes that stdin redirection from a file isn't
+   expected to work in their port of `s_client`: "All output in
+   the tool is native, not using stdio/stdout. So, maybe there is
+   an issue with the input. If you type in s_client, it works
+   fine." For our `urequests` path the redirection question doesn't
+   apply (we drive `SSL_write` directly from Python), so the
+   CPU-speed limitation is what bites there.
+
+**Practical takeaway for the port:** TLS works correctly against
+hosts whose request-read timeout is generous enough for a 68k CPU
+to complete the handshake + write the request. Modern edges
+(Cloudflare, GitHub API, etc.) tighten that window aggressively
+and the Amiga just can't keep up. Document as a CPU-speed
+limitation rather than an SSL bug; don't try to "fix" it at the
+SSL layer.
+
+The "Probable cause (speculative)" section near the bottom of this
+doc is now known-wrong and kept only for historical context.
+
 ---
 
 **Title:** `openssl s_client` post-handshake `CONNECTION CLOSED BY
