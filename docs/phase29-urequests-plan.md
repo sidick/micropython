@@ -120,16 +120,22 @@ and document.
 
 - `urequests.get("https://www.python.org/")` → 200 OK, HTML body.
 - `urequests.get("https://example.com")` against a Cloudflare-fronted
-  host — known to fail with the inherited Phase 28 close-after-handshake;
-  documented but not gated out.
+  host — known to fail with the server-timeout-on-slow-CPU issue
+  inherited from Phase 28; documented but not gated out.
 
 ### Known limitation
 
-This step inherits the open AmiSSL TLS 1.3 issue tracked at
-[github.com/jens-maus/amissl/issues/111](https://github.com/jens-maus/amissl/issues/111).
-`urequests.get` against Cloudflare-fronted hosts will complete
-the handshake then raise `OSError: TLS: ... Broken pipe`. Direct
-origins like `www.python.org` work cleanly.
+`urequests.get` against modern HTTPS servers with short
+request-read timeouts (Cloudflare's edge, GitHub's API, etc.)
+will complete the TLS 1.3 handshake then raise
+`OSError: TLS: ... Broken pipe` because the 68k CPU can't finish
+the handshake and write the request before the server-side
+timeout fires. Per the AmiSSL maintainer
+([jens-maus/amissl#111](https://github.com/jens-maus/amissl/issues/111))
+this is a processor-speed limitation, not an AmiSSL or
+Cloudflare bug -- AmiSSL is OpenSSL, and the Amiga's CPU just
+isn't fast enough at modern TLS. Direct origins with looser
+timeouts (`www.python.org`, etc.) work cleanly.
 
 ---
 
