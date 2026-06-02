@@ -181,6 +181,17 @@ void amiga_free_heap(void *p);
 #define MICROPY_PY_AMIGA_SSL                (MICROPY_PY_AMIGA_SOCKET)
 #endif
 
+// hashlib MD5 + SHA1 (Phase 39). The upstream extmod/modhashlib.c gates
+// these on MICROPY_PY_SSL because it routes through mbedtls / axtls for
+// the algorithm itself; we don't have mbedtls and AmiSSL is OpenSSL-shaped
+// (wrong API). Take the axtls code path -- only md5.c and sha1.c are
+// compiled, no other axtls components are pulled in because MICROPY_PY_SSL
+// stays 0 (modtls_axtls.c and modcryptolib.c remain dormant). SHA-256
+// continues to use lib/crypto-algorithms/sha256.c, same as before.
+#define MICROPY_SSL_AXTLS                   (1)
+#define MICROPY_PY_HASHLIB_MD5              (1)
+#define MICROPY_PY_HASHLIB_SHA1             (1)
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
