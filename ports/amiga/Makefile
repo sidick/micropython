@@ -54,6 +54,16 @@ INC += -I.
 INC += -I$(TOP)
 INC += -I$(BUILD)
 INC += -I$(VARIANT_DIR)
+# axtls crypto headers for the upstream modhashlib.c MD5/SHA1 path.
+# We only compile lib/axtls/crypto/{md5,sha1}.c -- the rest of axtls
+# stays out of the build because MICROPY_PY_SSL=0 in this port.
+# axtls-include comes first so our minimal axtls_os_port.h shim shadows
+# the upstream one (whose arpa/inet.h pull collides with AmigaOS
+# exec/types.h BYTE/WORD); we still want extmod/axtls-include's config.h.
+INC += -I./axtls-include
+INC += -I$(TOP)/lib/axtls/ssl
+INC += -I$(TOP)/lib/axtls/crypto
+INC += -I$(TOP)/extmod/axtls-include
 
 CFLAGS += $(INC) $(AMIGA_CPU_FLAGS) -Wall -Wextra -Wno-unused-parameter -std=gnu99
 
@@ -131,6 +141,8 @@ SRC_C = \
 	modsocket.c \
 	sysstdio.c \
 	floatconv.c \
+	lib/axtls/crypto/md5.c \
+	lib/axtls/crypto/sha1.c \
 	shared/readline/readline.c \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
@@ -152,6 +164,10 @@ SRC_S = \
 OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_S:.S=.o))
+
+# axtls's MD5/SHA1 sources are older C with style choices our -Wall -Wextra
+# build flags would otherwise reject. Mirrors extmod.mk's per-file rule.
+$(BUILD)/lib/axtls/%.o: CFLAGS += -Wno-all -Wno-unused-parameter -Wno-uninitialized -Wno-sign-compare -Wno-old-style-definition
 
 all: $(BUILD)/$(PROG)
 
