@@ -1896,6 +1896,124 @@ No variant-size impact (documentation only).
 
 ---
 
+## Phase 39 — Additional extmod feature opt-ins (planned)
+
+Audit of `extmod/` against the current Amiga port config turned up a
+handful of cross-port modules and feature flags that aren't currently
+enabled but would plausibly pay off on AmigaOS. This phase is a menu;
+which items actually land is to be decided when the phase is picked
+up. Each candidate below carries a rough cost/benefit so the choice
+can be made in context.
+
+The current baseline (via `MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES`
+plus the port-local opt-ins) already includes `binascii`, `hashlib`
+(SHA-256 only), `heapq`, `random`, `re`, `deflate` decompress,
+`uctypes`, `cmath`, `framebuf`, `errno`, `select`, plus port-local
+`json`, `socket`, `ssl`, and `VfsAmiga`. The candidates here are the
+gaps left by that baseline that look genuinely useful on Amiga (i.e.
+not GPIO / radio / micro-flash territory).
+
+### Candidates
+
+1. **Wall-clock `time` surface** — `time.time()`, `time.time_ns()`,
+   `time.gmtime()`, `time.localtime()`, `time.mktime()`. Currently the
+   `time` module only exposes `ticks_*` and `sleep*` (defaults for
+   `MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME` and
+   `MICROPY_PY_TIME_TIME_TIME_NS` are both 0 and the port hasn't
+   overridden them). Backing: `dos.library/DateStamp()` (day + minute
+   + tick since 1978-01-01) for the wallclock, plus optionally
+   `battclock.resource` for sub-minute granularity on machines that
+   have a battery-backed clock. Implementation lives in a port-local
+   `MICROPY_PY_TIME_INCLUDEFILE`. Probably the highest-impact item on
+   the list — a lot of stdlib-flavoured Python assumes `time.time()`
+   exists. ~150 lines of glue. The Amiga epoch offset is `2922 * 86400`
+   seconds (8 years from 1970-01-01 to 1978-01-01); locale handling
+   stays minimal (UTC; `locale.library` integration is out of scope).
+2. **`hashlib.md5` + `hashlib.sha1`** — currently gated on upstream
+   `MICROPY_PY_SSL` (which this port doesn't set; it uses
+   `MICROPY_PY_AMIGA_SSL` instead), so both digests are off despite
+   the C sources being compiled in for free with `hashlib`. One-line
+   opt-in via `#define MICROPY_PY_HASHLIB_MD5 (1)` and
+   `MICROPY_PY_HASHLIB_SHA1 (1)`. Cheap and routinely needed for file
+   checksums, HTTP digest auth, and content-addressed lookups.
+3. **`btree`** (`extmod/modbtree.c` + the bundled
+   `lib/berkeley-db-1.xx` submodule, already a git submodule of the
+   repo). Pure C, no networking, no GPIO — just a persistent K/V store
+   over the file API. Gives Amiga scripts a real on-disk dict without
+   writing flat-file plumbing. ~30 KB binary cost. The `berkeley-db`
+   submodule must be initialised (it isn't pulled by default on a
+   fresh clone). Pairs naturally with `VfsAmiga`.
+4. **`MICROPY_PY_DEFLATE_COMPRESS`** — extends the existing `deflate`
+   module from decompress-only to a full read/write surface (gzip /
+   zlib output). Single-flag opt-in. Useful for log compression,
+   network payload packing, and `.tar.gz` / `.zip` generation paired
+   with `binascii.crc32` (already on).
+5. **`marshal`** — bytecode (de)serialisation. Disabled below
+   `ROM_LEVEL_EVERYTHING`. Cheap to enable; only useful if a use case
+   shows up for serialising code objects (tooling, `.mpy` introspection
+   beyond what `mpy-tool` already covers). Optional / low priority.
+6. **`websocket` + `webrepl`** (`extmod/modwebsocket.c`,
+   `extmod/modwebrepl.c`). Layers on the existing port-local socket
+   module to give a REPL over the network — a meaningful
+   quality-of-life win on AmigaOS where the local console is the
+   classic Shell window. Caveats: webrepl wants a `dupterm` hook and
+   the `MICROPY_ENABLE_SCHEDULER`, which this port has deferred along
+   with `asyncio` (see `MICROPY_PY_ASYNCIO (0)` and
+   `MICROPY_ENABLE_SCHEDULER (0)` in `mpconfigport.h`). So this item
+   is the most work of the lot — likely needs a small cooperative
+   poll-from-VM-hook shim rather than a real scheduler. Defer until
+   after the `asyncio` story is resolved.
+
+### Explicitly out of scope
+
+- `asyncio` — already deferred port-wide pending threads / scheduler.
+- `bluetooth`, `lwip`, `cyw43`, `wiznet5k`, `ninaw10`, `esp_hosted`,
+  `nimble`, `btstack`, `network_ppp_lwip` — hardware-specific (radio
+  / Ethernet MAC drivers) with no Amiga fit. Networking on this port
+  is `bsdsocket.library`-only and that's already wired.
+- `machine_*` (`adc`, `pwm`, `i2c`, `spi`, `uart`, `timer`, `wdt`,
+  `usb_device`, `i2s`, `can`, `pulse`, `bitstream`, `signal`,
+  `pinbase`) — no Amiga peripheral equivalent.
+- `onewire` — GPIO-based.
+- `vfs_fat`, `vfs_lfs`, `vfs_posix`, `vfs_rom`, `vfs_blockdev` —
+  `VfsAmiga` already covers the filesystem layer via `dos.library`.
+  Mounting FAT/LFS images would be a separate, large project.
+- `modopenamp` — multi-core (M4/M7) RPMsg. N/A.
+- `modplatform` — platform-identification strings. Already covered by
+  `platform.amiga_info()` (Phase 33).
+
+### Decision deferred
+
+Which subset to actually implement is decided when the phase is
+picked up. Likely landing order if all are taken:
+
+1. Wall-clock `time` (biggest API-surface gain).
+2. `hashlib` MD5 + SHA-1 (one-line, lots of use cases).
+3. `MICROPY_PY_DEFLATE_COMPRESS` (one-line).
+4. `btree` (medium effort, niche-but-real use case).
+5. `marshal` (optional).
+6. `websocket` + `webrepl` (waits on a scheduler-lite story; arguably
+   its own phase rather than part of this one).
+
+Each item lands as a discrete commit so a partial Phase 39 can stop
+cleanly between any two.
+
+### Files (per item, expanded when the phase starts)
+
+```
+ports/amiga/mpconfigport.h           — feature-flag flips
+ports/amiga/modtime.c (new)          — for item 1 (time wallclock)
+ports/amiga/Makefile                 — SRC_C / SRC_QSTR additions
+tests/ports/amiga/test_phase39_*.py  — per-item smoke tests
+docs/phase39-extmod-opt-ins-plan.md  — step plan (TBD)
+```
+
+Variants: all three. Cumulative size impact depends on which items
+land — rough upper bound if everything except `webrepl` is taken is
+~40 KB text (`btree` dominates).
+
+---
+
 ## Other known limitations
 
 | Issue | Status | Fix |
