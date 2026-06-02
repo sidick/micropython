@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate .exp expected-output files for MicroPython tests using host CPython.
 
-The on-device Amiga test runner (docs/amiga.md) has no CPython to diff against,
+The on-device Amiga test runner (see the Amiga port wiki) has no CPython to diff against,
 so it relies on .exp files for every test. Most tests in tests/basics/ ship
 without one because the upstream run-tests.py uses CPython directly. This
 tool fills the gap: for each .py test under the given directory that doesn't

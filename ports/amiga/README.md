@@ -204,15 +204,18 @@ Two paths are supported:
 
 Port-specific smoke tests live under `tests/ports/amiga/`. The
 full runbook -- vamos exclude list, Amiberry on-device runner,
-known-good failures, soft-float library bugs -- lives in
-[`docs/amiga-testing.md`](../../docs/amiga-testing.md).
+known-good failures, soft-float library bugs -- lives on the
+[Amiga port testing](https://github.com/sidick/micropython/wiki/Amiga-port-testing)
+wiki page.
 
 Limitations
 -----------
 
 - The 68k native code emitter doesn't yet support `try` / `except`
   blocks inside `@micropython.native` functions (the 68k NLR
-  rework is tracked as a planned phase in `docs/amiga.md`).
+  rework is tracked as a planned phase on the
+  [Amiga port design](https://github.com/sidick/micropython/wiki/Amiga-port-design)
+  wiki page).
 - `@micropython.viper` is limited to a single register local.
 - TLS / SSL requires the AmiSSL v5 install at runtime (AmigaShell
   `Assign AmiSSL: SYS:AmiSSL` is the standard placement).
@@ -223,7 +226,8 @@ Limitations
 Further reading
 ---------------
 
-- [`docs/amiga.md`](../../docs/amiga.md) — implementation log,
-  phase history, design notes for each subsystem.
-- [`docs/amiga-testing.md`](../../docs/amiga-testing.md) — full
-  testing runbook covering vamos, Amiberry, and CI.
+- [Amiga port design](https://github.com/sidick/micropython/wiki/Amiga-port-design)
+  (wiki) — implementation log, phase history, design notes for
+  each subsystem.
+- [Amiga port testing](https://github.com/sidick/micropython/wiki/Amiga-port-testing)
+  (wiki) — full testing runbook covering vamos, Amiberry, and CI.
