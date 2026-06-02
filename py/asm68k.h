@@ -157,8 +157,16 @@ static inline void asm_68k_mov_reg_reg(asm_68k_t *as, int rd, int rs) {
 }
 
 // MOVEQ #n, Dd  (−128 ≤ n ≤ 127, fast single-word)
+//
+// Encoding: 0111 RRR0 NNNNNNNN, where RRR is the destination data register
+// number in bits 11-9 (not 10-8). Using `<< 8` here silently mis-targets the
+// destination -- e.g. MOVEQ #1, D2 (wanted opcode 0x7401) would emit 0x7201
+// = MOVEQ #1, D1, clobbering the wrong register and leaving the intended
+// one stale. This was the cause of every @native binary op against a
+// small-int literal in the MOVEQ range (-128..127) failing with TypeError
+// or wandering into invalid-memory crashes.
 static inline void asm_68k_moveq(asm_68k_t *as, int dd, int8_t n) {
-    asm_68k_emit16(as, (uint16_t)(0x7000 | (ASM_68K_DREG_NUM(dd) << 8) | (uint8_t)n));
+    asm_68k_emit16(as, (uint16_t)(0x7000 | (ASM_68K_DREG_NUM(dd) << 9) | (uint8_t)n));
 }
 
 // MOVE.L #imm32, Dd
