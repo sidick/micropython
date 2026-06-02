@@ -199,6 +199,14 @@ void amiga_free_heap(void *p);
 // flag, so no extra SRC_C wiring is needed.
 #define MICROPY_PY_DEFLATE_COMPRESS         (1)
 
+// btree (Phase 39). modbtree.c needs mp_stream_posix_{read,write,lseek,fsync}
+// to bridge berkeley-db's read/write/lseek calls onto a Python stream
+// object; those are declared in py/stream.h and defined in py/stream.c
+// under MICROPY_STREAMS_POSIX_API. Also gates the MICROPY_PY_BTREE C
+// macro -- the Makefile sets the matching make variable so extmod.mk
+// pulls in lib/berkeley-db-1.xx/btree/*.c + mpool/mpool.c.
+#define MICROPY_STREAMS_POSIX_API           (1)
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 

@@ -41,6 +41,11 @@ MPY_TOOL_FLAGS ?= -mlongint-impl=longlong
 # math-lib bugs that aren't FPU-related.
 include $(VARIANT_DIR)/mpconfigvariant.mk
 
+# Phase 39 step 4: Berkeley DB btree. This is a make variable (not just
+# a C macro) because extmod.mk gates the lib/berkeley-db-1.xx source
+# list and -I include path on it. Must be set before extmod.mk below.
+MICROPY_PY_BTREE = 1
+
 # include py core make definitions
 include $(TOP)/py/py.mk
 include $(TOP)/extmod/extmod.mk
