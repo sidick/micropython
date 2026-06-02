@@ -192,6 +192,13 @@ void amiga_free_heap(void *p);
 #define MICROPY_PY_HASHLIB_MD5              (1)
 #define MICROPY_PY_HASHLIB_SHA1             (1)
 
+// deflate write/compress (Phase 39). MICROPY_PY_DEFLATE is already on
+// at EXTRA_FEATURES, giving us DeflateIO-as-decompressor; flipping
+// MICROPY_PY_DEFLATE_COMPRESS lights up the write side. uzlib's lz77.c
+// + defl_static.c are #include'd by extmod/moddeflate.c under this
+// flag, so no extra SRC_C wiring is needed.
+#define MICROPY_PY_DEFLATE_COMPRESS         (1)
+
 // Platform string visible as sys.platform
 #define MICROPY_PY_SYS_PLATFORM             "amiga"
 
