@@ -66,6 +66,16 @@ void amiga_free_heap(void *p);
 // source (e.g. 0xFFFF_FFFF in feature-detect tests).
 #define MICROPY_LONGINT_IMPL                MICROPY_LONGINT_IMPL_LONGLONG
 
+// time module wall-clock surface (Phase 39 step 1). time.time() /
+// time.time_ns() are backed by timer.device GetSysTime() (already
+// opened at startup for ticks_*/delay_*); gmtime/localtime/mktime go
+// through extmod/modtime.c's timeutils path. Epoch is Unix (1970) to
+// match CPython; the 1978-1970 offset is applied in ports/amiga/modtime.c.
+#define MICROPY_EPOCH_IS_1970               (1)
+#define MICROPY_PY_TIME_GMTIME_LOCALTIME_MKTIME (1)
+#define MICROPY_PY_TIME_TIME_TIME_NS        (1)
+#define MICROPY_PY_TIME_INCLUDEFILE         "ports/amiga/modtime.c"
+
 // sys module
 #define MICROPY_PY_SYS_EXIT                 (1)
 #define MICROPY_PY_SYS_PATH                 (1)
