@@ -135,12 +135,13 @@ SRC_C = \
 	shared/runtime/pyexec.c \
 	shared/runtime/stdout_helpers.c \
 	shared/runtime/interrupt_char.c \
+	shared/timeutils/timeutils.c \
 
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_C += amiga_ssl.c modssl.c
 endif
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modintuition.c modasl.c modicon.c modcatalog.c modosamiga.c modsocket.c sysstdio.c
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modintuition.c modasl.c modicon.c modcatalog.c modosamiga.c modsocket.c sysstdio.c modtime.c
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_QSTR += modssl.c
 endif
