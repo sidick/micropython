@@ -37,14 +37,18 @@ double __floatunsidf(unsigned int x) {
 // py/objfloat.c after optimisation, so this also stops hash(nan) from
 // crashing.
 int __fixdfsi(double x) {
-    union { double d; uint64_t i; } u = {x};
+    union { double d;
+            uint64_t i;
+    } u = {x};
     int sign = (int)(u.i >> 63);
     int raw_exp = (int)((u.i >> 52) & 0x7FF);
     int unbiased = raw_exp - 1023;
 
     if (raw_exp == 0x7FF) {
         // Inf or NaN. NaN: return 0; Inf: saturate.
-        if (u.i & 0xFFFFFFFFFFFFFULL) return 0;
+        if (u.i & 0xFFFFFFFFFFFFFULL) {
+            return 0;
+        }
         return sign ? (int)0x80000000 : 0x7FFFFFFF;
     }
     if (unbiased < 0) {
@@ -67,17 +71,25 @@ int __fixdfsi(double x) {
 // object so we can simply redefine.) NaN returns 0; values out of
 // uint32 range saturate to UINT_MAX.
 unsigned int __fixunsdfsi(double x) {
-    union { double d; uint64_t i; } u = {x};
+    union { double d;
+            uint64_t i;
+    } u = {x};
     int sign = (int)(u.i >> 63);
     int raw_exp = (int)((u.i >> 52) & 0x7FF);
     int unbiased = raw_exp - 1023;
 
-    if (sign) return 0;
+    if (sign) {
+        return 0;
+    }
     if (raw_exp == 0x7FF) {
         return (u.i & 0xFFFFFFFFFFFFFULL) ? 0u : 0xFFFFFFFFu;
     }
-    if (unbiased < 0) return 0;
-    if (unbiased >= 32) return 0xFFFFFFFFu;
+    if (unbiased < 0) {
+        return 0;
+    }
+    if (unbiased >= 32) {
+        return 0xFFFFFFFFu;
+    }
     uint64_t mant = (u.i & 0xFFFFFFFFFFFFFULL) | (1ULL << 52);
     if (unbiased >= 52) {
         return (unsigned int)(mant << (unbiased - 52));
@@ -97,7 +109,7 @@ double __floatdidf(long long x) {
     }
     // -LLONG_MIN doesn't fit in long long, so handle that edge case via
     // the bit pattern: -2^63 == (uint64_t)0x8000000000000000.
-    return -__floatundidf((unsigned long long) - x);
+    return -__floatundidf((unsigned long long)-x);
 }
 
 // Float (single-precision) variants. MicroPython on this port uses
@@ -139,7 +151,9 @@ float __floatdisf(long long x) {
 // so all four broken cases need to be replaced.
 
 static inline int amiga_dbl_isnan(double x) {
-    union { double d; uint64_t i; } u = {x};
+    union { double d;
+            uint64_t i;
+    } u = {x};
     return (u.i & 0x7FFFFFFFFFFFFFFFULL) > 0x7FF0000000000000ULL;
 }
 
@@ -147,7 +161,9 @@ static inline int amiga_dbl_isnan(double x) {
 // out NaN. Doubles are sign-magnitude in their bit representation, so the
 // comparison can be done on the bits directly with a sign flip for negatives.
 static int amiga_dbl_cmp(double a, double b) {
-    union { double d; uint64_t i; } ua = {a}, ub = {b};
+    union { double d;
+            uint64_t i;
+    } ua = {a}, ub = {b};
     // +0 and -0 must compare equal.
     if (((ua.i | ub.i) << 1) == 0) {
         return 0;
@@ -172,7 +188,9 @@ static int amiga_dbl_cmp(double a, double b) {
 // names are redirected to __wrap___<name> below at link time.
 
 int __wrap___eqdf2(double a, double b) {
-    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) return 1;
+    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) {
+        return 1;
+    }
     return amiga_dbl_cmp(a, b);
 }
 
@@ -181,22 +199,30 @@ int __wrap___nedf2(double a, double b) {
 }
 
 int __wrap___ltdf2(double a, double b) {
-    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) return 1;
+    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) {
+        return 1;
+    }
     return amiga_dbl_cmp(a, b);
 }
 
 int __wrap___ledf2(double a, double b) {
-    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) return 1;
+    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) {
+        return 1;
+    }
     return amiga_dbl_cmp(a, b);
 }
 
 int __wrap___gtdf2(double a, double b) {
-    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) return -1;
+    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) {
+        return -1;
+    }
     return amiga_dbl_cmp(a, b);
 }
 
 int __wrap___gedf2(double a, double b) {
-    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) return -1;
+    if (amiga_dbl_isnan(a) || amiga_dbl_isnan(b)) {
+        return -1;
+    }
     return amiga_dbl_cmp(a, b);
 }
 
@@ -217,13 +243,17 @@ double __wrap_pow(double x, double y) {
 // returns +inf which the wrapper treats as a valid result). Force a
 // NaN return for that input so py/modmath.c picks it up.
 static inline int amiga_dbl_isneginf(double x) {
-    union { double d; uint64_t i; } u = {x};
+    union { double d;
+            uint64_t i;
+    } u = {x};
     return u.i == 0xFFF0000000000000ULL;
 }
 extern double __real_tgamma(double x);
 double __wrap_tgamma(double x) {
     if (amiga_dbl_isneginf(x)) {
-        union { double d; uint64_t i; } u;
+        union { double d;
+                uint64_t i;
+        } u;
         u.i = 0x7FF8000000000000ULL;  // quiet NaN
         return u.d;
     }
