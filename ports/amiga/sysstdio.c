@@ -94,6 +94,6 @@ MP_DEFINE_CONST_OBJ_TYPE(
     locals_dict, &stdio_locals_dict
     );
 
-const sys_stdio_obj_t mp_sys_stdin_obj  = {{&stdio_obj_type}, .fd = STDIO_FD_IN};
+const sys_stdio_obj_t mp_sys_stdin_obj = {{&stdio_obj_type}, .fd = STDIO_FD_IN};
 const sys_stdio_obj_t mp_sys_stdout_obj = {{&stdio_obj_type}, .fd = STDIO_FD_OUT};
 const sys_stdio_obj_t mp_sys_stderr_obj = {{&stdio_obj_type}, .fd = STDIO_FD_ERR};

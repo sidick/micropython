@@ -67,9 +67,9 @@ void amiga_asl_close(void) {
 // scratch stack while the ASL work is running -- both stacks remain
 // valid memory throughout, only the SP register changes.
 struct asl_swap_ctx {
-    struct TagItem        *tags;
-    struct FileRequester  *req;
-    BOOL                   ok;
+    struct TagItem *tags;
+    struct FileRequester *req;
+    BOOL ok;
 };
 
 // Runs entirely on the scratch stack. Keeps to AllocAslRequest +
@@ -97,19 +97,19 @@ static const mp_arg_t mod_asl_file_request_args[] = {
 };
 
 static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
-                                     mp_map_t *kw_args) {
+    mp_map_t *kw_args) {
     mp_arg_val_t arg_vals[MP_ARRAY_SIZE(mod_asl_file_request_args)];
     mp_arg_parse_all(n_args, pos_args, kw_args,
         MP_ARRAY_SIZE(mod_asl_file_request_args), mod_asl_file_request_args,
         arg_vals);
 
-    const char *title    = mp_obj_str_get_str(arg_vals[0].u_obj);
-    const char *drawer   = mp_obj_str_get_str(arg_vals[1].u_obj);
-    const char *file     = mp_obj_str_get_str(arg_vals[2].u_obj);
-    const char *pattern  = mp_obj_str_get_str(arg_vals[3].u_obj);
-    bool save_mode       = arg_vals[4].u_bool;
-    bool drawers_only    = arg_vals[5].u_bool;
-    bool multi           = arg_vals[6].u_bool;
+    const char *title = mp_obj_str_get_str(arg_vals[0].u_obj);
+    const char *drawer = mp_obj_str_get_str(arg_vals[1].u_obj);
+    const char *file = mp_obj_str_get_str(arg_vals[2].u_obj);
+    const char *pattern = mp_obj_str_get_str(arg_vals[3].u_obj);
+    bool save_mode = arg_vals[4].u_bool;
+    bool drawers_only = arg_vals[5].u_bool;
+    bool multi = arg_vals[6].u_bool;
 
     // Save dialogs only make sense with a single target. ASL would
     // silently honour one or the other; we'd rather surface the
@@ -125,44 +125,44 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
     struct TagItem tags[10];
     int t = 0;
     if (title[0]) {
-        tags[t].ti_Tag  = ASLFR_TitleText;
+        tags[t].ti_Tag = ASLFR_TitleText;
         tags[t].ti_Data = (ULONG)(uintptr_t)title;
         t++;
     }
     if (drawer[0]) {
-        tags[t].ti_Tag  = ASLFR_InitialDrawer;
+        tags[t].ti_Tag = ASLFR_InitialDrawer;
         tags[t].ti_Data = (ULONG)(uintptr_t)drawer;
         t++;
     }
     if (file[0]) {
-        tags[t].ti_Tag  = ASLFR_InitialFile;
+        tags[t].ti_Tag = ASLFR_InitialFile;
         tags[t].ti_Data = (ULONG)(uintptr_t)file;
         t++;
     }
     if (pattern[0]) {
-        tags[t].ti_Tag  = ASLFR_InitialPattern;
+        tags[t].ti_Tag = ASLFR_InitialPattern;
         tags[t].ti_Data = (ULONG)(uintptr_t)pattern;
         t++;
-        tags[t].ti_Tag  = ASLFR_DoPatterns;
+        tags[t].ti_Tag = ASLFR_DoPatterns;
         tags[t].ti_Data = TRUE;
         t++;
     }
     if (save_mode) {
-        tags[t].ti_Tag  = ASLFR_DoSaveMode;
+        tags[t].ti_Tag = ASLFR_DoSaveMode;
         tags[t].ti_Data = TRUE;
         t++;
     }
     if (drawers_only) {
-        tags[t].ti_Tag  = ASLFR_DrawersOnly;
+        tags[t].ti_Tag = ASLFR_DrawersOnly;
         tags[t].ti_Data = TRUE;
         t++;
     }
     if (multi) {
-        tags[t].ti_Tag  = ASLFR_DoMultiSelect;
+        tags[t].ti_Tag = ASLFR_DoMultiSelect;
         tags[t].ti_Data = TRUE;
         t++;
     }
-    tags[t].ti_Tag  = TAG_DONE;
+    tags[t].ti_Tag = TAG_DONE;
     tags[t].ti_Data = 0;
 
     // Run the ASL call on a 32 KB scratch stack. The default AmigaShell
@@ -176,11 +176,11 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
     }
     struct asl_swap_ctx ctx;
     ctx.tags = tags;
-    ctx.req  = NULL;
-    ctx.ok   = FALSE;
+    ctx.req = NULL;
+    ctx.ok = FALSE;
     struct StackSwapStruct sss;
-    sss.stk_Lower   = scratch;
-    sss.stk_Upper   = (APTR)((char *)scratch + ASL_SWAP_STACK_BYTES);
+    sss.stk_Lower = scratch;
+    sss.stk_Upper = (APTR)((char *)scratch + ASL_SWAP_STACK_BYTES);
     sss.stk_Pointer = sss.stk_Upper;
     StackSwap(&sss);
     asl_run_on_scratch_stack(&ctx);
@@ -243,7 +243,7 @@ static const mp_rom_map_elem_t mod_asl_globals_table[] = {
 static MP_DEFINE_CONST_DICT(mod_asl_globals, mod_asl_globals_table);
 
 const mp_obj_module_t mod_asl_module = {
-    .base    = { &mp_type_module },
+    .base = { &mp_type_module },
     .globals = (mp_obj_dict_t *)&mod_asl_globals,
 };
 

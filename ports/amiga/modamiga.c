@@ -198,20 +198,31 @@ static MP_DEFINE_CONST_FUN_OBJ_1(amiga_exists_obj, amiga_exists);
 
 static int amiga_dos_errno_from(LONG err) {
     switch (err) {
-        case ERROR_OBJECT_NOT_FOUND:    return MP_ENOENT;
-        case ERROR_OBJECT_EXISTS:       return MP_EEXIST;
-        case ERROR_DISK_FULL:           return MP_ENOSPC;
-        case ERROR_OBJECT_IN_USE:       return MP_EBUSY;
+        case ERROR_OBJECT_NOT_FOUND:
+            return MP_ENOENT;
+        case ERROR_OBJECT_EXISTS:
+            return MP_EEXIST;
+        case ERROR_DISK_FULL:
+            return MP_ENOSPC;
+        case ERROR_OBJECT_IN_USE:
+            return MP_EBUSY;
         case ERROR_READ_PROTECTED:
-        case ERROR_WRITE_PROTECTED:     return MP_EACCES;
-        case ERROR_OBJECT_WRONG_TYPE:   return MP_EISDIR;
-        case ERROR_NO_FREE_STORE:       return MP_ENOMEM;
-        case ERROR_BAD_TEMPLATE:        return MP_EINVAL;
+        case ERROR_WRITE_PROTECTED:
+            return MP_EACCES;
+        case ERROR_OBJECT_WRONG_TYPE:
+            return MP_EISDIR;
+        case ERROR_NO_FREE_STORE:
+            return MP_ENOMEM;
+        case ERROR_BAD_TEMPLATE:
+            return MP_EINVAL;
         case ERROR_DEVICE_NOT_MOUNTED:
         case ERROR_NOT_A_DOS_DISK:
-        case ERROR_NO_DISK:             return MP_ENODEV;
-        case ERROR_INVALID_COMPONENT_NAME: return MP_EINVAL;
-        default:                        return MP_EIO;
+        case ERROR_NO_DISK:
+            return MP_ENODEV;
+        case ERROR_INVALID_COMPONENT_NAME:
+            return MP_EINVAL;
+        default:
+            return MP_EIO;
     }
 }
 
@@ -678,7 +689,7 @@ static mp_obj_t amiga_wait_signal(size_t n_args, const mp_obj_t *pos_args, mp_ma
     };
     mp_arg_val_t arg_vals[MP_ARRAY_SIZE(allowed_args)];
     mp_arg_parse_all(n_args, pos_args, kw_args,
-                     MP_ARRAY_SIZE(allowed_args), allowed_args, arg_vals);
+        MP_ARRAY_SIZE(allowed_args), allowed_args, arg_vals);
     ULONG user_mask = (ULONG)arg_vals[0].u_int;
     mp_obj_t timeout_obj = arg_vals[1].u_obj;
     bool has_timeout = (timeout_obj != mp_const_none);
@@ -740,7 +751,7 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_wait_signal_obj, 1, amiga_wait_signal);
 struct RxsLib *RexxSysBase = NULL;
 
 static struct MsgPort *amiga_rexx_port = NULL;
-static char            amiga_rexx_port_name[40];
+static char amiga_rexx_port_name[40];
 
 // Phase 32 persistent ARexx clients (definitions below near the
 // client primitives); kept here so amiga_rexx_shutdown() -- which
@@ -778,7 +789,7 @@ static mp_obj_t amiga_rexx_open_fn(size_t n_args, const mp_obj_t *args) {
                     MP_ERROR_TEXT("CreateMsgPort failed"));
             }
             amiga_rexx_port->mp_Node.ln_Name = (STRPTR)amiga_rexx_port_name;
-            amiga_rexx_port->mp_Node.ln_Pri  = 0;
+            amiga_rexx_port->mp_Node.ln_Pri = 0;
             AddPort(amiga_rexx_port);
             chosen = i;
             break;
@@ -869,7 +880,7 @@ static mp_obj_t amiga_rexx_recv_fn(size_t n_args, const mp_obj_t *pos_args, mp_m
 
     mp_obj_t timeout_obj = arg_vals[0].u_obj;
     bool has_timeout = (timeout_obj != mp_const_none);
-    ULONG port_sig  = 1UL << amiga_rexx_port->mp_SigBit;
+    ULONG port_sig = 1UL << amiga_rexx_port->mp_SigBit;
     ULONG full_mask = port_sig | SIGBREAKF_CTRL_C;
     ULONG timer_sig = 0;
 
@@ -991,8 +1002,8 @@ static bool amiga_rexx_ensure_rexxsys(void) {
 // RexxClient C primitives (which reuse the same reply port across
 // many sends).
 static mp_obj_t amiga_rexx_send_via_port(struct MsgPort *reply,
-                                         const char *host,
-                                         const mp_buffer_info_t *cmd_bi) {
+    const char *host,
+    const mp_buffer_info_t *cmd_bi) {
     struct MsgPort *target = FindPort((CONST_STRPTR)host);
     if (target == NULL) {
         mp_raise_OSError(MP_ENOENT);
@@ -1154,7 +1165,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(amiga_rexx_client_close_obj,
 // Reuses the reply port at `handle`; otherwise identical to
 // amiga.rexx_send.
 static mp_obj_t amiga_rexx_client_send_fn(size_t n_args,
-                                          const mp_obj_t *args) {
+    const mp_obj_t *args) {
     (void)n_args;
     struct MsgPort *reply = (struct MsgPort *)(uintptr_t)
         mp_obj_get_int(args[0]);
@@ -1256,11 +1267,17 @@ static MP_DEFINE_CONST_FUN_OBJ_1(amiga_readline_push_history_obj, amiga_readline
 static mp_obj_t amiga_cpu_fn(void) {
     UWORD f = SysBase->AttnFlags;
     const char *s = "68000";
-    if (f & AFF_68060) s = "68060";
-    else if (f & AFF_68040) s = "68040";
-    else if (f & AFF_68030) s = "68030";
-    else if (f & AFF_68020) s = "68020";
-    else if (f & AFF_68010) s = "68010";
+    if (f & AFF_68060) {
+        s = "68060";
+    } else if (f & AFF_68040) {
+        s = "68040";
+    } else if (f & AFF_68030) {
+        s = "68030";
+    } else if (f & AFF_68020) {
+        s = "68020";
+    } else if (f & AFF_68010) {
+        s = "68010";
+    }
     return mp_obj_new_str(s, strlen(s));
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_cpu_obj, amiga_cpu_fn);
@@ -1270,9 +1287,13 @@ static MP_DEFINE_CONST_FUN_OBJ_0(amiga_cpu_obj, amiga_cpu_fn);
 static mp_obj_t amiga_fpu_fn(void) {
     UWORD f = SysBase->AttnFlags;
     const char *s = "none";
-    if (f & AFF_FPU40) s = "68040";
-    else if (f & AFF_68882) s = "68882";
-    else if (f & AFF_68881) s = "68881";
+    if (f & AFF_FPU40) {
+        s = "68040";
+    } else if (f & AFF_68882) {
+        s = "68882";
+    } else if (f & AFF_68881) {
+        s = "68881";
+    }
     return mp_obj_new_str(s, strlen(s));
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_fpu_obj, amiga_fpu_fn);
@@ -1306,8 +1327,11 @@ static mp_obj_t amiga_chipset_fn(void) {
     amiga_gfx_ensure_open();
     UBYTE bits = AmigaGfxBase->ChipRevBits0;
     const char *s = "OCS";
-    if (bits & (GFXF_AA_ALICE | GFXF_AA_LISA)) s = "AGA";
-    else if (bits & (GFXF_HR_AGNUS | GFXF_HR_DENISE)) s = "ECS";
+    if (bits & (GFXF_AA_ALICE | GFXF_AA_LISA)) {
+        s = "AGA";
+    } else if (bits & (GFXF_HR_AGNUS | GFXF_HR_DENISE)) {
+        s = "ECS";
+    }
     return mp_obj_new_str(s, strlen(s));
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_chipset_obj, amiga_chipset_fn);
@@ -1318,7 +1342,9 @@ static mp_obj_t amiga_kickstart_fn(void) {
     int n = snprintf(buf, sizeof(buf), "%u.%u",
         (unsigned)SysBase->LibNode.lib_Version,
         (unsigned)SysBase->LibNode.lib_Revision);
-    if (n < 0 || n >= (int)sizeof(buf)) n = 0;
+    if (n < 0 || n >= (int)sizeof(buf)) {
+        n = 0;
+    }
     return mp_obj_new_str(buf, (size_t)n);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_kickstart_obj, amiga_kickstart_fn);
@@ -1404,7 +1430,7 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
 static MP_DEFINE_CONST_DICT(amiga_module_globals, amiga_module_globals_table);
 
 const mp_obj_module_t amiga_module = {
-    .base    = { &mp_type_module },
+    .base = { &mp_type_module },
     .globals = (mp_obj_dict_t *)&amiga_module_globals,
 };
 
