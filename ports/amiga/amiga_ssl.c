@@ -38,7 +38,7 @@ bool amiga_ssl_open(void) {
     }
 
     AmiSSLMasterBase = OpenLibrary((STRPTR)"amisslmaster.library",
-                                   AMISSLMASTER_MIN_VERSION);
+        AMISSLMASTER_MIN_VERSION);
     if (AmiSSLMasterBase == NULL) {
         return false;
     }

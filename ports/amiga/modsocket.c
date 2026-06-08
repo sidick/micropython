@@ -106,17 +106,29 @@ static void resolve_addr(mp_obj_t addr_in, struct sockaddr_in *addr, socklen_t *
 
 static mp_uint_t socket_read(mp_obj_t self_in, void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_socket_t *self = MP_OBJ_TO_PTR(self_in);
-    if (self->fd < 0) { *errcode = MP_EBADF; return MP_STREAM_ERROR; }
+    if (self->fd < 0) {
+        *errcode = MP_EBADF;
+        return MP_STREAM_ERROR;
+    }
     LONG n = recv(self->fd, buf, (LONG)size, 0);
-    if (n < 0) { *errcode = sock_errno(); return MP_STREAM_ERROR; }
+    if (n < 0) {
+        *errcode = sock_errno();
+        return MP_STREAM_ERROR;
+    }
     return (mp_uint_t)n;
 }
 
 static mp_uint_t socket_write(mp_obj_t self_in, const void *buf, mp_uint_t size, int *errcode) {
     mp_obj_amiga_socket_t *self = MP_OBJ_TO_PTR(self_in);
-    if (self->fd < 0) { *errcode = MP_EBADF; return MP_STREAM_ERROR; }
+    if (self->fd < 0) {
+        *errcode = MP_EBADF;
+        return MP_STREAM_ERROR;
+    }
     LONG n = send(self->fd, (APTR)buf, (LONG)size, 0);
-    if (n < 0) { *errcode = sock_errno(); return MP_STREAM_ERROR; }
+    if (n < 0) {
+        *errcode = sock_errno();
+        return MP_STREAM_ERROR;
+    }
     return (mp_uint_t)n;
 }
 
@@ -147,8 +159,8 @@ static mp_obj_t socket_make_new(const mp_obj_type_t *type, size_t n_args, size_t
         mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("bsdsocket.library not available"));
     }
     int family = (n_args > 0) ? mp_obj_get_int(args[0]) : AF_INET;
-    int stype  = (n_args > 1) ? mp_obj_get_int(args[1]) : SOCK_STREAM;
-    int proto  = (n_args > 2) ? mp_obj_get_int(args[2]) : 0;
+    int stype = (n_args > 1) ? mp_obj_get_int(args[1]) : SOCK_STREAM;
+    int proto = (n_args > 2) ? mp_obj_get_int(args[2]) : 0;
 
     LONG fd = socket((LONG)family, (LONG)stype, (LONG)proto);
     if (fd < 0) {
@@ -315,7 +327,7 @@ static mp_obj_t socket_settimeout(mp_obj_t self_in, mp_obj_t t_in) {
         } else {
             int ms = (int)(t * 1000);
             struct timeval tv;
-            tv.tv_sec  = ms / 1000;
+            tv.tv_sec = ms / 1000;
             tv.tv_usec = (ms % 1000) * 1000;
             setsockopt(self->fd, SOL_SOCKET, SO_RCVTIMEO, (APTR)&tv, sizeof(tv));
             setsockopt(self->fd, SOL_SOCKET, SO_SNDTIMEO, (APTR)&tv, sizeof(tv));
@@ -329,7 +341,7 @@ static MP_DEFINE_CONST_FUN_OBJ_2(socket_settimeout_obj, socket_settimeout);
 static mp_obj_t socket_setsockopt(size_t n_args, const mp_obj_t *args) {
     mp_obj_amiga_socket_t *self = MP_OBJ_TO_PTR(args[0]);
     int level = mp_obj_get_int(args[1]);
-    int opt   = mp_obj_get_int(args[2]);
+    int opt = mp_obj_get_int(args[2]);
     if (mp_obj_is_int(args[3])) {
         LONG val = (LONG)mp_obj_get_int(args[3]);
         setsockopt(self->fd, (LONG)level, (LONG)opt, (APTR)&val, sizeof(val));

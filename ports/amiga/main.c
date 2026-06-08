@@ -111,7 +111,9 @@ size_t gc_get_max_new_split(void) {
 size_t amiga_heap_chunk_count(void) {
     size_t n = 0;
     for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
-        if (amiga_heap_chunks[i].ptr != NULL) n++;
+        if (amiga_heap_chunks[i].ptr != NULL) {
+            n++;
+        }
     }
     return n;
 }
@@ -125,7 +127,9 @@ static size_t parse_heap_size(const char *s) {
         v = v * 10 + (size_t)(*p - '0');
         p++;
     }
-    if (p == s) return 0;
+    if (p == s) {
+        return 0;
+    }
     if (*p == 'K' || *p == 'k') {
         v *= 1024;
         p++;
@@ -133,7 +137,9 @@ static size_t parse_heap_size(const char *s) {
         v *= 1024 * 1024;
         p++;
     }
-    if (*p != '\0') return 0;
+    if (*p != '\0') {
+        return 0;
+    }
     return v;
 }
 
@@ -289,8 +295,12 @@ static int amiga_parse_args(char ***argv_out, char **buf_out) {
     char *buf = AllocVec(bufsz, MEMF_ANY | MEMF_CLEAR);
     char **argv = AllocVec((srclen / 2 + 4) * sizeof(char *), MEMF_ANY | MEMF_CLEAR);
     if (!buf || !argv) {
-        if (buf) FreeVec(buf);
-        if (argv) FreeVec(argv);
+        if (buf) {
+            FreeVec(buf);
+        }
+        if (argv) {
+            FreeVec(argv);
+        }
         return 0;
     }
 
@@ -306,7 +316,9 @@ static int amiga_parse_args(char ***argv_out, char **buf_out) {
         while (*p == ' ' || *p == '\t' || *p == '\n') {
             p++;
         }
-        if (!*p) break;
+        if (!*p) {
+            break;
+        }
 
         argv[argc++] = out;
 
@@ -328,7 +340,9 @@ static int amiga_parse_args(char ***argv_out, char **buf_out) {
                     *out++ = *p++;
                 }
             }
-            if (*p == '"') p++;
+            if (*p == '"') {
+                p++;
+            }
         } else {
             // Unquoted token: read until whitespace.
             while (*p && *p != ' ' && *p != '\t' && *p != '\n') {
@@ -424,13 +438,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
                 struct WBArg *arg = &_WBenchMsg->sm_ArgList[1];
                 if (arg->wa_Lock != 0) {
                     if (!NameFromLock(arg->wa_Lock, (STRPTR)wb_project_path,
-                                      sizeof(wb_project_path))) {
+                        sizeof(wb_project_path))) {
                         wb_project_path[0] = '\0';
                     }
                 }
                 if (arg->wa_Name != NULL && arg->wa_Name[0] != '\0') {
                     if (!AddPart((STRPTR)wb_project_path, (STRPTR)arg->wa_Name,
-                                 sizeof(wb_project_path))) {
+                        sizeof(wb_project_path))) {
                         wb_project_path[0] = '\0';
                     }
                 }
@@ -481,20 +495,30 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     char envbuf[32];
     if (GetVar((STRPTR)"MICROPYHEAP", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
         size_t v = parse_heap_size(envbuf);
-        if (v != 0) initial_heap = v;
+        if (v != 0) {
+            initial_heap = v;
+        }
     }
     if (GetVar((STRPTR)"MICROPYHEAPMAX", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
         size_t v = parse_heap_size(envbuf);
-        if (v != 0) amiga_heap_max_bytes = v;
+        if (v != 0) {
+            amiga_heap_max_bytes = v;
+        }
     }
     for (int a = 1; a + 1 < argc; a++) {
-        if (strcmp(argv[a], "-X") != 0) continue;
+        if (strcmp(argv[a], "-X") != 0) {
+            continue;
+        }
         if (strncmp(argv[a + 1], "heap=", 5) == 0) {
             size_t v = parse_heap_size(argv[a + 1] + 5);
-            if (v != 0) initial_heap = v;
+            if (v != 0) {
+                initial_heap = v;
+            }
         } else if (strncmp(argv[a + 1], "maxheap=", 8) == 0) {
             size_t v = parse_heap_size(argv[a + 1] + 8);
-            if (v != 0) amiga_heap_max_bytes = v;
+            if (v != 0) {
+                amiga_heap_max_bytes = v;
+            }
         #if MICROPY_PY_AMIGA_SSL
         } else if (strncmp(argv[a + 1], "sslver=", 7) == 0) {
             // Diagnostic: pin OpenAmiSSLTags to a specific APIVersion
@@ -515,13 +539,17 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes, (CONST_STRPTR)"HEAP");
         if (tt_heap != NULL) {
             size_t v = parse_heap_size((const char *)tt_heap);
-            if (v != 0) initial_heap = v;
+            if (v != 0) {
+                initial_heap = v;
+            }
         }
         UBYTE *tt_max = FindToolType(
             (CONST_STRPTR *)amiga_wb_diskobject->do_ToolTypes, (CONST_STRPTR)"MAXHEAP");
         if (tt_max != NULL) {
             size_t v = parse_heap_size((const char *)tt_max);
-            if (v != 0) amiga_heap_max_bytes = v;
+            if (v != 0) {
+                amiga_heap_max_bytes = v;
+            }
         }
     }
     // If maxheap is set and smaller than initial, raise it to fit the
@@ -725,7 +753,7 @@ static int amiga_main(int argc_unused, char **argv_unused) {
                     // shared/runtime/pyexec.c that handles -c / script files.
                     mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
                     if (mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(((mp_obj_base_t *)nlr.ret_val)->type),
-                            MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
+                        MP_OBJ_FROM_PTR(&mp_type_SystemExit))) {
                         mp_obj_t val = mp_obj_exception_get_value(exc);
                         if (val == mp_const_none) {
                             exit_code = 0;
@@ -970,16 +998,16 @@ int main(int argc, char **argv) {
         return amiga_main(argc, argv);
     }
     amiga_main_scratch = AllocVec(AMIGA_MAIN_STACK_BYTES,
-                                  MEMF_ANY | MEMF_PUBLIC);
+        MEMF_ANY | MEMF_PUBLIC);
     if (amiga_main_scratch == NULL) {
         // Out of memory -- fall through with the small stack and hope
         // the script doesn't import deeply. Better than refusing to
         // start.
         return amiga_main(argc, argv);
     }
-    amiga_main_sss.stk_Lower   = amiga_main_scratch;
-    amiga_main_sss.stk_Upper   = (APTR)((char *)amiga_main_scratch
-                                        + AMIGA_MAIN_STACK_BYTES);
+    amiga_main_sss.stk_Lower = amiga_main_scratch;
+    amiga_main_sss.stk_Upper = (APTR)((char *)amiga_main_scratch
+        + AMIGA_MAIN_STACK_BYTES);
     amiga_main_sss.stk_Pointer = amiga_main_sss.stk_Upper;
     StackSwap(&amiga_main_sss);
     int rc = amiga_main(argc, argv);

@@ -87,9 +87,9 @@ static mp_obj_t amiga_diskobject_make(struct DiskObject *dobj) {
         amiga_diskobject_obj_t, &amiga_diskobject_type);
     self->dobj = dobj;
     self->original_default_tool = dobj->do_DefaultTool;
-    self->original_tool_types   = dobj->do_ToolTypes;
+    self->original_tool_types = dobj->do_ToolTypes;
     self->owns_default_tool = false;
-    self->owns_tool_types   = false;
+    self->owns_tool_types = false;
     return MP_OBJ_FROM_PTR(self);
 }
 
@@ -97,15 +97,24 @@ static mp_obj_t amiga_diskobject_make(struct DiskObject *dobj) {
 // Unknown types fall through to the raw integer.
 static mp_obj_t amiga_diskobject_type_str(UBYTE t) {
     switch (t) {
-        case WBDISK:    return MP_OBJ_NEW_QSTR(MP_QSTR_disk);
-        case WBDRAWER:  return MP_OBJ_NEW_QSTR(MP_QSTR_drawer);
-        case WBTOOL:    return MP_OBJ_NEW_QSTR(MP_QSTR_tool);
-        case WBPROJECT: return MP_OBJ_NEW_QSTR(MP_QSTR_project);
-        case WBGARBAGE: return MP_OBJ_NEW_QSTR(MP_QSTR_garbage);
-        case WBDEVICE:  return MP_OBJ_NEW_QSTR(MP_QSTR_device);
-        case WBKICK:    return MP_OBJ_NEW_QSTR(MP_QSTR_kick);
-        case WBAPPICON: return MP_OBJ_NEW_QSTR(MP_QSTR_appicon);
-        default:        return MP_OBJ_NEW_SMALL_INT(t);
+        case WBDISK:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_disk);
+        case WBDRAWER:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_drawer);
+        case WBTOOL:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_tool);
+        case WBPROJECT:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_project);
+        case WBGARBAGE:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_garbage);
+        case WBDEVICE:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_device);
+        case WBKICK:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_kick);
+        case WBAPPICON:
+            return MP_OBJ_NEW_QSTR(MP_QSTR_appicon);
+        default:
+            return MP_OBJ_NEW_SMALL_INT(t);
     }
 }
 
@@ -139,8 +148,8 @@ static void amiga_diskobject_close_inplace(amiga_diskobject_obj_t *self) {
 // Replace do_DefaultTool with a Python-owned buffer.  Pass value==NULL
 // to clear it (icon.library treats NULL/empty as "no default tool").
 static void amiga_diskobject_set_default_tool(amiga_diskobject_obj_t *self,
-                                              const char *value,
-                                              size_t value_len) {
+    const char *value,
+    size_t value_len) {
     if (self->owns_default_tool && self->dobj->do_DefaultTool != NULL) {
         FreeVec(self->dobj->do_DefaultTool);
         self->dobj->do_DefaultTool = NULL;
@@ -205,8 +214,8 @@ static void amiga_tooltypes_ensure_owned(amiga_diskobject_obj_t *self) {
 
 // Build a "KEY=VALUE" or "KEY" buffer (flag-style if value==NULL).
 static STRPTR amiga_tooltypes_format_entry(const char *key, size_t key_len,
-                                           const char *value, size_t value_len,
-                                           bool flag_style) {
+    const char *value, size_t value_len,
+    bool flag_style) {
     size_t entry_len = flag_style ? key_len : (key_len + 1 + value_len);
     STRPTR buf = AllocVec(entry_len + 1, MEMF_ANY);
     if (buf == NULL) {
@@ -224,9 +233,9 @@ static STRPTR amiga_tooltypes_format_entry(const char *key, size_t key_len,
 // Insert or replace a tooltype.  `flag_style=true` writes "KEY" only
 // (value/value_len are ignored); `flag_style=false` writes "KEY=VALUE".
 static void amiga_tooltypes_set_entry(amiga_diskobject_obj_t *self,
-                                      const char *key, size_t key_len,
-                                      const char *value, size_t value_len,
-                                      bool flag_style) {
+    const char *key, size_t key_len,
+    const char *value, size_t value_len,
+    bool flag_style) {
     amiga_tooltypes_ensure_owned(self);
     STRPTR *tt = self->dobj->do_ToolTypes;
     // Replace existing entry if the key matches.
@@ -270,7 +279,7 @@ static void amiga_tooltypes_set_entry(amiga_diskobject_obj_t *self,
         }
         new_entry[entry_len] = '\0';
     }
-    new_array[n]     = new_entry;
+    new_array[n] = new_entry;
     new_array[n + 1] = NULL;
     FreeVec(self->dobj->do_ToolTypes);
     self->dobj->do_ToolTypes = new_array;
@@ -278,7 +287,7 @@ static void amiga_tooltypes_set_entry(amiga_diskobject_obj_t *self,
 
 // Remove a tooltype.  Returns true if the key was present.
 static bool amiga_tooltypes_del_entry(amiga_diskobject_obj_t *self,
-                                      const char *key, size_t key_len) {
+    const char *key, size_t key_len) {
     amiga_tooltypes_ensure_owned(self);
     STRPTR *tt = self->dobj->do_ToolTypes;
     if (tt == NULL) {
@@ -435,7 +444,7 @@ static STRPTR *amiga_tooltypes_array(amiga_tooltypes_obj_t *self) {
 // `value_out` points just past the '=' (or to the empty string when
 // no '=' is present).  `key_len` is the number of bytes in the key.
 static void amiga_tooltypes_split(const char *entry, size_t *key_len,
-                                  const char **value_out) {
+    const char **value_out) {
     const char *eq = strchr(entry, '=');
     if (eq == NULL) {
         *key_len = strlen(entry);
@@ -447,7 +456,7 @@ static void amiga_tooltypes_split(const char *entry, size_t *key_len,
 }
 
 static mp_obj_t amiga_tooltypes_subscr(mp_obj_t self_in, mp_obj_t key_in,
-                                       mp_obj_t value) {
+    mp_obj_t value) {
     amiga_tooltypes_obj_t *self = MP_OBJ_TO_PTR(self_in);
     size_t klen;
     const char *kdata = mp_obj_str_get_data(key_in, &klen);
@@ -493,7 +502,7 @@ static mp_obj_t amiga_tooltypes_subscr(mp_obj_t self_in, mp_obj_t key_in,
 }
 
 static mp_obj_t amiga_tooltypes_contains(amiga_tooltypes_obj_t *self,
-                                         mp_obj_t key_in) {
+    mp_obj_t key_in) {
     STRPTR *tt = amiga_tooltypes_array(self);
     if (tt == NULL) {
         return mp_const_false;
@@ -544,9 +553,9 @@ static mp_obj_t amiga_tooltypes_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *ite
     assert(sizeof(amiga_tooltypes_iter_t) <= sizeof(mp_obj_iter_buf_t));
     amiga_tooltypes_iter_t *it = (amiga_tooltypes_iter_t *)iter_buf;
     it->base.type = &mp_type_polymorph_iter;
-    it->iternext  = amiga_tooltypes_iternext;
-    it->parent    = self->parent;
-    it->index     = 0;
+    it->iternext = amiga_tooltypes_iternext;
+    it->parent = self->parent;
+    it->index = 0;
     return MP_OBJ_FROM_PTR(it);
 }
 
@@ -556,7 +565,9 @@ static mp_obj_t amiga_tooltypes_unary_op(mp_unary_op_t op, mp_obj_t self_in) {
         STRPTR *tt = amiga_tooltypes_array(self);
         size_t n = 0;
         if (tt != NULL) {
-            while (tt[n] != NULL) n++;
+            while (tt[n] != NULL) {
+                n++;
+            }
         }
         return mp_obj_new_int(n);
     }
@@ -727,7 +738,7 @@ static MP_DEFINE_CONST_FUN_OBJ_2(mod_icon_write_obj, mod_icon_write);
 // Optional kwargs apply field updates immediately so callers can
 // chain straight into icon.write() without a second pass.
 static mp_obj_t mod_icon_new(size_t n_args, const mp_obj_t *pos_args,
-                             mp_map_t *kw_args) {
+    mp_map_t *kw_args) {
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_type,         MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0} },
         { MP_QSTR_default_tool, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL} },
@@ -816,7 +827,7 @@ static const mp_rom_map_elem_t mod_icon_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_write),     MP_ROM_PTR(&mod_icon_write_obj) },
     { MP_ROM_QSTR(MP_QSTR_new),       MP_ROM_PTR(&mod_icon_new_obj) },
     { MP_ROM_QSTR(MP_QSTR_DiskObject),
-        MP_ROM_PTR(&amiga_diskobject_type) },
+      MP_ROM_PTR(&amiga_diskobject_type) },
     // do_Type values from <workbench/workbench.h>.
     { MP_ROM_QSTR(MP_QSTR_WBDISK),    MP_ROM_INT(WBDISK) },
     { MP_ROM_QSTR(MP_QSTR_WBDRAWER),  MP_ROM_INT(WBDRAWER) },
@@ -830,7 +841,7 @@ static const mp_rom_map_elem_t mod_icon_globals_table[] = {
 static MP_DEFINE_CONST_DICT(mod_icon_globals, mod_icon_globals_table);
 
 const mp_obj_module_t mod_icon_module = {
-    .base    = { &mp_type_module },
+    .base = { &mp_type_module },
     .globals = (mp_obj_dict_t *)&mod_icon_globals,
 };
 

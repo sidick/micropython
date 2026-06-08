@@ -82,8 +82,8 @@ static mp_obj_t amiga_catalog_make(struct Catalog *cat) {
 // need separate guards.  Returns a str copy so the lifetime tracks
 // the caller, not the underlying locale.library buffer.
 static mp_obj_t amiga_catalog_lookup(mp_obj_t self_in,
-                                     mp_obj_t id_in,
-                                     mp_obj_t default_in) {
+    mp_obj_t id_in,
+    mp_obj_t default_in) {
     amiga_catalog_obj_t *self = MP_OBJ_TO_PTR(self_in);
     LONG id = mp_obj_get_int(id_in);
     const char *def = mp_obj_str_get_str(default_in);
@@ -136,7 +136,7 @@ static MP_DEFINE_CONST_OBJ_TYPE(
 // ---------- _catalog.open(name, version=0, language=None) ----------
 
 static mp_obj_t mod_catalog_open(size_t n_args, const mp_obj_t *pos_args,
-                                 mp_map_t *kw_args) {
+    mp_map_t *kw_args) {
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_name,              MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = mp_const_none} },
         { MP_QSTR_version,           MP_ARG_INT, {.u_int = 0} },
@@ -166,20 +166,20 @@ static mp_obj_t mod_catalog_open(size_t n_args, const mp_obj_t *pos_args,
     // OC_BuiltInLanguage / OC_Language are optional; TAG_DONE ends.
     struct TagItem tags[4];
     int n = 0;
-    tags[n].ti_Tag  = OC_Version;
+    tags[n].ti_Tag = OC_Version;
     tags[n].ti_Data = (ULONG)version;
     n++;
     if (built_in != NULL) {
-        tags[n].ti_Tag  = OC_BuiltInLanguage;
+        tags[n].ti_Tag = OC_BuiltInLanguage;
         tags[n].ti_Data = (ULONG)built_in;
         n++;
     }
     if (language != NULL) {
-        tags[n].ti_Tag  = OC_Language;
+        tags[n].ti_Tag = OC_Language;
         tags[n].ti_Data = (ULONG)language;
         n++;
     }
-    tags[n].ti_Tag  = TAG_DONE;
+    tags[n].ti_Tag = TAG_DONE;
     tags[n].ti_Data = 0;
 
     struct Catalog *cat = OpenCatalogA(NULL, (CONST_STRPTR)name, tags);
@@ -227,7 +227,7 @@ static const mp_rom_map_elem_t mod_catalog_globals_table[] = {
 static MP_DEFINE_CONST_DICT(mod_catalog_globals, mod_catalog_globals_table);
 
 const mp_obj_module_t mod_catalog_module = {
-    .base    = { &mp_type_module },
+    .base = { &mp_type_module },
     .globals = (mp_obj_dict_t *)&mod_catalog_globals,
 };
 

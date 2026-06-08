@@ -34,18 +34,18 @@
 // Filled in below after OpenDevice("timer.device", ...).
 struct Device *TimerBase = NULL;
 
-static struct MsgPort      *timer_port = NULL;
-static struct timerequest  *timer_req  = NULL;
-static ULONG                eclock_freq = 0;
+static struct MsgPort *timer_port = NULL;
+static struct timerequest *timer_req = NULL;
+static ULONG eclock_freq = 0;
 
 // Separate async timer.device IORequest for amiga.wait_signal() (Phase 25).
 // Kept distinct from `timer_req` so a SendIO request pending for a
 // timeout-Wait can't collide with the next synchronous mp_hal_delay_us
 // the script issues from a signal handler.  Both ports share the same
 // `timer.device` open (the OS reference-counts it).
-static struct MsgPort      *async_timer_port = NULL;
-static struct timerequest  *async_timer_req  = NULL;
-static bool                 async_timer_inflight = false;
+static struct MsgPort *async_timer_port = NULL;
+static struct timerequest *async_timer_req = NULL;
+static bool async_timer_inflight = false;
 
 // IO request round-trip overhead is several microseconds (msgport reply,
 // task wake, signal poll). For delays below this we busy-wait against the
@@ -65,7 +65,7 @@ bool amiga_timer_open(void) {
         return false;
     }
     if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
-                   (struct IORequest *)timer_req, 0) != 0) {
+        (struct IORequest *)timer_req, 0) != 0) {
         DeleteIORequest((struct IORequest *)timer_req);
         DeleteMsgPort(timer_port);
         timer_req = NULL;
@@ -89,7 +89,7 @@ bool amiga_timer_open(void) {
             async_timer_port, sizeof(*async_timer_req));
         if (async_timer_req != NULL) {
             if (OpenDevice((CONST_STRPTR)"timer.device", UNIT_MICROHZ,
-                           (struct IORequest *)async_timer_req, 0) != 0) {
+                (struct IORequest *)async_timer_req, 0) != 0) {
                 DeleteIORequest((struct IORequest *)async_timer_req);
                 async_timer_req = NULL;
                 DeleteMsgPort(async_timer_port);
@@ -143,8 +143,8 @@ ULONG amiga_async_timer_send(ULONG ms) {
         return 0;
     }
     async_timer_req->tr_node.io_Command = TR_ADDREQUEST;
-    async_timer_req->tr_time.tv_secs    = ms / 1000U;
-    async_timer_req->tr_time.tv_micro   = (ms % 1000U) * 1000U;
+    async_timer_req->tr_time.tv_secs = ms / 1000U;
+    async_timer_req->tr_time.tv_micro = (ms % 1000U) * 1000U;
     SendIO((struct IORequest *)async_timer_req);
     async_timer_inflight = true;
     return 1UL << async_timer_port->mp_SigBit;
@@ -210,8 +210,8 @@ void mp_hal_delay_us(mp_uint_t us) {
         return;
     }
     timer_req->tr_node.io_Command = TR_ADDREQUEST;
-    timer_req->tr_time.tv_secs    = us / 1000000U;
-    timer_req->tr_time.tv_micro   = us % 1000000U;
+    timer_req->tr_time.tv_secs = us / 1000000U;
+    timer_req->tr_time.tv_micro = us % 1000000U;
     DoIO((struct IORequest *)timer_req);
 }
 
@@ -229,7 +229,7 @@ void mp_hal_delay_ms(mp_uint_t ms) {
         return;
     }
     timer_req->tr_node.io_Command = TR_ADDREQUEST;
-    timer_req->tr_time.tv_secs    = ms / 1000U;
-    timer_req->tr_time.tv_micro   = (ms % 1000U) * 1000U;
+    timer_req->tr_time.tv_secs = ms / 1000U;
+    timer_req->tr_time.tv_micro = (ms % 1000U) * 1000U;
     DoIO((struct IORequest *)timer_req);
 }

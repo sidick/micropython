@@ -31,15 +31,23 @@
 
 static int dos_errno(void) {
     switch (IoErr()) {
-        case ERROR_OBJECT_NOT_FOUND:    return MP_ENOENT;
-        case ERROR_OBJECT_EXISTS:       return MP_EEXIST;
-        case ERROR_DISK_FULL:           return MP_ENOSPC;
-        case ERROR_OBJECT_IN_USE:       return MP_EBUSY;
+        case ERROR_OBJECT_NOT_FOUND:
+            return MP_ENOENT;
+        case ERROR_OBJECT_EXISTS:
+            return MP_EEXIST;
+        case ERROR_DISK_FULL:
+            return MP_ENOSPC;
+        case ERROR_OBJECT_IN_USE:
+            return MP_EBUSY;
         case ERROR_READ_PROTECTED:
-        case ERROR_WRITE_PROTECTED:     return MP_EACCES;
-        case ERROR_OBJECT_WRONG_TYPE:   return MP_EISDIR;
-        case ERROR_DIRECTORY_NOT_EMPTY: return MP_EACCES;
-        default:                        return MP_EIO;
+        case ERROR_WRITE_PROTECTED:
+            return MP_EACCES;
+        case ERROR_OBJECT_WRONG_TYPE:
+            return MP_EISDIR;
+        case ERROR_DIRECTORY_NOT_EMPTY:
+            return MP_EACCES;
+        default:
+            return MP_EIO;
     }
 }
 

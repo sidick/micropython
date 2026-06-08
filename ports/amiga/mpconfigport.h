@@ -226,9 +226,9 @@ void amiga_free_heap(void *p);
 
 // Type definitions for a 32-bit big-endian machine.
 // (Endianness itself is auto-detected from GCC's __BYTE_ORDER__.)
-typedef int             mp_int_t;
-typedef unsigned int    mp_uint_t;
-typedef long            mp_off_t;
+typedef int mp_int_t;
+typedef unsigned int mp_uint_t;
+typedef long mp_off_t;
 
 // alloca is available from GCC built-ins / newlib
 #include <alloca.h>
