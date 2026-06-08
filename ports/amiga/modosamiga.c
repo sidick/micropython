@@ -44,20 +44,31 @@
 // the module boundary to keep modos/modosamiga independent.
 static int osamiga_dos_errno_from(LONG err) {
     switch (err) {
-        case ERROR_OBJECT_NOT_FOUND:    return MP_ENOENT;
-        case ERROR_OBJECT_EXISTS:       return MP_EEXIST;
-        case ERROR_DISK_FULL:           return MP_ENOSPC;
-        case ERROR_OBJECT_IN_USE:       return MP_EBUSY;
+        case ERROR_OBJECT_NOT_FOUND:
+            return MP_ENOENT;
+        case ERROR_OBJECT_EXISTS:
+            return MP_EEXIST;
+        case ERROR_DISK_FULL:
+            return MP_ENOSPC;
+        case ERROR_OBJECT_IN_USE:
+            return MP_EBUSY;
         case ERROR_READ_PROTECTED:
-        case ERROR_WRITE_PROTECTED:     return MP_EACCES;
-        case ERROR_OBJECT_WRONG_TYPE:   return MP_EISDIR;
-        case ERROR_NO_FREE_STORE:       return MP_ENOMEM;
-        case ERROR_BAD_TEMPLATE:        return MP_EINVAL;
+        case ERROR_WRITE_PROTECTED:
+            return MP_EACCES;
+        case ERROR_OBJECT_WRONG_TYPE:
+            return MP_EISDIR;
+        case ERROR_NO_FREE_STORE:
+            return MP_ENOMEM;
+        case ERROR_BAD_TEMPLATE:
+            return MP_EINVAL;
         case ERROR_DEVICE_NOT_MOUNTED:
         case ERROR_NOT_A_DOS_DISK:
-        case ERROR_NO_DISK:             return MP_ENODEV;
-        case ERROR_INVALID_COMPONENT_NAME: return MP_EINVAL;
-        default:                        return MP_EIO;
+        case ERROR_NO_DISK:
+            return MP_ENODEV;
+        case ERROR_INVALID_COMPONENT_NAME:
+            return MP_EINVAL;
+        default:
+            return MP_EIO;
     }
 }
 
@@ -136,7 +147,7 @@ static const mp_rom_map_elem_t mod_osamiga_globals_table[] = {
 static MP_DEFINE_CONST_DICT(mod_osamiga_globals, mod_osamiga_globals_table);
 
 const mp_obj_module_t mod_osamiga_module = {
-    .base    = { &mp_type_module },
+    .base = { &mp_type_module },
     .globals = (mp_obj_dict_t *)&mod_osamiga_globals,
 };
 
