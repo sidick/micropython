@@ -105,7 +105,7 @@ FILEINFOBLOCK = {
     "fib_OwnerGID":      (226, "H"),
 }
 
-# struct IntuiMessage (intuition/intuition.h) -- Intuition event delivery; embeds struct Message at the head.
+# struct IntuiMessage (intuition/intuition.h) -- Intuition event delivery (embeds struct Message).
 INTUIMESSAGE_SIZE = 52
 INTUIMESSAGE = {
     # Embedded ExecMessage (struct Message)
