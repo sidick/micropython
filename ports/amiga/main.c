@@ -1,3 +1,29 @@
+/*
+ * This file is part of the MicroPython project, http://micropython.org/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Simon Dick
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -519,13 +545,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             if (v != 0) {
                 amiga_heap_max_bytes = v;
             }
-        #if MICROPY_PY_AMIGA_SSL
+            #if MICROPY_PY_AMIGA_SSL
         } else if (strncmp(argv[a + 1], "sslver=", 7) == 0) {
             // Diagnostic: pin OpenAmiSSLTags to a specific APIVersion
             // (one of the AMISSL_V* enum values). 0 / unset = default.
             extern int amiga_ssl_version_override;
             amiga_ssl_version_override = atoi(argv[a + 1] + 7);
-        #endif
+            #endif
         }
     }
     // Workbench tooltypes can also drive heap sizing; this is the only way
