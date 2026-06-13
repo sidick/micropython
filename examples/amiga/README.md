@@ -27,6 +27,7 @@ work fine on either.
 | `rexx_client.py` | Outbound ARexx via `amiga.rexx` and the persistent `RexxClient`. |
 | `library_displaybeep.py` | `amiga.Library` proxy + `.fd` trampoline (calls `DisplayBeep`). |
 | `volume_listing.py` | `amiga.volumes`, `amiga.assigns`, `amiga.match` plus `os.walk`. |
+| `gadtools_demo.py` | Live GadTools gadget gallery on the Workbench screen via `amiga.Library` + `amiga.taglist`. |
 
 Most examples gracefully handle the "feature missing on this host"
 case (no ARexx daemon, no graphics.library under vamos, etc.) by
