@@ -194,7 +194,7 @@ SPECS = [
         "py_name": "INTUIMESSAGE",
         "c_struct": "IntuiMessage",
         "header": "intuition/intuition.h",
-        "comment": "Intuition event delivery; embeds struct Message at the head",
+        "comment": "Intuition event delivery (embeds struct Message)",
         "fields": [
             "Embedded ExecMessage (struct Message)",
             ("ln_Succ",      "ExecMessage.mn_Node.ln_Succ", "L"),
@@ -342,6 +342,19 @@ def compile_and_parse(gcc, include_dir, c_src):
     return values
 
 
+RUFF_LINE_LIMIT = 99
+
+
+def _check_line(line):
+    """Fail loudly if a single emitted line would exceed ruff's project limit
+    (99 chars).  Catches over-long SPEC comments at regeneration time rather
+    than letting them slip into the output file."""
+    if len(line) > RUFF_LINE_LIMIT:
+        raise SystemExit(
+            "amiga-structgen: emitted line exceeds ruff line limit "
+            "(%d > %d): %r" % (len(line), RUFF_LINE_LIMIT, line))
+
+
 def emit_python(specs, values, out, headers):
     """Render the Python output module.
 
@@ -413,12 +426,16 @@ def emit_python(specs, values, out, headers):
         key_w = max(len('"%s":' % r[1]) for r in field_rows)
         off_w = max(len("%d," % r[2]) for r in field_rows)
 
-        out.write("\n# struct %s (%s) -- %s.\n" % (sname, header, comment))
+        header_line = "# struct %s (%s) -- %s." % (sname, header, comment)
+        _check_line(header_line)
+        out.write("\n" + header_line + "\n")
         out.write("%s_SIZE = %d\n" % (pname, size))
         out.write("%s = {\n" % pname)
         for row in rendered:
             if row[0] == "divider":
-                out.write("    # %s\n" % row[1])
+                line = "    # %s" % row[1]
+                _check_line(line)
+                out.write(line + "\n")
                 continue
             _, py_key, offset, code, note = row
             # 2 spaces minimum gap between the longest key and `(`.
@@ -428,6 +445,7 @@ def emit_python(specs, values, out, headers):
             line = '    %s(%s"%s"),' % (key_str, off_str, code)
             if note:
                 line += "   # " + note
+            _check_line(line)
             out.write(line + "\n")
         out.write("}\n")
 
