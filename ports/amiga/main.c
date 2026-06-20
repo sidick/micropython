@@ -451,15 +451,14 @@ static void amiga_runtime_init(void *initial_ptr, size_t initial_heap) {
     }
     #endif
 
-    #if MICROPY_PY_AMIGA_SOCKET
-    extern bool amiga_socket_open(void);
-    amiga_socket_open();
-    #endif
-
-    #if MICROPY_PY_AMIGA_SSL
-    extern bool amiga_ssl_open(void);
-    amiga_ssl_open();
-    #endif
+    // NOTE: bsdsocket.library / AmiSSL are intentionally NOT opened here.
+    // They are opened once in amiga_main and kept open across soft resets.
+    // Re-opening them per reset would mean closing them per reset too, and
+    // Amiberry's bsdsocklib_Close pumps SDL/Cocoa events from a non-main
+    // thread, which macOS aborts ("nextEventMatchingMask should only be
+    // called from the Main Thread!") -- closing once at shutdown avoids
+    // exercising that emulator bug on every test. They hold only C-side
+    // library bases (no VM state), so surviving mp_init() is fine.
 }
 
 // Tear the runtime back down, in the reverse order amiga_runtime_init built
@@ -471,17 +470,8 @@ static void amiga_runtime_deinit(void) {
     }
     #endif
 
-    // Reverse open order: AmiSSL holds SocketBase, so it must close
-    // before bsdsocket.library does.
-    #if MICROPY_PY_AMIGA_SSL
-    extern void amiga_ssl_close(void);
-    amiga_ssl_close();
-    #endif
-
-    #if MICROPY_PY_AMIGA_SOCKET
-    extern void amiga_socket_close(void);
-    amiga_socket_close();
-    #endif
+    // bsdsocket.library / AmiSSL are closed once at process shutdown by
+    // amiga_main, not here -- see the note in amiga_runtime_init.
 
     #if MICROPY_VFS
     extern void vfs_amiga_cleanup(void);
@@ -655,13 +645,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             if (v != 0) {
                 amiga_heap_max_bytes = v;
             }
-        #if MICROPY_PY_AMIGA_SSL
+            #if MICROPY_PY_AMIGA_SSL
         } else if (strncmp(argv[a + 1], "sslver=", 7) == 0) {
             // Diagnostic: pin OpenAmiSSLTags to a specific APIVersion
             // (one of the AMISSL_V* enum values). 0 / unset = default.
             extern int amiga_ssl_version_override;
             amiga_ssl_version_override = atoi(argv[a + 1] + 7);
-        #endif
+            #endif
         }
     }
     // Workbench tooltypes can also drive heap sizing; this is the only way
@@ -750,10 +740,23 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     // state), so it lives here rather than in amiga_runtime_init().
     amiga_timer_open();
 
-    // Bring up the GC heap, VM, sys.path, VFS and socket/SSL libraries.
-    // The soft-reset loop below re-creates this with amiga_runtime_deinit()
-    // + amiga_runtime_init() to give each reset a clean VM.
+    // Bring up the GC heap, VM, sys.path and VFS. The soft-reset loop below
+    // re-creates this with amiga_runtime_deinit() + amiga_runtime_init() to
+    // give each reset a clean VM.
     amiga_runtime_init(initial_ptr, initial_heap);
+
+    // Open bsdsocket.library / AmiSSL once and keep them open across soft
+    // resets (closed once at shutdown). AmiSSL needs SocketBase, so socket
+    // opens first. Kept out of amiga_runtime_init so a per-test soft reset
+    // doesn't close them -- see the note there re: Amiberry's bsdsocklib_Close.
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern bool amiga_socket_open(void);
+    amiga_socket_open();
+    #endif
+    #if MICROPY_PY_AMIGA_SSL
+    extern bool amiga_ssl_open(void);
+    amiga_ssl_open();
+    #endif
 
     int exit_code = 0;
     bool ran_something = false;
@@ -993,10 +996,22 @@ static int amiga_main(int argc_unused, char **argv_unused) {
         SetMode(stdin_fh, 0);
     }
 
-    // Final teardown of the runtime (sys.atexit, SSL/socket/VFS close,
-    // history save, rexx shutdown, mp_deinit). Same routine the soft-reset
-    // loop uses between resets.
+    // Final teardown of the runtime (sys.atexit, VFS close, history save,
+    // rexx shutdown, mp_deinit). Same routine the soft-reset loop uses
+    // between resets.
     amiga_runtime_deinit();
+
+    // Close the socket/SSL libraries once, here at process shutdown (after
+    // the final mp_deinit so any socket finalisers still see SocketBase).
+    // Reverse open order: AmiSSL holds SocketBase, so it closes first.
+    #if MICROPY_PY_AMIGA_SSL
+    extern void amiga_ssl_close(void);
+    amiga_ssl_close();
+    #endif
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern void amiga_socket_close(void);
+    amiga_socket_close();
+    #endif
 
     // Tear down timer.device. Done after mp_deinit so any Python code run
     // up to this point (sys.exitfunc, VFS/socket close hooks) still sees a
