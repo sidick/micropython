@@ -60,6 +60,20 @@ void amiga_arm_stdin_first_nl_skip(void) {
     amiga_stdin_first_nl_skip = true;
 }
 
+// Set when FGetC() reports a genuine end-of-stream (a serial-client
+// disconnect over the TCP console, or a closed pipe), as opposed to a
+// deliberate Ctrl-D / Ctrl-\ keystroke. Both surface to pyexec as Ctrl-D,
+// but only the real keystroke should soft-reset the raw REPL; a disconnect
+// must let the REPL loop exit cleanly rather than spin re-reading EOF. The
+// soft-reset loop in main.c consults this via amiga_stdin_hit_eof().
+static bool amiga_stdin_eof = false;
+
+bool amiga_stdin_hit_eof(void) {
+    bool e = amiga_stdin_eof;
+    amiga_stdin_eof = false;
+    return e;
+}
+
 int mp_hal_stdin_rx_chr(void) {
     // AmigaOS console emits CSI sequences as a single byte 0x9B followed by
     // parameters, where xterm-style consoles use ESC '['. shared/readline/
@@ -83,8 +97,12 @@ int mp_hal_stdin_rx_chr(void) {
             c = FGetC(Input());
         }
     }
-    if (c < 0 || c == 28) {
-        return 4;  // EOF or Ctrl+\ -> Ctrl+D
+    if (c < 0) {
+        amiga_stdin_eof = true;  // genuine end-of-stream / client disconnect
+        return 4;  // -> Ctrl+D
+    }
+    if (c == 28) {
+        return 4;  // Ctrl+\ -> Ctrl+D (deliberate keystroke, not a disconnect)
     }
     if (c == 0x9b) {
         amiga_stdin_pending = '[';

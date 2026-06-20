@@ -394,6 +394,116 @@ static int run_str(const char *str) {
     return ret;
 }
 
+// Initialise the MicroPython runtime: GC heap, pystack, the VM, sys.path,
+// the VFS mount, and the bsdsocket / AmiSSL library handles. Factored out of
+// amiga_main so the REPL's soft-reset path can tear the runtime down and
+// build it back up for a clean slate -- see amiga_runtime_deinit() and the
+// soft-reset loop in amiga_main. timer.device is opened once by the caller
+// and deliberately left out of here (it's a device, not VM state, and must
+// already be open before mp_init runs).
+static void amiga_runtime_init(void *initial_ptr, size_t initial_heap) {
+    #if MICROPY_ENABLE_GC
+    gc_init(initial_ptr, (char *)initial_ptr + initial_heap);
+    #endif
+
+    #if MICROPY_ENABLE_PYSTACK
+    // 4 KB pystack, matching the unix port; aligned(8) to satisfy
+    // MICROPY_PYSTACK_ALIGN since bebbo's default 16-bit struct alignment
+    // would otherwise leave a static char[] only 2-byte aligned.
+    static char pystack[4096] __attribute__((aligned(8)));
+    mp_pystack_init(pystack, pystack + sizeof(pystack));
+    #endif
+
+    mp_init();
+    // mp_init() already initializes sys.path = [""] and sys.argv = [].
+
+    // Phase 24: load persistent REPL history.  Done after mp_init so
+    // MP_STATE_PORT(readline_hist) is properly initialised.  Silent
+    // no-op on first run (no file yet) or on unreadable history files.
+    extern void amiga_history_load(void);
+    amiga_history_load();
+
+    // Phase 26: append `PROGDIR:` to sys.path so users can drop modules
+    // next to the binary and `import` them without extra setup.
+    // AmigaDOS auto-assigns PROGDIR: to the directory of the running
+    // executable, so the assign-resolution machinery takes care of the
+    // path lookup.  Appended (not prepended) so the cwd-or-script-dir
+    // entry that lives at index 0 keeps its expected import priority.
+    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("PROGDIR:")));
+
+    #if MICROPY_VFS
+    // Mount the VfsAmiga at "/" so os.chdir/os.listdir/os.stat/open() etc.
+    // all flow through dos.library via vfs_amiga.c. AmigaOS paths don't
+    // start with "/" (they look like "volume:dir/file" or are relative);
+    // the VFS layer's lookup_path treats anything without a leading "/"
+    // as a relative-path-on-current-VFS, which routes straight to us.
+    {
+        extern const mp_obj_type_t mp_type_vfs_amiga;
+        mp_obj_t args[2] = {
+            MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_amiga, make_new)(&mp_type_vfs_amiga, 0, 0, NULL),
+            MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
+        };
+        mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
+        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
+        while (MP_STATE_VM(vfs_cur)->next != NULL) {
+            MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_cur)->next;
+        }
+    }
+    #endif
+
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern bool amiga_socket_open(void);
+    amiga_socket_open();
+    #endif
+
+    #if MICROPY_PY_AMIGA_SSL
+    extern bool amiga_ssl_open(void);
+    amiga_ssl_open();
+    #endif
+}
+
+// Tear the runtime back down, in the reverse order amiga_runtime_init built
+// it up. Used both for the final shutdown and between soft resets.
+static void amiga_runtime_deinit(void) {
+    #if MICROPY_PY_SYS_ATEXIT
+    if (mp_obj_is_callable(MP_STATE_VM(sys_exitfunc))) {
+        mp_call_function_0(MP_STATE_VM(sys_exitfunc));
+    }
+    #endif
+
+    // Reverse open order: AmiSSL holds SocketBase, so it must close
+    // before bsdsocket.library does.
+    #if MICROPY_PY_AMIGA_SSL
+    extern void amiga_ssl_close(void);
+    amiga_ssl_close();
+    #endif
+
+    #if MICROPY_PY_AMIGA_SOCKET
+    extern void amiga_socket_close(void);
+    amiga_socket_close();
+    #endif
+
+    #if MICROPY_VFS
+    extern void vfs_amiga_cleanup(void);
+    vfs_amiga_cleanup();
+    #endif
+
+    // Phase 24: persist the REPL history before mp_deinit() drops
+    // MP_STATE_PORT(readline_hist).  Failure (e.g. S: read-only) is
+    // silent — the user notices "no history on next launch", they
+    // don't get a startup error.
+    extern void amiga_history_save(void);
+    amiga_history_save();
+
+    // Phase 18 (inbound): if a script forgot to amiga.rexx_close(),
+    // tear the port down ourselves so we don't leave a dangling public
+    // MsgPort name (and a freed memory pointer) in Exec's port list.
+    extern void amiga_rexx_shutdown(void);
+    amiga_rexx_shutdown();
+
+    mp_deinit();
+}
+
 // Body of main(); see main() below for the stack-swap wrapper that
 // guarantees enough headroom even when launched from a shell with the
 // AmigaDOS 4 KiB default stack.
@@ -545,13 +655,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             if (v != 0) {
                 amiga_heap_max_bytes = v;
             }
-            #if MICROPY_PY_AMIGA_SSL
+        #if MICROPY_PY_AMIGA_SSL
         } else if (strncmp(argv[a + 1], "sslver=", 7) == 0) {
             // Diagnostic: pin OpenAmiSSLTags to a specific APIVersion
             // (one of the AMISSL_V* enum values). 0 / unset = default.
             extern int amiga_ssl_version_override;
             amiga_ssl_version_override = atoi(argv[a + 1] + 7);
-            #endif
+        #endif
         }
     }
     // Workbench tooltypes can also drive heap sizing; this is the only way
@@ -632,70 +742,18 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     }
     #endif
 
-    #if MICROPY_ENABLE_GC
-    gc_init(initial_ptr, (char *)initial_ptr + initial_heap);
-    #endif
-
-    #if MICROPY_ENABLE_PYSTACK
-    // 4 KB pystack, matching the unix port; aligned(8) to satisfy
-    // MICROPY_PYSTACK_ALIGN since bebbo's default 16-bit struct alignment
-    // would otherwise leave a static char[] only 2-byte aligned.
-    static char pystack[4096] __attribute__((aligned(8)));
-    mp_pystack_init(pystack, pystack + sizeof(pystack));
-    #endif
-
     // Open timer.device for mp_hal_ticks_* / mp_hal_delay_* (Phase 23).
     // Must happen before any code that might call into these HAL hooks; in
     // practice mp_init() and below all do. A failure here is non-fatal —
     // amiga_timer.c degrades to dos.library Delay() and ticks_* return 0.
+    // Opened once and kept open across soft resets (it's a device, not VM
+    // state), so it lives here rather than in amiga_runtime_init().
     amiga_timer_open();
 
-    mp_init();
-    // mp_init() already initializes sys.path = [""] and sys.argv = [].
-
-    // Phase 24: load persistent REPL history.  Done after mp_init so
-    // MP_STATE_PORT(readline_hist) is properly initialised.  Silent
-    // no-op on first run (no file yet) or on unreadable history files.
-    extern void amiga_history_load(void);
-    amiga_history_load();
-
-    // Phase 26: append `PROGDIR:` to sys.path so users can drop modules
-    // next to the binary and `import` them without extra setup.
-    // AmigaDOS auto-assigns PROGDIR: to the directory of the running
-    // executable, so the assign-resolution machinery takes care of the
-    // path lookup.  Appended (not prepended) so the cwd-or-script-dir
-    // entry that lives at index 0 keeps its expected import priority.
-    mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(qstr_from_str("PROGDIR:")));
-
-    #if MICROPY_VFS
-    // Mount the VfsAmiga at "/" so os.chdir/os.listdir/os.stat/open() etc.
-    // all flow through dos.library via vfs_amiga.c. AmigaOS paths don't
-    // start with "/" (they look like "volume:dir/file" or are relative);
-    // the VFS layer's lookup_path treats anything without a leading "/"
-    // as a relative-path-on-current-VFS, which routes straight to us.
-    {
-        extern const mp_obj_type_t mp_type_vfs_amiga;
-        mp_obj_t args[2] = {
-            MP_OBJ_TYPE_GET_SLOT(&mp_type_vfs_amiga, make_new)(&mp_type_vfs_amiga, 0, 0, NULL),
-            MP_OBJ_NEW_QSTR(MP_QSTR__slash_),
-        };
-        mp_vfs_mount(2, args, (mp_map_t *)&mp_const_empty_map);
-        MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_mount_table);
-        while (MP_STATE_VM(vfs_cur)->next != NULL) {
-            MP_STATE_VM(vfs_cur) = MP_STATE_VM(vfs_cur)->next;
-        }
-    }
-    #endif
-
-    #if MICROPY_PY_AMIGA_SOCKET
-    extern bool amiga_socket_open(void);
-    amiga_socket_open();
-    #endif
-
-    #if MICROPY_PY_AMIGA_SSL
-    extern bool amiga_ssl_open(void);
-    amiga_ssl_open();
-    #endif
+    // Bring up the GC heap, VM, sys.path, VFS and socket/SSL libraries.
+    // The soft-reset loop below re-creates this with amiga_runtime_deinit()
+    // + amiga_runtime_init() to give each reset a clean VM.
+    amiga_runtime_init(initial_ptr, initial_heap);
 
     int exit_code = 0;
     bool ran_something = false;
@@ -887,65 +945,58 @@ static int amiga_main(int argc_unused, char **argv_unused) {
         // this flag arms it.
         amiga_arm_stdin_first_nl_skip();
         #if MICROPY_ENABLE_COMPILER
-        // pyexec_friendly_repl returns 0 when the user hits Ctrl-A to
-        // switch to raw REPL (pyexec_mode_kind is now RAW_REPL); only a
-        // forced exit (Ctrl-D or sys.exit) returns non-zero. Loop on the
-        // pair so Ctrl-A actually switches modes instead of dropping
-        // the user back to the AmigaShell -- matches the ports/unix
-        // pattern.
+        // Soft-reset loop. The inner loop runs the friendly/raw REPL,
+        // switching between them on Ctrl-A / Ctrl-B (pyexec returns 0). It
+        // breaks when pyexec returns non-zero -- a forced exit from Ctrl-D
+        // or a SystemExit.
+        //
+        // In the *raw* REPL that forced exit is a soft-reset request from a
+        // host tool: tools/pyboard.py (and thus run-tests.py -t) soft-resets
+        // before every test, and SKIP tests raise SystemExit. So we tear the
+        // VM down and build it back up for a clean slate, announce
+        // "MPY: soft reboot" the way pyboard waits for, and re-enter --
+        // pyexec_mode_kind persists across mp_init (it isn't VM state) so we
+        // land straight back in the raw REPL.
+        //
+        // In the *friendly* REPL the same forced exit means an interactive
+        // user pressed Ctrl-D, so we leave the loop and return to the
+        // AmigaShell -- matching the previous behaviour.
         for (;;) {
-            int r;
-            if (pyexec_mode_kind == PYEXEC_MODE_RAW_REPL) {
-                r = pyexec_raw_repl();
-            } else {
-                r = pyexec_friendly_repl();
+            for (;;) {
+                int r;
+                if (pyexec_mode_kind == PYEXEC_MODE_RAW_REPL) {
+                    r = pyexec_raw_repl();
+                } else {
+                    r = pyexec_friendly_repl();
+                }
+                if (r != 0) {
+                    break;
+                }
             }
-            if (r != 0) {
+            if (pyexec_mode_kind != PYEXEC_MODE_RAW_REPL) {
+                break;  // interactive Ctrl-D: drop back to the AmigaShell
+            }
+            // A serial-client disconnect surfaces as Ctrl-D too, but must not
+            // soft-reset: the stream stays at EOF, so we'd just spin re-reading
+            // it. Exit the REPL cleanly instead (back to the AmigaShell, ready
+            // for the next connection to relaunch us).
+            extern bool amiga_stdin_hit_eof(void);
+            if (amiga_stdin_hit_eof()) {
                 break;
             }
+            amiga_runtime_deinit();
+            mp_hal_stdout_tx_str("MPY: soft reboot\r\n");
+            amiga_runtime_init(initial_ptr, initial_heap);
         }
         #endif
         // Restore cooked mode before returning to the CLI.
         SetMode(stdin_fh, 0);
     }
 
-    #if MICROPY_PY_SYS_ATEXIT
-    if (mp_obj_is_callable(MP_STATE_VM(sys_exitfunc))) {
-        mp_call_function_0(MP_STATE_VM(sys_exitfunc));
-    }
-    #endif
-
-    // Reverse open order: AmiSSL holds SocketBase, so it must close
-    // before bsdsocket.library does.
-    #if MICROPY_PY_AMIGA_SSL
-    extern void amiga_ssl_close(void);
-    amiga_ssl_close();
-    #endif
-
-    #if MICROPY_PY_AMIGA_SOCKET
-    extern void amiga_socket_close(void);
-    amiga_socket_close();
-    #endif
-
-    #if MICROPY_VFS
-    extern void vfs_amiga_cleanup(void);
-    vfs_amiga_cleanup();
-    #endif
-
-    // Phase 24: persist the REPL history before mp_deinit() drops
-    // MP_STATE_PORT(readline_hist).  Failure (e.g. S: read-only) is
-    // silent — the user notices "no history on next launch", they
-    // don't get a startup error.
-    extern void amiga_history_save(void);
-    amiga_history_save();
-
-    // Phase 18 (inbound): if a script forgot to amiga.rexx_close(),
-    // tear the port down ourselves so we don't leave a dangling public
-    // MsgPort name (and a freed memory pointer) in Exec's port list.
-    extern void amiga_rexx_shutdown(void);
-    amiga_rexx_shutdown();
-
-    mp_deinit();
+    // Final teardown of the runtime (sys.atexit, SSL/socket/VFS close,
+    // history save, rexx shutdown, mp_deinit). Same routine the soft-reset
+    // loop uses between resets.
+    amiga_runtime_deinit();
 
     // Tear down timer.device. Done after mp_deinit so any Python code run
     // up to this point (sys.exitfunc, VFS/socket close hooks) still sees a
