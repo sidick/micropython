@@ -14,9 +14,13 @@ import time
 # --- module surface ------------------------------------------------------
 
 for name in (
-    "ticks_ms", "ticks_us", "ticks_cpu",
-    "ticks_add", "ticks_diff",
-    "sleep_ms", "sleep_us",
+    "ticks_ms",
+    "ticks_us",
+    "ticks_cpu",
+    "ticks_add",
+    "ticks_diff",
+    "sleep_ms",
+    "sleep_us",
 ):
     assert hasattr(time, name), name
 

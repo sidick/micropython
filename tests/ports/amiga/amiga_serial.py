@@ -82,7 +82,7 @@ _END = _MARK + b"AMIGASERIAL-END" + _MARK
 def _write_all(fd, data):
     """os.write may write fewer bytes than requested on a pipe; loop."""
     while data:
-        data = data[os.write(fd, data):]
+        data = data[os.write(fd, data) :]
 
 
 def _normalise(buf):
@@ -141,7 +141,7 @@ class AmigaSerial:
         # Drip-feed one byte at a time so the flow-control-less Amiga
         # serial input doesn't overrun.
         for i in range(len(data)):
-            self.sock.sendall(data[i:i + 1])
+            self.sock.sendall(data[i : i + 1])
             time.sleep(self.char_delay)
 
     def _recv_until(self, pred, timeout=None):

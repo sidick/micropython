@@ -14,8 +14,14 @@ assert callable(_icon.new)
 
 # All do_Type values surfaced as small ints, matching workbench.h.
 for name, expected in (
-    ("WBDISK", 1), ("WBDRAWER", 2), ("WBTOOL", 3), ("WBPROJECT", 4),
-    ("WBGARBAGE", 5), ("WBDEVICE", 6), ("WBKICK", 7), ("WBAPPICON", 8),
+    ("WBDISK", 1),
+    ("WBDRAWER", 2),
+    ("WBTOOL", 3),
+    ("WBPROJECT", 4),
+    ("WBGARBAGE", 5),
+    ("WBDEVICE", 6),
+    ("WBKICK", 7),
+    ("WBAPPICON", 8),
 ):
     value = getattr(_icon, name)
     assert isinstance(value, int), (name, value)
@@ -83,7 +89,7 @@ assert "FOO" in tt
 assert "FLAG" in tt
 assert "RAW" in tt
 assert tt["FOO"] == b"bar"
-assert tt["FLAG"] == b""        # flag-style: present but no '='
+assert tt["FLAG"] == b""  # flag-style: present but no '='
 assert tt["RAW"] == b"raw bytes"
 
 # Mutate after construction.

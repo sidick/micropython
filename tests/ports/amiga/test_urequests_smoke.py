@@ -20,20 +20,17 @@ for verb in ("get", "head", "post", "put", "delete", "patch", "request"):
 # --- _parse_url: scheme / host / port / path -------------------------
 
 # http with explicit port + query string.
-assert urequests._parse_url("http://x.com:80/p?q=1") == (
-    False, "x.com", 80, "/p?q=1"
-)
+assert urequests._parse_url("http://x.com:80/p?q=1") == (False, "x.com", 80, "/p?q=1")
 # https default port.
-assert urequests._parse_url("https://example.com") == (
-    True, "example.com", 443, "/"
-)
+assert urequests._parse_url("https://example.com") == (True, "example.com", 443, "/")
 # https with trailing slash.
-assert urequests._parse_url("https://example.com/") == (
-    True, "example.com", 443, "/"
-)
+assert urequests._parse_url("https://example.com/") == (True, "example.com", 443, "/")
 # http default port + nested path.
 assert urequests._parse_url("http://api.example.com/v1/things/42") == (
-    False, "api.example.com", 80, "/v1/things/42"
+    False,
+    "api.example.com",
+    80,
+    "/v1/things/42",
 )
 
 # --- _quote: URL-percent-encode -----------------------------------------

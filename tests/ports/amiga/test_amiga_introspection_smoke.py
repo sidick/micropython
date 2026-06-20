@@ -99,7 +99,8 @@ it = _amiga.imatch("mp:#?")
 lazy_paths = list(it)
 eager_paths = _amiga.match("mp:#?")
 assert sorted(lazy_paths) == sorted(eager_paths), (
-    len(lazy_paths), len(eager_paths),
+    len(lazy_paths),
+    len(eager_paths),
 )
 
 # imatch on a no-match pattern produces an empty iterator.

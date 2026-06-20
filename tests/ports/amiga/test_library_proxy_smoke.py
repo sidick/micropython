@@ -139,14 +139,17 @@ cl2.close()
 
 # --- int-coercion via __int__ -----------------------------------------
 
+
 # Anything implementing __int__ is unwrapped to its address before
 # being placed in the register dict. This is what lets TagList objects
 # pass straight through; we verify the mechanism with a stand-in class.
 class IntLike:
     def __init__(self, v):
         self._v = v
+
     def __int__(self):
         return self._v
+
 
 with amiga.library("exec.library") as e6:
     # FindTask(IntLike(0)) should work the same as FindTask(0).
