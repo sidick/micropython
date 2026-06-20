@@ -211,13 +211,12 @@ wiki page.
 Limitations
 -----------
 
-- The 68k native code emitter supports `try` / `except` / `with`
-  inside `@micropython.native` functions, but some shapes that call
-  through another function (nested native calls, closures, generators)
-  can still crash. This residual emitter rework is tracked on the
+- `@micropython.native` is fully supported (including `try`/`except`/
+  `with`, nested functions, closures and generators).
+- `@micropython.viper` is limited to a single register local, and 16/32-bit
+  pointer load/store ops aren't emitted yet. See the
   [Amiga port design](https://github.com/sidick/micropython/wiki/Amiga-port-design)
   wiki page.
-- `@micropython.viper` is limited to a single register local.
 - TLS / SSL requires the AmiSSL v5 install at runtime (AmigaShell
   `Assign AmiSSL: SYS:AmiSSL` is the standard placement).
 - The 68000 (with software emulation of multiplication, etc.) is
