@@ -77,8 +77,11 @@ static size_t amiga_heap_max_bytes;          // -X maxheap=... cap (0 = unlimite
 // the next tests); in general it makes any heavy-allocation workload fragile.
 // Stop growing the heap once free RAM drops to this reserve, so Python sees
 // a clean MemoryError while the OS keeps working. Overridable via the
-// MICROPYHEAPRESERVE env var (0 disables the reserve).
-#define AMIGA_OS_RAM_RESERVE_DEFAULT (512 * 1024)
+// MICROPYHEAPRESERVE env var (0 disables the reserve). Kept modest -- this is
+// a resource-constrained machine, and AmigaOS only needs tens of KiB for
+// serial buffers / handles / library bases -- so 256 KiB is a comfortable
+// floor without giving up much heap headroom.
+#define AMIGA_OS_RAM_RESERVE_DEFAULT (256 * 1024)
 static size_t amiga_heap_os_reserve = AMIGA_OS_RAM_RESERVE_DEFAULT;
 
 // The initial GC heap chunk, allocated once in amiga_main and reused by every
