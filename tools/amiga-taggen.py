@@ -77,9 +77,9 @@ def filter_existing_headers(include_dir, headers, verbose=False):
         if (Path(include_dir) / h).is_file():
             out.append(h)
         elif verbose:
-            sys.stderr.write(
-                "amiga-taggen: skipping missing header %s\n" % h)
+            sys.stderr.write("amiga-taggen: skipping missing header %s\n" % h)
     return out
+
 
 # A "candidate tag" name: an uppercase namespace prefix, an
 # underscore, then a capitalised tag identifier.  Matches WA_Width,
@@ -90,8 +90,7 @@ TAG_NAME_RE = re.compile(r"^([A-Z][A-Z0-9]{1,15})_([A-Z][A-Za-z0-9_]*)$")
 
 # Always emit these regardless of value (they're the tag-protocol
 # markers, not tag IDs themselves).
-ALWAYS_KEEP = {"TAG_DONE", "TAG_END", "TAG_IGNORE", "TAG_MORE",
-               "TAG_SKIP", "TAG_USER"}
+ALWAYS_KEEP = {"TAG_DONE", "TAG_END", "TAG_IGNORE", "TAG_MORE", "TAG_SKIP", "TAG_USER"}
 
 
 def find_gcc(name):
@@ -101,8 +100,7 @@ def find_gcc(name):
         candidate = "/opt/amiga/bin/" + name
         if os.path.isfile(candidate):
             return candidate
-        raise SystemExit("error: %s not found on PATH or in /opt/amiga/bin"
-                         % name)
+        raise SystemExit("error: %s not found on PATH or in /opt/amiga/bin" % name)
     return full
 
 
@@ -116,7 +114,8 @@ def gather_candidates(gcc, include_dir, headers, verbose=False):
     try:
         result = subprocess.run(
             [gcc, "-E", "-dM", "-I", include_dir, c_path],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
     finally:
         os.unlink(c_path)
@@ -175,9 +174,9 @@ def evaluate(gcc, include_dir, headers, candidates, verbose=False):
         with open(c_path, "w") as f:
             f.write(src)
         result = subprocess.run(
-            [gcc, "-S", "-O2", "-m68020", "-w",
-             "-I", include_dir, "-o", s_path, c_path],
-            capture_output=True, text=True,
+            [gcc, "-S", "-O2", "-m68020", "-w", "-I", include_dir, "-o", s_path, c_path],
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             # Bisect: split the candidates in two and retry each half.
@@ -185,15 +184,17 @@ def evaluate(gcc, include_dir, headers, candidates, verbose=False):
                 if verbose:
                     sys.stderr.write(
                         "amiga-taggen: dropping %s: %s\n"
-                        % (candidates[0], result.stderr.strip().splitlines()[-1]
-                           if result.stderr.strip() else "compile failed")
+                        % (
+                            candidates[0],
+                            result.stderr.strip().splitlines()[-1]
+                            if result.stderr.strip()
+                            else "compile failed",
+                        )
                     )
                 return {}
             mid = len(candidates) // 2
-            left = evaluate(gcc, include_dir, headers,
-                            candidates[:mid], verbose=verbose)
-            right = evaluate(gcc, include_dir, headers,
-                             candidates[mid:], verbose=verbose)
+            left = evaluate(gcc, include_dir, headers, candidates[:mid], verbose=verbose)
+            right = evaluate(gcc, include_dir, headers, candidates[mid:], verbose=verbose)
             left.update(right)
             return left
         with open(s_path) as f:
@@ -216,7 +217,7 @@ def evaluate(gcc, include_dir, headers, candidates, verbose=False):
         except ValueError:
             # Symbolic reference — not a constant.
             continue
-        values[name] = val & 0xffffffff
+        values[name] = val & 0xFFFFFFFF
     return values
 
 
@@ -260,23 +261,32 @@ def main(argv=None):
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--gcc", default=DEFAULT_GCC,
-                   help="cross-compiler binary (default: %s)" % DEFAULT_GCC)
-    p.add_argument("--ndk-include", default=DEFAULT_INCLUDE,
-                   help="NDK include root (default: %s)" % DEFAULT_INCLUDE)
-    p.add_argument("--include", action="append", default=None,
-                   metavar="HEADER",
-                   help="add a header to scan; may be given multiple times.  "
-                        "If any --include is supplied, the default header "
-                        "list is replaced; otherwise the default set is used.")
-    p.add_argument("--output", "-o", default="-",
-                   help="output file (default: stdout)")
-    p.add_argument("--keep-all", action="store_true",
-                   help="emit every resolved candidate regardless of "
-                        "value; default filters to values that look like "
-                        "tag IDs (high bit set, plus the TAG_* markers)")
-    p.add_argument("--quiet", "-q", action="store_true",
-                   help="suppress per-symbol drop warnings")
+    p.add_argument(
+        "--gcc", default=DEFAULT_GCC, help="cross-compiler binary (default: %s)" % DEFAULT_GCC
+    )
+    p.add_argument(
+        "--ndk-include",
+        default=DEFAULT_INCLUDE,
+        help="NDK include root (default: %s)" % DEFAULT_INCLUDE,
+    )
+    p.add_argument(
+        "--include",
+        action="append",
+        default=None,
+        metavar="HEADER",
+        help="add a header to scan; may be given multiple times.  "
+        "If any --include is supplied, the default header "
+        "list is replaced; otherwise the default set is used.",
+    )
+    p.add_argument("--output", "-o", default="-", help="output file (default: stdout)")
+    p.add_argument(
+        "--keep-all",
+        action="store_true",
+        help="emit every resolved candidate regardless of "
+        "value; default filters to values that look like "
+        "tag IDs (high bit set, plus the TAG_* markers)",
+    )
+    p.add_argument("--quiet", "-q", action="store_true", help="suppress per-symbol drop warnings")
     args = p.parse_args(argv)
 
     gcc = find_gcc(args.gcc)
@@ -296,7 +306,7 @@ def main(argv=None):
         kept = {}
         for name, val in values.items():
             if name in ALWAYS_KEEP:
-                continue   # emitted as literal constants in the header
+                continue  # emitted as literal constants in the header
             # Plausible tag IDs have bit 31 set (TAG_USER base) or the
             # very small marker values.  Drop everything else — it's
             # almost certainly an unrelated flag constant that happened
@@ -314,8 +324,10 @@ def main(argv=None):
 
     sys.stderr.write(
         "amiga-taggen: %d candidates → %d tag IDs emitted "
-        "(%s)\n" % (
-            len(candidates), len(values),
+        "(%s)\n"
+        % (
+            len(candidates),
+            len(values),
             "stdout" if args.output == "-" else args.output,
         )
     )

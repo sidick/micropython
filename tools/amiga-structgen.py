@@ -90,7 +90,7 @@ SPECS = [
             ("ln_Succ", "ln_Succ", "L"),
             ("ln_Pred", "ln_Pred", "L"),
             ("ln_Type", "ln_Type", "B"),
-            ("ln_Pri",  "ln_Pri",  "b"),
+            ("ln_Pri", "ln_Pri", "b"),
             ("ln_Name", "ln_Name", "S", "ptr to NUL-terminated string"),
         ],
     },
@@ -101,33 +101,33 @@ SPECS = [
         "comment": "First 14 bytes are an embedded Node",
         "fields": [
             "Embedded Node",
-            ("ln_Succ",       "tc_Node.ln_Succ", "L"),
-            ("ln_Pred",       "tc_Node.ln_Pred", "L"),
-            ("ln_Type",       "tc_Node.ln_Type", "B"),
-            ("ln_Pri",        "tc_Node.ln_Pri",  "b"),
-            ("ln_Name",       "tc_Node.ln_Name", "S"),
+            ("ln_Succ", "tc_Node.ln_Succ", "L"),
+            ("ln_Pred", "tc_Node.ln_Pred", "L"),
+            ("ln_Type", "tc_Node.ln_Type", "B"),
+            ("ln_Pri", "tc_Node.ln_Pri", "b"),
+            ("ln_Name", "tc_Node.ln_Name", "S"),
             "Task-specific fields",
-            ("tc_Flags",      "tc_Flags",        "B"),
-            ("tc_State",      "tc_State",        "B"),
-            ("tc_IDNestCnt",  "tc_IDNestCnt",    "b"),
-            ("tc_TDNestCnt",  "tc_TDNestCnt",    "b"),
-            ("tc_SigAlloc",   "tc_SigAlloc",     "L"),
-            ("tc_SigWait",    "tc_SigWait",      "L"),
-            ("tc_SigRecvd",   "tc_SigRecvd",     "L"),
-            ("tc_SigExcept",  "tc_SigExcept",    "L"),
-            ("tc_TrapAlloc",  "tc_TrapAlloc",    "H"),
-            ("tc_TrapAble",   "tc_TrapAble",     "H"),
-            ("tc_ExceptData", "tc_ExceptData",   "P"),
-            ("tc_ExceptCode", "tc_ExceptCode",   "P"),
-            ("tc_TrapData",   "tc_TrapData",     "P"),
-            ("tc_TrapCode",   "tc_TrapCode",     "P"),
-            ("tc_SPReg",      "tc_SPReg",        "P"),
-            ("tc_SPLower",    "tc_SPLower",      "P"),
-            ("tc_SPUpper",    "tc_SPUpper",      "P"),
-            ("tc_Switch",     "tc_Switch",       "P"),
-            ("tc_Launch",     "tc_Launch",       "P"),
+            ("tc_Flags", "tc_Flags", "B"),
+            ("tc_State", "tc_State", "B"),
+            ("tc_IDNestCnt", "tc_IDNestCnt", "b"),
+            ("tc_TDNestCnt", "tc_TDNestCnt", "b"),
+            ("tc_SigAlloc", "tc_SigAlloc", "L"),
+            ("tc_SigWait", "tc_SigWait", "L"),
+            ("tc_SigRecvd", "tc_SigRecvd", "L"),
+            ("tc_SigExcept", "tc_SigExcept", "L"),
+            ("tc_TrapAlloc", "tc_TrapAlloc", "H"),
+            ("tc_TrapAble", "tc_TrapAble", "H"),
+            ("tc_ExceptData", "tc_ExceptData", "P"),
+            ("tc_ExceptCode", "tc_ExceptCode", "P"),
+            ("tc_TrapData", "tc_TrapData", "P"),
+            ("tc_TrapCode", "tc_TrapCode", "P"),
+            ("tc_SPReg", "tc_SPReg", "P"),
+            ("tc_SPLower", "tc_SPLower", "P"),
+            ("tc_SPUpper", "tc_SPUpper", "P"),
+            ("tc_Switch", "tc_Switch", "P"),
+            ("tc_Launch", "tc_Launch", "P"),
             "tc_MemEntry (struct List at offset 74) intentionally not unpacked.",
-            ("tc_UserData",   "tc_UserData",     "P"),
+            ("tc_UserData", "tc_UserData", "P"),
         ],
     },
     {
@@ -137,21 +137,21 @@ SPECS = [
         "comment": "every OpenLibrary base points here",
         "fields": [
             "Embedded Node",
-            ("ln_Succ",      "lib_Node.ln_Succ", "L"),
-            ("ln_Pred",      "lib_Node.ln_Pred", "L"),
-            ("ln_Type",      "lib_Node.ln_Type", "B"),
-            ("ln_Pri",       "lib_Node.ln_Pri",  "b"),
-            ("ln_Name",      "lib_Node.ln_Name", "S"),
+            ("ln_Succ", "lib_Node.ln_Succ", "L"),
+            ("ln_Pred", "lib_Node.ln_Pred", "L"),
+            ("ln_Type", "lib_Node.ln_Type", "B"),
+            ("ln_Pri", "lib_Node.ln_Pri", "b"),
+            ("ln_Name", "lib_Node.ln_Name", "S"),
             "Library-specific fields",
-            ("lib_Flags",    "lib_Flags",        "B"),
-            ("lib_pad",      "lib_pad",          "B"),
-            ("lib_NegSize",  "lib_NegSize",      "H"),
-            ("lib_PosSize",  "lib_PosSize",      "H"),
-            ("lib_Version",  "lib_Version",      "H"),
-            ("lib_Revision", "lib_Revision",     "H"),
-            ("lib_IdString", "lib_IdString",     "S"),
-            ("lib_Sum",      "lib_Sum",          "L"),
-            ("lib_OpenCnt",  "lib_OpenCnt",      "H"),
+            ("lib_Flags", "lib_Flags", "B"),
+            ("lib_pad", "lib_pad", "B"),
+            ("lib_NegSize", "lib_NegSize", "H"),
+            ("lib_PosSize", "lib_PosSize", "H"),
+            ("lib_Version", "lib_Version", "H"),
+            ("lib_Revision", "lib_Revision", "H"),
+            ("lib_IdString", "lib_IdString", "S"),
+            ("lib_Sum", "lib_Sum", "L"),
+            ("lib_OpenCnt", "lib_OpenCnt", "H"),
         ],
     },
     {
@@ -160,9 +160,9 @@ SPECS = [
         "header": "dos/dos.h",
         "comment": "AmigaDOS time representation",
         "fields": [
-            ("ds_Days",   "ds_Days",   "L"),
+            ("ds_Days", "ds_Days", "L"),
             ("ds_Minute", "ds_Minute", "L"),
-            ("ds_Tick",   "ds_Tick",   "L"),
+            ("ds_Tick", "ds_Tick", "L"),
         ],
     },
     {
@@ -171,23 +171,20 @@ SPECS = [
         "header": "dos/dos.h",
         "comment": "Examine()/ExNext() output",
         "fields": [
-            ("fib_DiskKey",      "fib_DiskKey",        "L"),
-            ("fib_DirEntryType", "fib_DirEntryType",   "l",
-                "signed: <0 = file, >0 = dir"),
-            ("fib_FileName",     "fib_FileName",       "s",
-                "NUL-terminated inline string"),
-            ("fib_Protection",   "fib_Protection",     "L"),
-            ("fib_EntryType",    "fib_EntryType",      "L"),
-            ("fib_Size",         "fib_Size",           "L"),
-            ("fib_NumBlocks",    "fib_NumBlocks",      "L"),
+            ("fib_DiskKey", "fib_DiskKey", "L"),
+            ("fib_DirEntryType", "fib_DirEntryType", "l", "signed: <0 = file, >0 = dir"),
+            ("fib_FileName", "fib_FileName", "s", "NUL-terminated inline string"),
+            ("fib_Protection", "fib_Protection", "L"),
+            ("fib_EntryType", "fib_EntryType", "L"),
+            ("fib_Size", "fib_Size", "L"),
+            ("fib_NumBlocks", "fib_NumBlocks", "L"),
             "Embedded DateStamp (fib_Date)",
-            ("fib_DateDays",     "fib_Date.ds_Days",   "L"),
-            ("fib_DateMinute",   "fib_Date.ds_Minute", "L"),
-            ("fib_DateTick",     "fib_Date.ds_Tick",   "L"),
-            ("fib_Comment",      "fib_Comment",        "s",
-                "NUL-terminated inline string"),
-            ("fib_OwnerUID",     "fib_OwnerUID",       "H"),
-            ("fib_OwnerGID",     "fib_OwnerGID",       "H"),
+            ("fib_DateDays", "fib_Date.ds_Days", "L"),
+            ("fib_DateMinute", "fib_Date.ds_Minute", "L"),
+            ("fib_DateTick", "fib_Date.ds_Tick", "L"),
+            ("fib_Comment", "fib_Comment", "s", "NUL-terminated inline string"),
+            ("fib_OwnerUID", "fib_OwnerUID", "H"),
+            ("fib_OwnerGID", "fib_OwnerGID", "H"),
         ],
     },
     {
@@ -197,24 +194,24 @@ SPECS = [
         "comment": "Intuition event delivery (embeds struct Message)",
         "fields": [
             "Embedded ExecMessage (struct Message)",
-            ("ln_Succ",      "ExecMessage.mn_Node.ln_Succ", "L"),
-            ("ln_Pred",      "ExecMessage.mn_Node.ln_Pred", "L"),
-            ("ln_Type",      "ExecMessage.mn_Node.ln_Type", "B"),
-            ("ln_Pri",       "ExecMessage.mn_Node.ln_Pri",  "b"),
-            ("ln_Name",      "ExecMessage.mn_Node.ln_Name", "S"),
-            ("mn_ReplyPort", "ExecMessage.mn_ReplyPort",    "P"),
-            ("mn_Length",    "ExecMessage.mn_Length",       "H"),
+            ("ln_Succ", "ExecMessage.mn_Node.ln_Succ", "L"),
+            ("ln_Pred", "ExecMessage.mn_Node.ln_Pred", "L"),
+            ("ln_Type", "ExecMessage.mn_Node.ln_Type", "B"),
+            ("ln_Pri", "ExecMessage.mn_Node.ln_Pri", "b"),
+            ("ln_Name", "ExecMessage.mn_Node.ln_Name", "S"),
+            ("mn_ReplyPort", "ExecMessage.mn_ReplyPort", "P"),
+            ("mn_Length", "ExecMessage.mn_Length", "H"),
             "IntuiMessage-specific fields",
-            ("Class",        "Class",                       "L"),
-            ("Code",         "Code",                        "H"),
-            ("Qualifier",    "Qualifier",                   "H"),
-            ("IAddress",     "IAddress",                    "P"),
-            ("MouseX",       "MouseX",                      "h"),
-            ("MouseY",       "MouseY",                      "h"),
-            ("Seconds",      "Seconds",                     "L"),
-            ("Micros",       "Micros",                      "L"),
-            ("IDCMPWindow",  "IDCMPWindow",                 "P"),
-            ("SpecialLink",  "SpecialLink",                 "P"),
+            ("Class", "Class", "L"),
+            ("Code", "Code", "H"),
+            ("Qualifier", "Qualifier", "H"),
+            ("IAddress", "IAddress", "P"),
+            ("MouseX", "MouseX", "h"),
+            ("MouseY", "MouseY", "h"),
+            ("Seconds", "Seconds", "L"),
+            ("Micros", "Micros", "L"),
+            ("IDCMPWindow", "IDCMPWindow", "P"),
+            ("SpecialLink", "SpecialLink", "P"),
         ],
     },
 ]
@@ -226,8 +223,7 @@ def find_gcc(name):
         candidate = "/opt/amiga/bin/" + name
         if os.path.isfile(candidate):
             return candidate
-        raise SystemExit("error: %s not found on PATH or in /opt/amiga/bin"
-                         % name)
+        raise SystemExit("error: %s not found on PATH or in /opt/amiga/bin" % name)
     return full
 
 
@@ -267,17 +263,18 @@ def build_c_source(specs, headers):
     for s in specs:
         sname = s["c_struct"]
         pname = s["py_name"]
-        lines.append("const long _x_%s__SIZE = "
-                     "(long)sizeof(struct %s);" % (pname, sname))
+        lines.append("const long _x_%s__SIZE = (long)sizeof(struct %s);" % (pname, sname))
         for entry in iter_fields(s):
             py_key, c_path, code = entry[0], entry[1], entry[2]
-            lines.append("const long _x_%s__OFF__%s = "
-                         "(long)offsetof(struct %s, %s);"
-                         % (pname, py_key, sname, c_path))
+            lines.append(
+                "const long _x_%s__OFF__%s = "
+                "(long)offsetof(struct %s, %s);" % (pname, py_key, sname, c_path)
+            )
             if code == "s":
-                lines.append("const long _x_%s__SZ__%s = "
-                             "(long)sizeof(((struct %s *)0)->%s);"
-                             % (pname, py_key, sname, c_path))
+                lines.append(
+                    "const long _x_%s__SZ__%s = "
+                    "(long)sizeof(((struct %s *)0)->%s);" % (pname, py_key, sname, c_path)
+                )
         lines.append("")
     return "\n".join(lines) + "\n"
 
@@ -303,9 +300,9 @@ def compile_and_parse(gcc, include_dir, c_src):
         with open(cpath, "w") as f:
             f.write(c_src)
         result = subprocess.run(
-            [gcc, "-S", "-O2", "-m68020", "-w",
-             "-I", include_dir, "-o", spath, cpath],
-            capture_output=True, text=True,
+            [gcc, "-S", "-O2", "-m68020", "-w", "-I", include_dir, "-o", spath, cpath],
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             sys.stderr.write(result.stderr)
@@ -324,7 +321,8 @@ def compile_and_parse(gcc, include_dir, c_src):
     for m in _ASM_LABEL_RE.finditer(asm):
         name = m.group(1)
         long_val = m.group(2)
-        skip_val = m.group(3)
+        # m.group(3) is the `.skip N` count; unused -- the else branch below
+        # zero-fills BSS regardless of N.
         if long_val is not None:
             v = long_val.strip()
             try:
@@ -352,7 +350,8 @@ def _check_line(line):
     if len(line) > RUFF_LINE_LIMIT:
         raise SystemExit(
             "amiga-structgen: emitted line exceeds ruff line limit "
-            "(%d > %d): %r" % (len(line), RUFF_LINE_LIMIT, line))
+            "(%d > %d): %r" % (len(line), RUFF_LINE_LIMIT, line)
+        )
 
 
 def emit_python(specs, values, out, headers):
@@ -373,12 +372,9 @@ def emit_python(specs, values, out, headers):
     for h in headers:
         out.write("#   %s\n" % h)
     out.write("\n")
-    out.write('"""Struct layouts harvested from the AmigaOS NDK for '
-              '`amiga.Struct`.\n\n')
-    out.write("Each ``<NAME>`` dict maps a field name to "
-              "``(offset, type_code)``;\n")
-    out.write("``<NAME>_SIZE`` is the matching ``sizeof(struct X)`` for "
-              "callers that\n")
+    out.write('"""Struct layouts harvested from the AmigaOS NDK for `amiga.Struct`.\n\n')
+    out.write("Each ``<NAME>`` dict maps a field name to ``(offset, type_code)``;\n")
+    out.write("``<NAME>_SIZE`` is the matching ``sizeof(struct X)`` for callers that\n")
     out.write("want to ``AllocVec`` an instance themselves. Type codes are\n")
     out.write("documented on ``amiga.Struct``.\n")
     out.write('"""\n')
@@ -392,8 +388,7 @@ def emit_python(specs, values, out, headers):
 
         size_label = "%s__SIZE" % pname
         if size_label not in values:
-            raise SystemExit("amiga-structgen: missing sizeof for struct %s"
-                             % sname)
+            raise SystemExit("amiga-structgen: missing sizeof for struct %s" % sname)
         size = values[size_label]
 
         # First pass: walk entries, resolving field offsets/sizes and tagging
@@ -408,15 +403,15 @@ def emit_python(specs, values, out, headers):
             off_label = "%s__OFF__%s" % (pname, py_key)
             if off_label not in values:
                 raise SystemExit(
-                    "amiga-structgen: missing offset for %s.%s (%s)"
-                    % (sname, py_key, c_path))
+                    "amiga-structgen: missing offset for %s.%s (%s)" % (sname, py_key, c_path)
+                )
             offset = values[off_label]
             if code == "s":
                 sz_label = "%s__SZ__%s" % (pname, py_key)
                 if sz_label not in values:
                     raise SystemExit(
-                        "amiga-structgen: missing sizeof for %s.%s (%s)"
-                        % (sname, py_key, c_path))
+                        "amiga-structgen: missing sizeof for %s.%s (%s)" % (sname, py_key, c_path)
+                    )
                 code = "s%d" % values[sz_label]
             rendered.append(("field", py_key, offset, code, note))
             total_fields += 1
@@ -457,15 +452,20 @@ def main(argv=None):
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--gcc", default=DEFAULT_GCC,
-                   help="cross-compiler binary (default: %s)" % DEFAULT_GCC)
-    p.add_argument("--ndk-include", default=DEFAULT_INCLUDE,
-                   help="NDK include root (default: %s)" % DEFAULT_INCLUDE)
-    p.add_argument("--output", "-o", default="-",
-                   help="output file (default: stdout)")
-    p.add_argument("--dump-c", action="store_true",
-                   help="print the generated harvester C source to stderr "
-                        "(for debugging spec changes)")
+    p.add_argument(
+        "--gcc", default=DEFAULT_GCC, help="cross-compiler binary (default: %s)" % DEFAULT_GCC
+    )
+    p.add_argument(
+        "--ndk-include",
+        default=DEFAULT_INCLUDE,
+        help="NDK include root (default: %s)" % DEFAULT_INCLUDE,
+    )
+    p.add_argument("--output", "-o", default="-", help="output file (default: stdout)")
+    p.add_argument(
+        "--dump-c",
+        action="store_true",
+        help="print the generated harvester C source to stderr (for debugging spec changes)",
+    )
     args = p.parse_args(argv)
 
     gcc = find_gcc(args.gcc)
@@ -491,8 +491,7 @@ def main(argv=None):
 
     sys.stderr.write(
         "amiga-structgen: %d structs, %d fields emitted (%s)\n"
-        % (len(SPECS), total,
-           "stdout" if args.output == "-" else args.output)
+        % (len(SPECS), total, "stdout" if args.output == "-" else args.output)
     )
     return 0
 

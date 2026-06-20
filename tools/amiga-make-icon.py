@@ -40,16 +40,14 @@ def parse_png_1bit(path):
     idat = bytearray()
     palette = None
     while pos < len(data):
-        (length,) = struct.unpack(">I", data[pos:pos + 4])
-        chunk_type = data[pos + 4:pos + 8]
-        chunk_data = data[pos + 8:pos + 8 + length]
+        (length,) = struct.unpack(">I", data[pos : pos + 4])
+        chunk_type = data[pos + 4 : pos + 8]
+        chunk_data = data[pos + 8 : pos + 8 + length]
         if chunk_type == b"IHDR":
-            width, height, bit_depth, color_type = struct.unpack(
-                ">IIBB", chunk_data[:10]
-            )
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
         elif chunk_type == b"PLTE":
             # Palette: triples of RGB. We only care about index 0 vs 1.
-            palette = [chunk_data[i:i + 3] for i in range(0, length, 3)]
+            palette = [chunk_data[i : i + 3] for i in range(0, length, 3)]
         elif chunk_type == b"IDAT":
             idat.extend(chunk_data)
         elif chunk_type == b"IEND":
@@ -84,10 +82,8 @@ def parse_png_1bit(path):
         # Skip the filter byte (must be 0 == None for our 1-bit input).
         filter_byte = raw[y * (row_bytes + 1)]
         if filter_byte != 0:
-            raise ValueError("unsupported PNG filter type %d on row %d"
-                             % (filter_byte, y))
-        row_data = raw[y * (row_bytes + 1) + 1:
-                       y * (row_bytes + 1) + 1 + row_bytes]
+            raise ValueError("unsupported PNG filter type %d on row %d" % (filter_byte, y))
+        row_data = raw[y * (row_bytes + 1) + 1 : y * (row_bytes + 1) + 1 + row_bytes]
         row = []
         for x in range(width):
             byte = row_data[x // 8]
@@ -146,9 +142,9 @@ GTYPE_BOOLGADGET = 0x0001
 NO_ICON_POSITION = 0x80000000
 
 
-def serialise_disk_object(width, height, plane_data, tooltypes,
-                          do_type=WBTOOL, stack_size=16384,
-                          default_tool=None):
+def serialise_disk_object(
+    width, height, plane_data, tooltypes, do_type=WBTOOL, stack_size=16384, default_tool=None
+):
     """Build the byte stream for a WBTOOL .info file.
 
     Structure:
@@ -166,24 +162,35 @@ def serialise_disk_object(width, height, plane_data, tooltypes,
     # do_Gadget (44 bytes)
     next_gadget = 0
     left_edge = 0
-    top_edge  = 0
+    top_edge = 0
     flags = GFLG_GADGIMAGE
     activation = GACT_RELVERIFY
     gtype = GTYPE_BOOLGADGET
     # GadgetRender = non-null sentinel; SelectRender = 0 (no dual image).
     gadget_render = 0x00000001
     select_render = 0
-    gadget_text   = 0
-    mutual_excl   = 0
-    special_info  = 0
-    gadget_id     = 0
-    user_data     = 0
+    gadget_text = 0
+    mutual_excl = 0
+    special_info = 0
+    gadget_id = 0
+    user_data = 0
     out += struct.pack(
         ">IhhhhHHHIIIiIHI",
-        next_gadget, left_edge, top_edge, width, height,
-        flags, activation, gtype,
-        gadget_render, select_render, gadget_text,
-        mutual_excl, special_info, gadget_id, user_data,
+        next_gadget,
+        left_edge,
+        top_edge,
+        width,
+        height,
+        flags,
+        activation,
+        gtype,
+        gadget_render,
+        select_render,
+        gadget_text,
+        mutual_excl,
+        special_info,
+        gadget_id,
+        user_data,
     )
 
     # do_Type, pad
@@ -210,19 +217,26 @@ def serialise_disk_object(width, height, plane_data, tooltypes,
     out += struct.pack(">i", stack_size)
 
     # ---------- Embedded struct Image (20 bytes) for GadgetRender ----------
-    img_left   = 0
-    img_top    = 0
-    img_width  = width
+    img_left = 0
+    img_top = 0
+    img_width = width
     img_height = height
-    img_depth  = 1
-    img_data_ptr  = 0x00000001     # sentinel; actual data follows
-    img_pick   = 0x01              # plane 0
-    img_onoff  = 0x00
-    img_next   = 0
+    img_depth = 1
+    img_data_ptr = 0x00000001  # sentinel; actual data follows
+    img_pick = 0x01  # plane 0
+    img_onoff = 0x00
+    img_next = 0
     out += struct.pack(
         ">hhhhhIBBI",
-        img_left, img_top, img_width, img_height, img_depth,
-        img_data_ptr, img_pick, img_onoff, img_next,
+        img_left,
+        img_top,
+        img_width,
+        img_height,
+        img_depth,
+        img_data_ptr,
+        img_pick,
+        img_onoff,
+        img_next,
     )
 
     # ---------- Planar bitmap data ----------
@@ -251,9 +265,7 @@ def main():
     amiga_dir = os.path.join(repo_root, "ports", "amiga")
 
     width, height, rows = parse_png_1bit(png_path)
-    print("loaded %s: %dx%d, %d ink pixels"
-          % (png_path, width, height,
-             sum(sum(r) for r in rows)))
+    print("loaded %s: %dx%d, %d ink pixels" % (png_path, width, height, sum(sum(r) for r in rows)))
 
     plane_data = pack_planar(width, height, rows)
     print("packed %d bytes of planar bitmap" % len(plane_data))
@@ -284,7 +296,9 @@ def main():
         "DONOTWAIT",
     ]
     tool_info = serialise_disk_object(
-        width, height, plane_data,
+        width,
+        height,
+        plane_data,
         tool_tooltypes,
         do_type=WBTOOL,
         stack_size=65536,
@@ -311,7 +325,9 @@ def main():
         "DONOTWAIT",
     ]
     project_info = serialise_disk_object(
-        width, height, plane_data,
+        width,
+        height,
+        plane_data,
         project_tooltypes,
         do_type=WBPROJECT,
         stack_size=65536,
