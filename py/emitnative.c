@@ -581,10 +581,23 @@ static void emit_native_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scop
 
         // Store in the first machine-word an index used to the function's prelude.
         // This is used at runtime by mp_obj_fun_native_get_prelude_ptr().
+        // mp_asm_base_data() emits the word little-endian, but this slot is read
+        // back as a native uintptr_t; on big-endian (N_68K) byte-swap so the
+        // bytes land in the machine's native order.
+        #if N_68K
+        mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)__builtin_bswap32(emit->prelude_ptr_index));
+        #else
         mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)emit->prelude_ptr_index);
+        #endif
 
         if (emit->scope->scope_flags & MP_SCOPE_FLAG_GENERATOR) {
+            // Same big-endian fix as the prelude index above; read back as a
+            // native uintptr_t by the generator-resume path.
+            #if N_68K
+            mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)__builtin_bswap32(emit->start_offset));
+            #else
             mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)emit->start_offset);
+            #endif
             ASM_ENTRY(emit->as, emit->code_state_start, qualified_name);
 
             // Reset the state size for the state pointed to by REG_GENERATOR_STATE
