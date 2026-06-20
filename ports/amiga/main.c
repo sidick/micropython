@@ -68,6 +68,25 @@ static struct {
 } amiga_heap_chunks[AMIGA_HEAP_MAX_CHUNKS];
 static size_t amiga_heap_total_bytes;        // sum of all chunk sizes
 static size_t amiga_heap_max_bytes;          // -X maxheap=... cap (0 = unlimited)
+
+// RAM floor always left free for AmigaOS. The auto-growing split heap would
+// otherwise expand until only a few bytes of system memory remain, starving
+// the OS of the allocations it needs *while Python runs* -- serial.device
+// RX/TX buffers, file handles, library opens. Over the serial console that
+// starvation desyncs the shell (an out-of-memory test then cascades into
+// the next tests); in general it makes any heavy-allocation workload fragile.
+// Stop growing the heap once free RAM drops to this reserve, so Python sees
+// a clean MemoryError while the OS keeps working. Overridable via the
+// MICROPYHEAPRESERVE env var (0 disables the reserve).
+#define AMIGA_OS_RAM_RESERVE_DEFAULT (512 * 1024)
+static size_t amiga_heap_os_reserve = AMIGA_OS_RAM_RESERVE_DEFAULT;
+
+// The initial GC heap chunk, allocated once in amiga_main and reused by every
+// amiga_runtime_init across soft resets. Tracked so amiga_runtime_deinit can
+// free the *other* (auto-grown) chunks on each soft reset while keeping this
+// one -- otherwise a test that grows the heap leaks that RAM until process
+// exit, starving the OS (and desyncing the serial console) on the next test.
+static void *amiga_initial_chunk;
 // File scope so mphalport.c's banner injector can read the post-parse
 // initial GC heap size. Populated in main() once arg / env / tooltype
 // parsing has settled the value.
@@ -114,12 +133,26 @@ void amiga_free_heap(void *p) {
 size_t gc_get_max_new_split(void) {
     // Largest contiguous AllocVec'able block, less a small headroom for
     // exec.library's per-allocation bookkeeping. Clamped to -X maxheap=
-    // if the user set one.
+    // if the user set one, and to leave amiga_heap_os_reserve free for the OS.
     ULONG largest = AvailMem(MEMF_ANY | MEMF_PUBLIC | MEMF_LARGEST);
     if (largest < 256) {
         return 0;
     }
     largest -= 64;
+    // Never grow into the OS reserve: bound the next chunk by how much total
+    // free RAM exceeds the reserve. As free RAM approaches the reserve this
+    // shrinks to 0, so the GC stops growing and raises MemoryError to Python
+    // while the OS still has room to breathe.
+    {
+        ULONG total_free = AvailMem(MEMF_ANY | MEMF_PUBLIC);
+        if (total_free <= amiga_heap_os_reserve) {
+            return 0;
+        }
+        ULONG headroom = total_free - (ULONG)amiga_heap_os_reserve;
+        if (largest > headroom) {
+            largest = headroom;
+        }
+    }
     if (amiga_heap_max_bytes != 0) {
         if (amiga_heap_total_bytes >= amiga_heap_max_bytes) {
             return 0;
@@ -504,6 +537,20 @@ static void amiga_runtime_deinit(void) {
     amiga_rexx_shutdown();
 
     mp_deinit();
+
+    // Reclaim the auto-grown split-heap chunks so RAM returns to AmigaOS on a
+    // soft reset. mp_deinit() tears down the VM but does not own these
+    // AllocVec'd chunks; without this a test that grew the heap (e.g. an
+    // out-of-memory test that fills RAM) would leak it until process exit,
+    // leaving the next test's VM rebuild and serial I/O starved -- which
+    // desynced the console. Keep the initial chunk: amiga_runtime_init reuses
+    // it. The final shutdown frees that one via the chunk-list walk in main().
+    for (size_t i = 0; i < AMIGA_HEAP_MAX_CHUNKS; i++) {
+        void *p = amiga_heap_chunks[i].ptr;
+        if (p != NULL && p != amiga_initial_chunk) {
+            amiga_free_heap(p);
+        }
+    }
 }
 
 // Force the 68881/68882 rounding-precision field to double so double
@@ -673,6 +720,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             amiga_heap_max_bytes = v;
         }
     }
+    if (GetVar((STRPTR)"MICROPYHEAPRESERVE", (STRPTR)envbuf, sizeof(envbuf), 0) > 0) {
+        // A leading digit means a deliberate value (including "0" to disable
+        // the reserve); anything else is left at the default.
+        if (envbuf[0] >= '0' && envbuf[0] <= '9') {
+            amiga_heap_os_reserve = parse_heap_size(envbuf);
+        }
+    }
     for (int a = 1; a + 1 < argc; a++) {
         if (strcmp(argv[a], "-X") != 0) {
             continue;
@@ -746,6 +800,9 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     if (!initial_ptr) {
         return 1;
     }
+    // Remember the initial chunk so soft-reset teardown keeps it (and frees
+    // only the auto-grown chunks).
+    amiga_initial_chunk = initial_ptr;
 
     #if MICROPY_STACK_CHECK
     mp_stack_ctrl_init();
