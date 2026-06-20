@@ -63,8 +63,7 @@ def python_version():
 
 
 def platform():
-    return "AmigaOS-%s-%s-MicroPython_%s" % (
-        _amiga.kickstart(), _amiga.cpu(), python_version())
+    return "AmigaOS-%s-%s-MicroPython_%s" % (_amiga.kickstart(), _amiga.cpu(), python_version())
 
 
 def fpu():
@@ -86,5 +85,10 @@ def fastmem():
 def amiga_info():
     """One-line dump: ``CPU | FPU | Chipset | Kickstart | Chip | Fast``."""
     return "CPU: %s | FPU: %s | Chipset: %s | Kickstart: %s | Chip: %dKB | Fast: %dKB" % (
-        _amiga.cpu(), _amiga.fpu(), _amiga.chipset(), _amiga.kickstart(),
-        _amiga.chipmem() // 1024, _amiga.fastmem() // 1024)
+        _amiga.cpu(),
+        _amiga.fpu(),
+        _amiga.chipset(),
+        _amiga.kickstart(),
+        _amiga.chipmem() // 1024,
+        _amiga.fastmem() // 1024,
+    )
