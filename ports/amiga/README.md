@@ -49,11 +49,12 @@ Supported features include:
   variant, omitted from the size-optimised variants). Provides the
   upstream `ssl` surface: `ssl.SSLContext`, the module-level
   `ssl.wrap_socket(...)` legacy helper, `SSLContext.load_cert_chain`,
-  and `server_side` wrapping. Real `bsdsocket` connections use the
-  AmiSSL fd transport; fileno-less stream objects (`io.BytesIO`,
-  asyncio wrappers) are driven through a memory BIO pair, so the
-  upstream `extmod/ssl_basic`, `ssl_ioctl`, and `ssl_keycert` tests
-  pass unmodified.
+  `load_verify_locations` (file/dir or in-memory `cadata`), and
+  `server_side` wrapping. Real `bsdsocket` connections use the AmiSSL
+  fd transport; fileno-less stream objects (`io.BytesIO`, asyncio
+  wrappers) are driven through a memory BIO pair, so the upstream
+  `extmod/ssl_basic`, `ssl_ioctl`, `ssl_keycert`, and `ssl_cadata`
+  tests pass unmodified (`ssl_keycert_pkcs8` skips, being mbedTLS-only).
 - `urequests` frozen HTTP / HTTPS client.
 - `platform` module with CPython-shaped identity (`system`,
   `machine`, `release`, `python_version`, `platform`) plus

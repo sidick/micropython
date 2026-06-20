@@ -44,6 +44,7 @@
 #include <openssl/x509.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <proto/exec.h>
 #include <dos/dosextens.h>
 
@@ -83,6 +84,7 @@ static const mp_obj_type_t ssl_socket_type;
 
 static mp_ssl_context_t *new_context(int protocol);
 static void context_set_verify_mode(mp_ssl_context_t *self, int cert);
+static void context_load_cadata(mp_ssl_context_t *self, mp_obj_t cadata_obj);
 static int ssl_socket_pump(mp_ssl_socket_t *self, bool want_read);
 static mp_obj_t make_ssl_socket(mp_ssl_context_t *self, mp_obj_t sock,
     bool server_side, bool do_handshake, mp_obj_t server_hostname);
@@ -193,11 +195,13 @@ static MP_DEFINE_CONST_FUN_OBJ_1(ssl_context_close_obj, ssl_context_close);
 // glue we don't have yet.
 static mp_obj_t ssl_context_load_verify_locations(
     size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
-    enum { ARG_cafile, ARG_capath };
+    enum { ARG_cafile, ARG_capath, ARG_cadata };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_cafile, MP_ARG_OBJ | MP_ARG_KW_ONLY,
           {.u_rom_obj = MP_ROM_NONE} },
         { MP_QSTR_capath, MP_ARG_OBJ | MP_ARG_KW_ONLY,
+          {.u_rom_obj = MP_ROM_NONE} },
+        { MP_QSTR_cadata, MP_ARG_OBJ | MP_ARG_KW_ONLY,
           {.u_rom_obj = MP_ROM_NONE} },
     };
     mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
@@ -217,9 +221,18 @@ static mp_obj_t ssl_context_load_verify_locations(
     if (args[ARG_capath].u_obj != mp_const_none) {
         capath = mp_obj_str_get_str(args[ARG_capath].u_obj);
     }
-    if (cafile == NULL && capath == NULL) {
+    if (cafile == NULL && capath == NULL
+        && args[ARG_cadata].u_obj == mp_const_none) {
         mp_raise_TypeError(
-            MP_ERROR_TEXT("cafile or capath required"));
+            MP_ERROR_TEXT("cafile, capath or cadata required"));
+    }
+
+    // In-memory CA blob -- no filesystem access, so no requester risk.
+    if (args[ARG_cadata].u_obj != mp_const_none) {
+        context_load_cadata(self, args[ARG_cadata].u_obj);
+    }
+    if (cafile == NULL && capath == NULL) {
+        return mp_const_none;
     }
 
     // OpenSSL's load_verify_locations calls fopen / opendir internally;
@@ -277,6 +290,41 @@ static void context_set_verify_mode(mp_ssl_context_t *self, int cert) {
             mp_raise_ValueError(MP_ERROR_TEXT("verify_mode"));
     }
     SSL_CTX_set_verify(self->ctx, mode, NULL);
+}
+
+// Load CA certificate(s) from an in-memory blob into the context's
+// trust store -- the cadata path of CPython's load_verify_locations.
+// Accepts a single DER cert or a PEM blob; bad data raises
+// ValueError("invalid cert"), matching tests/extmod/ssl_cadata.py.
+static void context_load_cadata(mp_ssl_context_t *self, mp_obj_t cadata_obj) {
+    if (self->ctx == NULL) {
+        mp_raise_OSError(MP_EBADF);
+    }
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(cadata_obj, &bi, MP_BUFFER_READ);
+
+    // Try DER (a single cert) first, then fall back to PEM.
+    X509 *cert = NULL;
+    BIO *bio = BIO_new_mem_buf(bi.buf, (int)bi.len);
+    if (bio != NULL) {
+        cert = d2i_X509_bio(bio, NULL);
+        BIO_free(bio);
+    }
+    if (cert == NULL) {
+        bio = BIO_new_mem_buf(bi.buf, (int)bi.len);
+        if (bio != NULL) {
+            cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+            BIO_free(bio);
+        }
+    }
+    if (cert == NULL) {
+        ERR_clear_error();
+        mp_raise_ValueError(MP_ERROR_TEXT("invalid cert"));
+    }
+
+    // X509_STORE_add_cert takes its own reference, so drop ours.
+    X509_STORE_add_cert(SSL_CTX_get_cert_store(self->ctx), cert);
+    X509_free(cert);
 }
 
 // SSLContext.load_cert_chain(cert, key) -- cert and key are DER (ASN.1)
@@ -552,9 +600,7 @@ static mp_obj_t mod_ssl_wrap_socket(
         ssl_context_load_cert_chain(MP_OBJ_FROM_PTR(ctx), cert, key);
     }
     if (args[ARG_cadata].u_obj != mp_const_none) {
-        // cadata-from-memory isn't wired up yet (load_verify_locations
-        // only takes file/dir paths); no current test exercises it.
-        mp_raise_NotImplementedError(MP_ERROR_TEXT("cadata"));
+        context_load_cadata(ctx, args[ARG_cadata].u_obj);
     }
     context_set_verify_mode(ctx, args[ARG_cert_reqs].u_int);
 
