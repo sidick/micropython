@@ -66,24 +66,24 @@ assert json.loads(r'"\n"') == "\n"
 assert json.loads(r'"\t"') == "\t"
 assert json.loads(r'"\\"') == "\\"
 assert json.loads(r'"\""') == '"'
-assert json.loads(r'"é"') == "é"   # latin-1 e-acute
-assert json.loads(r'"中"') == "中"   # CJK ideograph
+assert json.loads(r'"é"') == "é"  # latin-1 e-acute
+assert json.loads(r'"中"') == "中"  # CJK ideograph
 
 # --- loads: malformed input must raise ---------------------------------
 
 # Note: the port-local parser is intentionally lenient on a few
 # edge cases that CPython rejects (e.g. it parses `{"a"}` as `{}`).
 # This list only covers cases that DO raise.
-for bad in ('{', '[1, 2', '"unterminated', "tru", "fals", "nul", "1.2.3"):
+for bad in ("{", "[1, 2", '"unterminated', "tru", "fals", "nul", "1.2.3"):
     try:
         json.loads(bad)
-        assert False, ("expected ValueError for %r" % bad)
+        assert False, "expected ValueError for %r" % bad
     except (ValueError, SyntaxError):
         pass
 
 # --- load() (stream form) ----------------------------------------------
 
-assert json.load(io.StringIO('[1, 2, 3]')) == [1, 2, 3]
+assert json.load(io.StringIO("[1, 2, 3]")) == [1, 2, 3]
 assert json.load(io.StringIO('{"k": "v"}')) == {"k": "v"}
 
 # --- dumps: primitives -------------------------------------------------
@@ -123,8 +123,19 @@ assert buf.getvalue() == "[1, 2, 3]"
 
 # Repeated dumps -> loads must be a fixed point for json-safe values.
 values = [
-    None, True, False, 0, 42, -1, 3.14, "hello", "", [], [1, 2, 3],
-    {"k": "v"}, {"nested": {"list": [1, 2, {"a": True}]}},
+    None,
+    True,
+    False,
+    0,
+    42,
+    -1,
+    3.14,
+    "hello",
+    "",
+    [],
+    [1, 2, 3],
+    {"k": "v"},
+    {"nested": {"list": [1, 2, {"a": True}]}},
     {"unicode": "é 中"},
 ]
 for v in values:

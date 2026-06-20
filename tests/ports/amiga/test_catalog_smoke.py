@@ -47,9 +47,7 @@ try:
 except (TypeError, OSError):
     pass
 else:
-    raise AssertionError(
-        "expected TypeError/OSError for non-str built_in_language"
-    )
+    raise AssertionError("expected TypeError/OSError for non-str built_in_language")
 
 # ---------- Try opening a known system catalog ----------
 # Sys/monitors.catalog ships with most Workbench installs. Passing

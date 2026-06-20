@@ -36,8 +36,15 @@ for fn in ("rexx_client_open", "rexx_client_close", "rexx_client_send"):
 
 # Pre-existing Phase 18 entries still wired (regression catch for the
 # helper refactor in Step 2).
-for fn in ("rexx_open", "rexx_close", "rexx_send", "rexx_recv",
-           "rexx_reply", "rexx_command", "rexx_port_name"):
+for fn in (
+    "rexx_open",
+    "rexx_close",
+    "rexx_send",
+    "rexx_recv",
+    "rexx_reply",
+    "rexx_command",
+    "rexx_port_name",
+):
     assert callable(getattr(_amiga, fn)), fn
 
 print("OK")

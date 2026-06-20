@@ -56,8 +56,7 @@ except OSError as e:
 # methods even if some of them error out (which is what the direction
 # guards above confirm).
 for stream in (sys.stdin, sys.stdout, sys.stderr):
-    for name in ("read", "readinto", "readline", "readlines",
-                 "write", "fileno", "close"):
+    for name in ("read", "readinto", "readline", "readlines", "write", "fileno", "close"):
         assert hasattr(stream, name), name
 
 # --- sys module is read-only -------------------------------------------

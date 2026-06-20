@@ -12,9 +12,15 @@ import time
 
 # --- module surface ------------------------------------------------------
 
-for name in ("signal", "wait_signal", "find_task",
-             "SIGBREAKF_CTRL_C", "SIGBREAKF_CTRL_D",
-             "SIGBREAKF_CTRL_E", "SIGBREAKF_CTRL_F"):
+for name in (
+    "signal",
+    "wait_signal",
+    "find_task",
+    "SIGBREAKF_CTRL_C",
+    "SIGBREAKF_CTRL_D",
+    "SIGBREAKF_CTRL_E",
+    "SIGBREAKF_CTRL_F",
+):
     assert hasattr(_amiga, name), name
 
 # --- SIGBREAKF_CTRL_* constants ------------------------------------------
