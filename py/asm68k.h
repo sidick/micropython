@@ -483,19 +483,19 @@ static inline void asm_68k_eor_dreg_dreg(asm_68k_t *as, int dd, int ds) {
 // Shifts (variable count from data register, 68k requires count in Dn)
 // ---------------------------------------------------------------------------
 
-// ASR.L Ds, Dd
+// ASR.L Ds, Dd  (register count, arithmetic, right, long: 1110 ccc 0 10 1 00 yyy)
 static inline void asm_68k_asr_dreg_dreg(asm_68k_t *as, int dd, int ds) {
-    asm_68k_emit16(as, (uint16_t)(0xE160 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
+    asm_68k_emit16(as, (uint16_t)(0xE0A0 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
 }
 
-// LSL.L Ds, Dd
+// LSL.L Ds, Dd  (register count, logical, left, long: 1110 ccc 1 10 1 01 yyy)
 static inline void asm_68k_lsl_dreg_dreg(asm_68k_t *as, int dd, int ds) {
-    asm_68k_emit16(as, (uint16_t)(0xE168 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
+    asm_68k_emit16(as, (uint16_t)(0xE1A8 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
 }
 
-// LSR.L Ds, Dd
+// LSR.L Ds, Dd  (register count, logical, right, long: 1110 ccc 0 10 1 01 yyy)
 static inline void asm_68k_lsr_dreg_dreg(asm_68k_t *as, int dd, int ds) {
-    asm_68k_emit16(as, (uint16_t)(0xE068 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
+    asm_68k_emit16(as, (uint16_t)(0xE0A8 | (ASM_68K_DREG_NUM(ds) << 9) | ASM_68K_DREG_NUM(dd)));
 }
 
 // ---------------------------------------------------------------------------
