@@ -20,9 +20,11 @@ Three things make the link quirky and are handled here:
     bare LF does nothing useful. The target echoes "\\r\\n\\r" back.
   * Output is CRLF. Captured REPL output is normalised to LF so callers
     can compare against host-generated expected output.
-  * No flow control. Bytes are drip-fed one at a time with a small delay
-    (char_delay / AMIGA_SERIAL_DELAY) so the Amiga's serial input ISR
-    doesn't overrun on a fast burst.
+  * No flow control. Bytes are still paced with a small per-byte delay
+    (char_delay / AMIGA_SERIAL_DELAY) so the link can't overrun. The port
+    now bulk-drains its serial RX (see mphalport.c amiga_rx_refill), which
+    raised the reliable floor from ~5 ms/byte to ~1 ms; the 2 ms default
+    leaves a comfortable margin (the overrun cliff is ~0.5 ms).
 
 Importable API (for tests in this directory):
 
@@ -98,15 +100,16 @@ class AmigaSerialError(Exception):
 
 
 class AmigaSerial:
-    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5.0, char_delay=0.005):
+    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5.0, char_delay=0.002):
         self.host = host
         self.port = port
         self.timeout = timeout
-        # The Amiga serial line has no flow control, so bytes sent
-        # back-to-back overrun its input ISR and get dropped or transposed
-        # ("micropython" arriving as "mcropython"). Pace transmission one
-        # byte at a time with a small delay. Override via AMIGA_SERIAL_DELAY
-        # or the constructor if a faster/slower link needs it.
+        # The Amiga serial line has no flow control, so bytes sent too fast
+        # overrun and get dropped or transposed ("micropython" arriving as
+        # "mcropython"). Pace transmission one byte at a time with a small
+        # delay. Since the port started bulk-draining its serial RX the link
+        # is reliable down to ~1 ms/byte (overrun cliff ~0.5 ms); 2 ms keeps
+        # margin. Override via AMIGA_SERIAL_DELAY or the constructor.
         self.char_delay = float(os.environ.get("AMIGA_SERIAL_DELAY", char_delay))
         self.sock = None
 
@@ -391,7 +394,7 @@ def main(argv=None):
         "--delay",
         type=float,
         default=None,
-        help="per-byte transmit delay in seconds (default 0.005 / AMIGA_SERIAL_DELAY)",
+        help="per-byte transmit delay in seconds (default 0.002 / AMIGA_SERIAL_DELAY)",
     )
     g = p.add_mutually_exclusive_group()
     g.add_argument("-c", "--command", help="run one statement in the REPL ('-' reads stdin)")
