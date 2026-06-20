@@ -31,6 +31,7 @@
 
 #include <exec/tasks.h>
 #include <exec/memory.h>
+#include <exec/execbase.h>
 #include <proto/exec.h>
 #include <dos/dos.h>
 #include <dos/dosextens.h>
@@ -492,6 +493,36 @@ static void amiga_runtime_deinit(void) {
     amiga_rexx_shutdown();
 
     mp_deinit();
+}
+
+// Force the 68881/68882 rounding-precision field to double so double
+// arithmetic isn't silently truncated to single precision.
+//
+// The bebbo C startup leaves FPCR with rounding-precision = single (0x40)
+// on entry to this binary (a bare program built with the same toolchain
+// gets double rounding). MicroPython itself emits no FPU control writes —
+// all double math is soft-float library calls — but LIBS:mathieeedoubbas
+// .library, when it auto-selects its direct-FPU path on an FPU-equipped
+// machine, *honours the inherited FPCR*. With rounding-precision stuck at
+// single, every double result is rounded to ~24 bits: 0.1+0.2 loses its
+// low mantissa, time.time() quantises, and extmod/time_res fails.
+//
+// Setting the field to double precision once at startup restores correct
+// double math for the FPU variants and for the soft-float 'standard'
+// variant when it runs on a machine that has an FPU. Double (not extended)
+// rounding is chosen deliberately: the math library rounds each FPU result
+// straight to 53-bit before storing, matching IEEE-754 double exactly and
+// avoiding the rare double-rounding error that extended (80-bit) precision
+// would leave. Guarded by AttnFlags because the soft-float build is also
+// meant for FPU-less 68020s, where fmove raises an illegal-instruction trap.
+static void amiga_fpu_fix_rounding(void) {
+    if (!(SysBase->AttnFlags & (AFF_68881 | AFF_68882 | AFF_FPU40))) {
+        return;
+    }
+    uint32_t fpcr;
+    __asm__ volatile ("fmove.l %%fpcr,%0" : "=d" (fpcr));
+    fpcr = (fpcr & ~(uint32_t)0xC0) | 0x80;     // rounding precision -> double
+    __asm__ volatile ("fmove.l %0,%%fpcr" : : "d" (fpcr));
 }
 
 // Body of main(); see main() below for the stack-swap wrapper that
@@ -1072,6 +1103,10 @@ static APTR amiga_main_scratch = NULL;
 #define AMIGA_MAIN_STACK_MIN   (32 * 1024)
 
 int main(int argc, char **argv) {
+    // Correct the FPU rounding precision before any double arithmetic runs
+    // (including the stack-swap path and frozen-module import). See the
+    // function comment for why the C startup leaves it wrong.
+    amiga_fpu_fix_rounding();
     struct Task *task = FindTask(NULL);
     size_t current = (size_t)((char *)task->tc_SPUpper - (char *)task->tc_SPLower);
     // Skip the swap if the caller already gave us a comfortable stack
