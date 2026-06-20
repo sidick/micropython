@@ -203,9 +203,7 @@ def _parse_url(url):
     return use_ssl, host, port, path
 
 
-_QUOTE_SAFE = (
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-)
+_QUOTE_SAFE = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
 
 def _quote(s):

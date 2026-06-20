@@ -17,114 +17,114 @@ documented on ``amiga.Struct``.
 # struct Node (exec/nodes.h) -- head of every Exec list element.
 NODE_SIZE = 14
 NODE = {
-    "ln_Succ":  (0,  "L"),
-    "ln_Pred":  (4,  "L"),
-    "ln_Type":  (8,  "B"),
-    "ln_Pri":   (9,  "b"),
-    "ln_Name":  (10, "S"),   # ptr to NUL-terminated string
+    "ln_Succ": (0, "L"),
+    "ln_Pred": (4, "L"),
+    "ln_Type": (8, "B"),
+    "ln_Pri": (9, "b"),
+    "ln_Name": (10, "S"),  # ptr to NUL-terminated string
 }
 
 # struct Task (exec/tasks.h) -- First 14 bytes are an embedded Node.
 TASK_SIZE = 92
 TASK = {
     # Embedded Node
-    "ln_Succ":        (0,  "L"),
-    "ln_Pred":        (4,  "L"),
-    "ln_Type":        (8,  "B"),
-    "ln_Pri":         (9,  "b"),
-    "ln_Name":        (10, "S"),
+    "ln_Succ": (0, "L"),
+    "ln_Pred": (4, "L"),
+    "ln_Type": (8, "B"),
+    "ln_Pri": (9, "b"),
+    "ln_Name": (10, "S"),
     # Task-specific fields
-    "tc_Flags":       (14, "B"),
-    "tc_State":       (15, "B"),
-    "tc_IDNestCnt":   (16, "b"),
-    "tc_TDNestCnt":   (17, "b"),
-    "tc_SigAlloc":    (18, "L"),
-    "tc_SigWait":     (22, "L"),
-    "tc_SigRecvd":    (26, "L"),
-    "tc_SigExcept":   (30, "L"),
-    "tc_TrapAlloc":   (34, "H"),
-    "tc_TrapAble":    (36, "H"),
-    "tc_ExceptData":  (38, "P"),
-    "tc_ExceptCode":  (42, "P"),
-    "tc_TrapData":    (46, "P"),
-    "tc_TrapCode":    (50, "P"),
-    "tc_SPReg":       (54, "P"),
-    "tc_SPLower":     (58, "P"),
-    "tc_SPUpper":     (62, "P"),
-    "tc_Switch":      (66, "P"),
-    "tc_Launch":      (70, "P"),
+    "tc_Flags": (14, "B"),
+    "tc_State": (15, "B"),
+    "tc_IDNestCnt": (16, "b"),
+    "tc_TDNestCnt": (17, "b"),
+    "tc_SigAlloc": (18, "L"),
+    "tc_SigWait": (22, "L"),
+    "tc_SigRecvd": (26, "L"),
+    "tc_SigExcept": (30, "L"),
+    "tc_TrapAlloc": (34, "H"),
+    "tc_TrapAble": (36, "H"),
+    "tc_ExceptData": (38, "P"),
+    "tc_ExceptCode": (42, "P"),
+    "tc_TrapData": (46, "P"),
+    "tc_TrapCode": (50, "P"),
+    "tc_SPReg": (54, "P"),
+    "tc_SPLower": (58, "P"),
+    "tc_SPUpper": (62, "P"),
+    "tc_Switch": (66, "P"),
+    "tc_Launch": (70, "P"),
     # tc_MemEntry (struct List at offset 74) intentionally not unpacked.
-    "tc_UserData":    (88, "P"),
+    "tc_UserData": (88, "P"),
 }
 
 # struct Library (exec/libraries.h) -- every OpenLibrary base points here.
 LIBRARY_SIZE = 34
 LIBRARY = {
     # Embedded Node
-    "ln_Succ":       (0,  "L"),
-    "ln_Pred":       (4,  "L"),
-    "ln_Type":       (8,  "B"),
-    "ln_Pri":        (9,  "b"),
-    "ln_Name":       (10, "S"),
+    "ln_Succ": (0, "L"),
+    "ln_Pred": (4, "L"),
+    "ln_Type": (8, "B"),
+    "ln_Pri": (9, "b"),
+    "ln_Name": (10, "S"),
     # Library-specific fields
-    "lib_Flags":     (14, "B"),
-    "lib_pad":       (15, "B"),
-    "lib_NegSize":   (16, "H"),
-    "lib_PosSize":   (18, "H"),
-    "lib_Version":   (20, "H"),
-    "lib_Revision":  (22, "H"),
-    "lib_IdString":  (24, "S"),
-    "lib_Sum":       (28, "L"),
-    "lib_OpenCnt":   (32, "H"),
+    "lib_Flags": (14, "B"),
+    "lib_pad": (15, "B"),
+    "lib_NegSize": (16, "H"),
+    "lib_PosSize": (18, "H"),
+    "lib_Version": (20, "H"),
+    "lib_Revision": (22, "H"),
+    "lib_IdString": (24, "S"),
+    "lib_Sum": (28, "L"),
+    "lib_OpenCnt": (32, "H"),
 }
 
 # struct DateStamp (dos/dos.h) -- AmigaDOS time representation.
 DATESTAMP_SIZE = 12
 DATESTAMP = {
-    "ds_Days":    (0, "L"),
-    "ds_Minute":  (4, "L"),
-    "ds_Tick":    (8, "L"),
+    "ds_Days": (0, "L"),
+    "ds_Minute": (4, "L"),
+    "ds_Tick": (8, "L"),
 }
 
 # struct FileInfoBlock (dos/dos.h) -- Examine()/ExNext() output.
 FILEINFOBLOCK_SIZE = 260
 FILEINFOBLOCK = {
-    "fib_DiskKey":       (0,   "L"),
-    "fib_DirEntryType":  (4,   "l"),   # signed: <0 = file, >0 = dir
-    "fib_FileName":      (8,   "s108"),   # NUL-terminated inline string
-    "fib_Protection":    (116, "L"),
-    "fib_EntryType":     (120, "L"),
-    "fib_Size":          (124, "L"),
-    "fib_NumBlocks":     (128, "L"),
+    "fib_DiskKey": (0, "L"),
+    "fib_DirEntryType": (4, "l"),  # signed: <0 = file, >0 = dir
+    "fib_FileName": (8, "s108"),  # NUL-terminated inline string
+    "fib_Protection": (116, "L"),
+    "fib_EntryType": (120, "L"),
+    "fib_Size": (124, "L"),
+    "fib_NumBlocks": (128, "L"),
     # Embedded DateStamp (fib_Date)
-    "fib_DateDays":      (132, "L"),
-    "fib_DateMinute":    (136, "L"),
-    "fib_DateTick":      (140, "L"),
-    "fib_Comment":       (144, "s80"),   # NUL-terminated inline string
-    "fib_OwnerUID":      (224, "H"),
-    "fib_OwnerGID":      (226, "H"),
+    "fib_DateDays": (132, "L"),
+    "fib_DateMinute": (136, "L"),
+    "fib_DateTick": (140, "L"),
+    "fib_Comment": (144, "s80"),  # NUL-terminated inline string
+    "fib_OwnerUID": (224, "H"),
+    "fib_OwnerGID": (226, "H"),
 }
 
 # struct IntuiMessage (intuition/intuition.h) -- Intuition event delivery (embeds struct Message).
 INTUIMESSAGE_SIZE = 52
 INTUIMESSAGE = {
     # Embedded ExecMessage (struct Message)
-    "ln_Succ":       (0,  "L"),
-    "ln_Pred":       (4,  "L"),
-    "ln_Type":       (8,  "B"),
-    "ln_Pri":        (9,  "b"),
-    "ln_Name":       (10, "S"),
-    "mn_ReplyPort":  (14, "P"),
-    "mn_Length":     (18, "H"),
+    "ln_Succ": (0, "L"),
+    "ln_Pred": (4, "L"),
+    "ln_Type": (8, "B"),
+    "ln_Pri": (9, "b"),
+    "ln_Name": (10, "S"),
+    "mn_ReplyPort": (14, "P"),
+    "mn_Length": (18, "H"),
     # IntuiMessage-specific fields
-    "Class":         (20, "L"),
-    "Code":          (24, "H"),
-    "Qualifier":     (26, "H"),
-    "IAddress":      (28, "P"),
-    "MouseX":        (32, "h"),
-    "MouseY":        (34, "h"),
-    "Seconds":       (36, "L"),
-    "Micros":        (40, "L"),
-    "IDCMPWindow":   (44, "P"),
-    "SpecialLink":   (48, "P"),
+    "Class": (20, "L"),
+    "Code": (24, "H"),
+    "Qualifier": (26, "H"),
+    "IAddress": (28, "P"),
+    "MouseX": (32, "h"),
+    "MouseY": (34, "h"),
+    "Seconds": (36, "L"),
+    "Micros": (40, "L"),
+    "IDCMPWindow": (44, "P"),
+    "SpecialLink": (48, "P"),
 }

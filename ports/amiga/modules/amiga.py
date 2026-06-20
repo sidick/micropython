@@ -24,10 +24,24 @@ import _icon as icon  # noqa: F401  (re-exported as amiga.icon)
 import _catalog as catalog  # noqa: F401  (re-exported as amiga.catalog)
 
 
-_VALID_REGS = frozenset((
-    "d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
-    "a0", "a1", "a2", "a3", "a4", "a5",
-))
+_VALID_REGS = frozenset(
+    (
+        "d0",
+        "d1",
+        "d2",
+        "d3",
+        "d4",
+        "d5",
+        "d6",
+        "d7",
+        "a0",
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+    )
+)
 
 
 def _parse_fd(text):
@@ -76,8 +90,8 @@ def _parse_fd(text):
         if bias is None:
             continue
         name = line[:lp1].strip()
-        args_csv = line[lp1 + 1:rp1]
-        regs_csv = line[lp2 + 1:rp2]
+        args_csv = line[lp1 + 1 : rp1]
+        regs_csv = line[lp2 + 1 : rp2]
         lvo = -(bias + slot * 6)
         slot += 1
         if not public:
@@ -108,7 +122,7 @@ def _load_fd(name):
     signature dict, or None if no match is found."""
     for suffix in (".library", ".device", ".resource"):
         if name.endswith(suffix):
-            base = name[:-len(suffix)]
+            base = name[: -len(suffix)]
             break
     else:
         base = name
@@ -211,9 +225,7 @@ class Library:
             raise AttributeError(fnname)
         sig = self._signatures.get(fnname)
         if sig is None:
-            raise AttributeError(
-                "%s has no function %r in its .fd table" % (self._name, fnname)
-            )
+            raise AttributeError("%s has no function %r in its .fd table" % (self._name, fnname))
         lvo, regs_csv, _since = sig
         regs = regs_csv.split(",") if regs_csv else []
         nargs = len(regs)
@@ -224,8 +236,7 @@ class Library:
         def call(*args):
             if len(args) != nargs:
                 raise TypeError(
-                    "%s.%s: expected %d arg(s), got %d"
-                    % (lib._name, fnname, nargs, len(args))
+                    "%s.%s: expected %d arg(s), got %d" % (lib._name, fnname, nargs, len(args))
                 )
             if not lib._base:
                 raise ValueError("%s: closed" % lib._name)
@@ -328,10 +339,10 @@ class TagList:
             # Terminator: TAG_DONE, or TAG_MORE + ptr-to-next when chaining.
             term = self._main + n * self._ITEM_SIZE
             if more is None:
-                _c.poke_l(term, 0)       # TAG_DONE
+                _c.poke_l(term, 0)  # TAG_DONE
                 _c.poke_l(term + 4, 0)
             else:
-                _c.poke_l(term, 2)       # TAG_MORE
+                _c.poke_l(term, 2)  # TAG_MORE
                 _c.poke_l(term + 4, int(more))
         except BaseException:
             self.close()
@@ -401,9 +412,7 @@ def taglist(*pairs, more=None, **named):
         # Alternating tag, value, tag, value, ...
         #   taglist(WA_Width, 640, WA_Height, 480)
         if len(pairs) % 2 != 0:
-            raise ValueError(
-                "taglist alternating positional args must be in (tag, value) pairs"
-            )
+            raise ValueError("taglist alternating positional args must be in (tag, value) pairs")
         for i in range(0, len(pairs), 2):
             items.append((pairs[i], pairs[i + 1]))
     else:
@@ -435,22 +444,22 @@ def parse_taglist(addr, max_items=64):
         return out
     count = 0
     while count < max_items:
-        tag = _c.peek_l(addr) & 0xffffffff
-        data = _c.peek_l(addr + 4) & 0xffffffff
-        if tag == 0:           # TAG_DONE / TAG_END
+        tag = _c.peek_l(addr) & 0xFFFFFFFF
+        data = _c.peek_l(addr + 4) & 0xFFFFFFFF
+        if tag == 0:  # TAG_DONE / TAG_END
             break
-        if tag == 2:           # TAG_MORE — jump to chained array
+        if tag == 2:  # TAG_MORE — jump to chained array
             if data == 0:
                 break
             addr = data
             continue
-        if tag == 1:           # TAG_IGNORE — skip this slot
+        if tag == 1:  # TAG_IGNORE — skip this slot
             addr += 8
             count += 1
             continue
-        if tag == 3:           # TAG_SKIP — skip this + ti_Data more
-            addr += 8 * (1 + (data & 0xffffffff))
-            count += 1 + (data & 0xffffffff)
+        if tag == 3:  # TAG_SKIP — skip this + ti_Data more
+            addr += 8 * (1 + (data & 0xFFFFFFFF))
+            count += 1 + (data & 0xFFFFFFFF)
             continue
         out[tag] = data
         addr += 8
@@ -497,12 +506,12 @@ def _struct_read(addr, typ):
         v = _c.peek_w(addr)
         return v - 65536 if v >= 32768 else v
     if typ in ("L", "P"):
-        return _c.peek_l(addr) & 0xffffffff
+        return _c.peek_l(addr) & 0xFFFFFFFF
     if typ == "l":
-        v = _c.peek_l(addr) & 0xffffffff
+        v = _c.peek_l(addr) & 0xFFFFFFFF
         return v if v < 0x80000000 else v - 0x100000000
     if typ == "S":
-        ptr = _c.peek_l(addr) & 0xffffffff
+        ptr = _c.peek_l(addr) & 0xFFFFFFFF
         if ptr == 0:
             return None
         out = bytearray()
@@ -522,11 +531,11 @@ def _struct_read(addr, typ):
 
 def _struct_write(addr, typ, value):
     if typ == "B" or typ == "b":
-        _c.poke_b(addr, value & 0xff)
+        _c.poke_b(addr, value & 0xFF)
     elif typ == "H" or typ == "h":
-        _c.poke_w(addr, value & 0xffff)
+        _c.poke_w(addr, value & 0xFFFF)
     elif typ in ("L", "l", "P"):
-        _c.poke_l(addr, value & 0xffffffff)
+        _c.poke_l(addr, value & 0xFFFFFFFF)
     elif typ[0] == "s":
         n = int(typ[1:])
         if isinstance(value, str):
@@ -629,16 +638,16 @@ def IntuiMessage(addr):
 # `.command` / `.reply(...)`.  Methods delegate to the C primitives.
 
 # ARexx action-code high byte (rexx/storage.h).
-RXCOMM  = 0x01000000
-RXFUNC  = 0x02000000
+RXCOMM = 0x01000000
+RXFUNC = 0x02000000
 RXCLOSE = 0x03000000
 RXQUERY = 0x04000000
 
 # Standard ARexx return-code levels.
-RC_OK     = 0
-RC_WARN   = 5
-RC_ERROR  = 10
-RC_FAIL   = 20
+RC_OK = 0
+RC_WARN = 5
+RC_ERROR = 10
+RC_FAIL = 20
 
 
 class RexxMessage:
@@ -671,7 +680,7 @@ class RexxMessage:
     def action(self):
         """The 32-bit action code (`rm_Action`).  High byte is one of
         RXCOMM / RXFUNC / RXCLOSE / RXQUERY; low byte carries flags."""
-        return _c.peek_l(self._msg + 28) & 0xffffffff
+        return _c.peek_l(self._msg + 28) & 0xFFFFFFFF
 
     def reply(self, result=None, rc=RC_OK, secondary=0):
         """Reply to the sender with `(rc, result)`.
@@ -809,8 +818,7 @@ class RexxClient:
             command = command.encode("latin-1")
         rc, result = _c.rexx_client_send(self._handle, self._host, command)
         if check and rc != 0:
-            raise OSError(rc,
-                "rexx %r at %s rc=%d" % (command, self._host, rc))
+            raise OSError(rc, "rexx %r at %s rc=%d" % (command, self._host, rc))
         if check:
             return result if result is not None else b""
         return (rc, result)

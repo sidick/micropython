@@ -30,7 +30,7 @@ denied).  The APSH bits (ARCHIVE / PURE / SCRIPT / HOLD) follow the
 from uos import *  # noqa: F401, F403
 
 # noqa rules: F401 (unused import re-export), F403 (star import).
-from _osamiga import (   # noqa: F401
+from _osamiga import (  # noqa: F401
     chmod,
     getprotect,
     FIBF_READ,
