@@ -83,6 +83,11 @@ bool amiga_stdin_hit_eof(void) {
 // silently drops bytes, which is what garbled test source mid-run over
 // run-tests.py -t. Pulling the whole available burst into our own buffer in
 // one Read() drains fast enough to keep up at much higher line speeds.
+//
+// Default buffer: 1 KiB (compile-time constant). One Read() can sweep up to
+// this many already-queued bytes per refill; larger just means fewer refills
+// on a big burst, smaller costs more refills -- 1 KiB comfortably covers the
+// serial RX at the paced line speeds this port uses.
 #define AMIGA_RX_BUF 1024
 static unsigned char amiga_rx_buf[AMIGA_RX_BUF];
 static int amiga_rx_len;   // bytes currently in amiga_rx_buf
