@@ -46,7 +46,14 @@ Supported features include:
 - `socket` networking via `bsdsocket.library` (AmiTCP, MiamiDx,
   Roadshow, etc.).
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
-  variant, omitted from the size-optimised variants).
+  variant, omitted from the size-optimised variants). Provides the
+  upstream `ssl` surface: `ssl.SSLContext`, the module-level
+  `ssl.wrap_socket(...)` legacy helper, `SSLContext.load_cert_chain`,
+  and `server_side` wrapping. Real `bsdsocket` connections use the
+  AmiSSL fd transport; fileno-less stream objects (`io.BytesIO`,
+  asyncio wrappers) are driven through a memory BIO pair, so the
+  upstream `extmod/ssl_basic`, `ssl_ioctl`, and `ssl_keycert` tests
+  pass unmodified.
 - `urequests` frozen HTTP / HTTPS client.
 - `platform` module with CPython-shaped identity (`system`,
   `machine`, `release`, `python_version`, `platform`) plus
