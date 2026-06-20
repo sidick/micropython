@@ -15,26 +15,16 @@ for algo in ("md5", "sha1", "sha256"):
 # --- one-shot constructor digests ---------------------------------------
 
 # RFC 1321 MD5 test vector "" (empty string).
-assert hashlib.md5(b"").digest() == bytes.fromhex(
-    "d41d8cd98f00b204e9800998ecf8427e"
-)
+assert hashlib.md5(b"").digest() == bytes.fromhex("d41d8cd98f00b204e9800998ecf8427e")
 # RFC 1321 MD5 test vector "abc".
-assert hashlib.md5(b"abc").digest() == bytes.fromhex(
-    "900150983cd24fb0d6963f7d28e17f72"
-)
+assert hashlib.md5(b"abc").digest() == bytes.fromhex("900150983cd24fb0d6963f7d28e17f72")
 # RFC 1321 MD5 test vector "message digest".
-assert hashlib.md5(b"message digest").digest() == bytes.fromhex(
-    "f96b697d7cb7938d525a2f31aaf161d0"
-)
+assert hashlib.md5(b"message digest").digest() == bytes.fromhex("f96b697d7cb7938d525a2f31aaf161d0")
 
 # FIPS 180-1 SHA-1 test vector "" (empty string).
-assert hashlib.sha1(b"").digest() == bytes.fromhex(
-    "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-)
+assert hashlib.sha1(b"").digest() == bytes.fromhex("da39a3ee5e6b4b0d3255bfef95601890afd80709")
 # FIPS 180-1 SHA-1 test vector "abc".
-assert hashlib.sha1(b"abc").digest() == bytes.fromhex(
-    "a9993e364706816aba3e25717850c26c9cd0d89d"
-)
+assert hashlib.sha1(b"abc").digest() == bytes.fromhex("a9993e364706816aba3e25717850c26c9cd0d89d")
 # FIPS 180-1 SHA-1 test vector "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".
 assert hashlib.sha1(
     b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"

@@ -41,11 +41,28 @@ assert socket.SO_RCVTIMEO == 4102
 assert socket.SO_SNDTIMEO == 4101
 
 # Methods + attrs all exist on the type.
-for name in ("connect", "bind", "listen", "accept",
-             "recv", "recvfrom", "send", "sendall", "sendto",
-             "setblocking", "settimeout", "setsockopt",
-             "close", "fileno", "makefile", "getpeername",
-             "read", "readinto", "readline", "write"):
+for name in (
+    "connect",
+    "bind",
+    "listen",
+    "accept",
+    "recv",
+    "recvfrom",
+    "send",
+    "sendall",
+    "sendto",
+    "setblocking",
+    "settimeout",
+    "setsockopt",
+    "close",
+    "fileno",
+    "makefile",
+    "getpeername",
+    "read",
+    "readinto",
+    "readline",
+    "write",
+):
     assert hasattr(socket.socket, name), name
 
 # --- construction fails cleanly when bsdsocket isn't open ----------------

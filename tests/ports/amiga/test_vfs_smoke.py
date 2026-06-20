@@ -13,6 +13,7 @@ import _ospath
 # Pick a scratch root nobody else should be using.
 ROOT = "RAM:vfs_smoke_phase39"
 
+
 # Clean any leftover from a previous interrupted run, then create
 # our scratch tree.
 def _cleanup():

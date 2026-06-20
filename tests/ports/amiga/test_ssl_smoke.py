@@ -25,8 +25,7 @@ assert ssl.CERT_OPTIONAL == 1
 assert ssl.CERT_REQUIRED == 2
 
 # SSLContext method names.
-for name in ("load_verify_locations", "set_default_verify_paths",
-             "wrap_socket", "close"):
+for name in ("load_verify_locations", "set_default_verify_paths", "wrap_socket", "close"):
     assert hasattr(ssl.SSLContext, name), name
 
 # --- construction fails cleanly when AmiSSL isn't open ------------------

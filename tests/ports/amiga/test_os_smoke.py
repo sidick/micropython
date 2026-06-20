@@ -6,8 +6,16 @@ import os
 # ---------- Module surface ----------
 assert hasattr(os, "chmod"), "chmod missing"
 assert hasattr(os, "getprotect"), "getprotect missing"
-for name in ("FIBF_READ", "FIBF_WRITE", "FIBF_EXECUTE", "FIBF_DELETE",
-             "FIBF_ARCHIVE", "FIBF_PURE", "FIBF_SCRIPT", "FIBF_HOLD"):
+for name in (
+    "FIBF_READ",
+    "FIBF_WRITE",
+    "FIBF_EXECUTE",
+    "FIBF_DELETE",
+    "FIBF_ARCHIVE",
+    "FIBF_PURE",
+    "FIBF_SCRIPT",
+    "FIBF_HOLD",
+):
     assert hasattr(os, name), name
     assert isinstance(getattr(os, name), int), name
 
@@ -23,13 +31,14 @@ assert callable(os.walk)
 
 # os.path is the AmigaOS-aware _ospath.
 import _ospath
+
 assert os.path is _ospath, "os.path should be _ospath"
 
 # ---------- _ospath.isabs ----------
 assert _ospath.isabs("Sys:")
 assert _ospath.isabs("Sys:Prefs")
 assert _ospath.isabs("Work:scripts/foo.py")
-assert _ospath.isabs(":foo")           # colon-at-zero is the current-volume form
+assert _ospath.isabs(":foo")  # colon-at-zero is the current-volume form
 assert not _ospath.isabs("foo")
 assert not _ospath.isabs("foo/bar")
 assert not _ospath.isabs("")
@@ -39,7 +48,7 @@ assert _ospath.join("Work:", "scripts") == "Work:scripts", _ospath.join("Work:",
 assert _ospath.join("Work:", "scripts", "foo.py") == "Work:scripts/foo.py"
 assert _ospath.join("Work:scripts", "foo.py") == "Work:scripts/foo.py"
 assert _ospath.join("foo", "bar") == "foo/bar"
-assert _ospath.join("Work:", "bin", "C:tool") == "C:tool"   # absolute resets
+assert _ospath.join("Work:", "bin", "C:tool") == "C:tool"  # absolute resets
 assert _ospath.join("") == ""
 assert _ospath.join("", "foo") == "foo"
 

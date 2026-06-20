@@ -10,10 +10,21 @@ import _amiga
 # --- module surface ------------------------------------------------------
 
 for name in (
-    "alloc_vec", "free_vec",
-    "peek_b", "peek_w", "peek_l", "peek_bytes",
-    "poke_b", "poke_w", "poke_l", "poke_bytes",
-    "MEMF_ANY", "MEMF_PUBLIC", "MEMF_CHIP", "MEMF_FAST", "MEMF_CLEAR",
+    "alloc_vec",
+    "free_vec",
+    "peek_b",
+    "peek_w",
+    "peek_l",
+    "peek_bytes",
+    "poke_b",
+    "poke_w",
+    "poke_l",
+    "poke_bytes",
+    "MEMF_ANY",
+    "MEMF_PUBLIC",
+    "MEMF_CHIP",
+    "MEMF_FAST",
+    "MEMF_CLEAR",
 ):
     assert hasattr(_amiga, name), name
 

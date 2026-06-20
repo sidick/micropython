@@ -54,10 +54,7 @@ with deflate.DeflateIO(buf, deflate.RAW) as g:
     g.write(b"END.")
 streamed = buf.getvalue()
 expected_input = (
-    b"Lorem ipsum dolor sit amet, "
-    + b"consectetur adipiscing elit. " * 10
-    + b""
-    + b"END."
+    b"Lorem ipsum dolor sit amet, " + b"consectetur adipiscing elit. " * 10 + b"" + b"END."
 )
 assert decompress(streamed, deflate.RAW) == expected_input
 

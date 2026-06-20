@@ -16,18 +16,36 @@ import micropython
 
 # --- comparisons against a small-int literal --------------------------
 
+
 @micropython.native
-def lt0(x): return x < 0
+def lt0(x):
+    return x < 0
+
+
 @micropython.native
-def gt0(x): return x > 0
+def gt0(x):
+    return x > 0
+
+
 @micropython.native
-def eq0(x): return x == 0
+def eq0(x):
+    return x == 0
+
+
 @micropython.native
-def ne0(x): return x != 0
+def ne0(x):
+    return x != 0
+
+
 @micropython.native
-def le_one(x): return x <= 1
+def le_one(x):
+    return x <= 1
+
+
 @micropython.native
-def ge_one(x): return x >= 1
+def ge_one(x):
+    return x >= 1
+
 
 assert lt0(-1) is True, lt0(-1)
 assert lt0(0) is False
@@ -46,20 +64,41 @@ assert ge_one(0) is False
 # --- arithmetic against small-int literals at and across the MOVEQ
 # boundary (literal 64 → tagged 129 spills past int8_t) -------------
 
+
 @micropython.native
-def add0(x): return x + 0
+def add0(x):
+    return x + 0
+
+
 @micropython.native
-def add1(x): return x + 1
+def add1(x):
+    return x + 1
+
+
 @micropython.native
-def add63(x): return x + 63   # last MOVEQ-range value
+def add63(x):
+    return x + 63  # last MOVEQ-range value
+
+
 @micropython.native
-def add64(x): return x + 64   # first long-form value
+def add64(x):
+    return x + 64  # first long-form value
+
+
 @micropython.native
-def add_neg64(x): return x + (-64)  # negative MOVEQ-range
+def add_neg64(x):
+    return x + (-64)  # negative MOVEQ-range
+
+
 @micropython.native
-def sub1(x): return x - 1
+def sub1(x):
+    return x - 1
+
+
 @micropython.native
-def mul2(x): return x * 2
+def mul2(x):
+    return x * 2
+
 
 assert add0(5) == 5
 assert add1(5) == 6
@@ -71,10 +110,16 @@ assert mul2(5) == 10
 
 # --- two-arg ops still work (the path that didn't depend on MOVEQ) --
 
+
 @micropython.native
-def two_lt(a, b): return a < b
+def two_lt(a, b):
+    return a < b
+
+
 @micropython.native
-def two_add(a, b): return a + b
+def two_add(a, b):
+    return a + b
+
 
 assert two_lt(3, 5) is True
 assert two_lt(5, 3) is False
@@ -82,14 +127,17 @@ assert two_add(2, 3) == 5
 
 # --- viper int-typed comparisons (separate compile path) ------------
 
+
 @micropython.viper
 def viper_lt(a: int, b: int) -> int:
     return 1 if a < b else 0
+
 
 assert viper_lt(3, 5) == 1
 assert viper_lt(5, 3) == 0
 
 # --- branch on small-int literal must not corrupt state -------------
+
 
 @micropython.native
 def abs_native(x):
@@ -97,11 +145,13 @@ def abs_native(x):
         return -x
     return x
 
+
 assert abs_native(-7) == 7
 assert abs_native(7) == 7
 assert abs_native(0) == 0
 
 # --- nested loops with literal-bounded conditions --------------------
+
 
 @micropython.native
 def sum_lt(n):
@@ -111,6 +161,7 @@ def sum_lt(n):
         total = total + i
         i = i + 1
     return total
+
 
 assert sum_lt(10) == 45  # 0+1+...+9
 assert sum_lt(0) == 0
