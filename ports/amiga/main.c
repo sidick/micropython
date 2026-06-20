@@ -403,6 +403,17 @@ static int run_str(const char *str) {
 // and deliberately left out of here (it's a device, not VM state, and must
 // already be open before mp_init runs).
 static void amiga_runtime_init(void *initial_ptr, size_t initial_heap) {
+    // Discard any pending Ctrl-C break left on the task. Over the serial raw
+    // REPL, pyboard interrupts before every test with a Ctrl-C; the AUX
+    // console latches that as the AmigaOS SIGBREAKF_CTRL_C task signal even
+    // in raw mode, and the VM hook (amiga_check_ctrl_c) would otherwise fire
+    // it partway into the *next* test -- a spurious KeyboardInterrupt that
+    // only bit long / high-output tests (short ones finished before the hook
+    // checked). A soft reset starts a fresh VM, so a stale break here is
+    // never wanted; a genuine Ctrl-C during a running test is latched after
+    // this point and still interrupts normally.
+    SetSignal(0L, SIGBREAKF_CTRL_C);
+
     #if MICROPY_ENABLE_GC
     gc_init(initial_ptr, (char *)initial_ptr + initial_heap);
     #endif

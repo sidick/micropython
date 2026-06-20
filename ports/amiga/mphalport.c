@@ -74,6 +74,52 @@ bool amiga_stdin_hit_eof(void) {
     return e;
 }
 
+// Bulk-buffered serial input. The console is in raw mode during the REPL
+// (main.c SetMode(stdin_fh, 1)), so Read() returns the bytes currently
+// available rather than waiting for a line terminator. FGetC's byte-at-a-
+// time path is a DOS packet round-trip per character on an interactive
+// (unbuffered) stream, too slow to drain the serial RX during a fast burst
+// -- the flow-control-less TCP link then overruns the emulated UART and
+// silently drops bytes, which is what garbled test source mid-run over
+// run-tests.py -t. Pulling the whole available burst into our own buffer in
+// one Read() drains fast enough to keep up at much higher line speeds.
+#define AMIGA_RX_BUF 1024
+static unsigned char amiga_rx_buf[AMIGA_RX_BUF];
+static int amiga_rx_len;   // bytes currently in amiga_rx_buf
+static int amiga_rx_pos;   // next byte to hand out
+
+// Block for at least one byte, then sweep up everything else already
+// buffered without blocking. Read(Input(), buf, n) on the raw console
+// returns the bytes available now (<= n); WaitForChar(.., 0) gates the
+// follow-up reads so we never block waiting to fill the whole buffer.
+// Returns 0 on success, -1 on genuine EOF / error.
+static int amiga_rx_refill(void) {
+    LONG n = Read(Input(), amiga_rx_buf, 1);
+    if (n <= 0) {
+        return -1;
+    }
+    int len = (int)n;
+    while (len < AMIGA_RX_BUF && WaitForChar(Input(), 0)) {
+        n = Read(Input(), amiga_rx_buf + len, AMIGA_RX_BUF - len);
+        if (n <= 0) {
+            break;
+        }
+        len += (int)n;
+    }
+    amiga_rx_len = len;
+    amiga_rx_pos = 0;
+    return 0;
+}
+
+static int amiga_rx_byte(void) {
+    if (amiga_rx_pos >= amiga_rx_len) {
+        if (amiga_rx_refill() < 0) {
+            return -1;
+        }
+    }
+    return amiga_rx_buf[amiga_rx_pos++];
+}
+
 int mp_hal_stdin_rx_chr(void) {
     // AmigaOS console emits CSI sequences as a single byte 0x9B followed by
     // parameters, where xterm-style consoles use ESC '['. shared/readline/
@@ -87,14 +133,11 @@ int mp_hal_stdin_rx_chr(void) {
         return c;
     }
 
-    // FGetC blocks efficiently (suspends the task) until a key arrives.
-    // In raw mode, Ctrl+C arrives as ASCII 3 so no separate break-signal
-    // poll is needed here; the VM hook handles Ctrl+C during computation.
-    LONG c = FGetC(Input());
+    int c = amiga_rx_byte();
     if (amiga_stdin_first_nl_skip) {
         amiga_stdin_first_nl_skip = false;
         if (c == '\r' || c == '\n') {
-            c = FGetC(Input());
+            c = amiga_rx_byte();
         }
     }
     if (c < 0) {
@@ -108,10 +151,10 @@ int mp_hal_stdin_rx_chr(void) {
         amiga_stdin_pending = '[';
         return 0x1b;  // ESC
     }
-    if ((int)c == mp_interrupt_char) {
+    if (c == mp_interrupt_char) {
         mp_sched_keyboard_interrupt();
     }
-    return (int)c;
+    return c;
 }
 
 // One-shot banner injection: when armed, fires after the next N writes.
