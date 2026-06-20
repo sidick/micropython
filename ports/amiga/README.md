@@ -211,10 +211,12 @@ wiki page.
 Limitations
 -----------
 
-- `@micropython.native` is fully supported (including `try`/`except`/
-  `with`, nested functions, closures and generators).
-- `@micropython.viper` is limited to a single register local, and 16/32-bit
-  pointer load/store ops aren't emitted yet. See the
+- `@micropython.native` and `@micropython.viper` are both fully supported
+  (including `try`/`except`/`with`, nested functions, closures, generators,
+  and viper integer/pointer ops). Viper holds only one local in a register
+  (others spill to the stack — a performance, not correctness, limit), and
+  `ptr16`/`ptr32` accesses use the machine's native big-endian byte order.
+  See the
   [Amiga port design](https://github.com/sidick/micropython/wiki/Amiga-port-design)
   wiki page.
 - TLS / SSL requires the AmiSSL v5 install at runtime (AmigaShell
