@@ -95,7 +95,7 @@ _SKIP_NAMES = frozenset(
 def _basename(path):
     # AmigaOS uses ":" between volume and rest, and "/" between dirs.
     i = max(path.rfind("/"), path.rfind(":"))
-    return path[i + 1:] if i >= 0 else path
+    return path[i + 1 :] if i >= 0 else path
 
 
 def should_skip(path):
@@ -301,9 +301,7 @@ def main():
         print("usage: micropython amiga-runtests.py <test_dir> [<result_dir>]")
         return
     test_dir = sys.argv[1]
-    result_dir = _normalise_dir(
-        sys.argv[2] if len(sys.argv) > 2 else RESULT_DIR_DEFAULT
-    )
+    result_dir = _normalise_dir(sys.argv[2] if len(sys.argv) > 2 else RESULT_DIR_DEFAULT)
 
     # Pre-check the directory so an unmounted volume / missing path gives
     # a clean error instead of an AmigaDOS auto-requester ("Please insert
@@ -389,11 +387,7 @@ def main():
                 save_failure(name, result_dir)
 
     total = passed + failed + skipped
-    print(
-        "\n{} passed, {} failed, {} skipped / {} total".format(
-            passed, failed, skipped, total
-        )
-    )
+    print("\n{} passed, {} failed, {} skipped / {} total".format(passed, failed, skipped, total))
     if failed:
         print("Failure artefacts in " + result_dir)
 
