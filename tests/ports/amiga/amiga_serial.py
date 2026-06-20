@@ -237,10 +237,18 @@ class AmigaSerial:
 
     # -- REPL --------------------------------------------------------
 
-    def enter_repl(self, command="micropython", timeout=20.0):
+    def enter_repl(self, command=None, timeout=20.0):
         """Launch micropython from the shell and wait for the ">>> "
         prompt. Returns the REPL banner text. If a prior session already
-        left us in the REPL, returns "" without relaunching."""
+        left us in the REPL, returns "" without relaunching.
+
+        The launch command defaults to "micropython" but can be overridden
+        with the AMIGA_SERIAL_MP env var, e.g.
+        AMIGA_SERIAL_MP="micropython -X maxheap=8M" to cap the GC heap so
+        out-of-memory tests can't starve AmigaOS of the RAM its serial I/O
+        needs (which otherwise desyncs the console)."""
+        if command is None:
+            command = os.environ.get("AMIGA_SERIAL_MP", "micropython")
         if self.sync(timeout=timeout) == "repl":
             return ""
         self.send(command.encode() + EOL)
