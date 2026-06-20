@@ -3,7 +3,7 @@
  *
  * The MIT License (MIT)
  *
- * Copyright (c) 2025 Simon Dick
+ * Copyright (c) 2026 Simon Dick
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,24 +24,25 @@
  * THE SOFTWARE.
  */
 
-// Motorola 68k (68020+) native code emitter — thin wrapper around emitnative.c
+#include "py/mpstate.h"
 
-#include "py/mpconfig.h"
+#if MICROPY_NLR_M68K
 
-#if MICROPY_EMIT_68K
+// nlr_push() and nlr_jump_tail() are hand-written assembly in nlr68k.S.
+// This file provides nlr_jump(), which must run the MP_NLR_JUMP_HEAD
+// bookkeeping (it touches MP_STATE_THREAD, the jump-callback chain and the
+// pystack) in C, then hands the unwind buffer to nlr_jump_tail to restore
+// the saved register set and resume at the matching nlr_push call site.
+//
+// For reference, the AmigaOS/m68k callee-save registers are:
+//      D2-D7 / A2-A6 (D0/D1/A0/A1 are scratch, A7=SP)
 
-// Export the generic assembler API macros from asm68k.h
-#define GENERIC_ASM_API (1)
-#include "py/asm68k.h"
+MP_NORETURN void nlr_jump_tail(nlr_buf_t *top);
 
-// Word index within nlr_buf_t for the exception handler PC local.
-// This is regs[0], where ports/amiga/nlr68k.S saves REG_LOCAL_1 (D7).
-// The native emitter carries the exception handler PC in D7 across the
-// nlr_push call and reads it back from this slot after a non-local return.
-#define NLR_BUF_IDX_LOCAL_1 (2)
+MP_NORETURN void nlr_jump(void *val) {
+    MP_NLR_JUMP_HEAD(val, top)
 
-#define N_68K (1)
-#define EXPORT_FUN(name) emit_native_68k_##name
-#include "py/emitnative.c"
+    nlr_jump_tail(top);
+}
 
-#endif // MICROPY_EMIT_68K
+#endif // MICROPY_NLR_M68K

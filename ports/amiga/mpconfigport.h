@@ -32,10 +32,10 @@
 // under ports/amiga/variants/<variant>/.
 #include "mpconfigvariant.h"
 
-// Use setjmp-based NLR — no 68k native NLR implementation exists yet.
-// (MicroPython would fall back to this automatically for an unknown arch,
-// but being explicit avoids any future mis-detection.)
-#define MICROPY_NLR_SETJMP                  (1)
+// NLR: py/nlr.h auto-detects __m68k__ and selects the register-based NLR
+// implemented in ports/amiga/nlr68k.S + nlr68k.c. This is required for
+// try/except/with to work inside @micropython.native code, where the
+// exception handler PC is carried in REG_LOCAL_1 (D7) across nlr_push.
 
 #ifndef MICROPY_CONFIG_ROM_LEVEL
 #define MICROPY_CONFIG_ROM_LEVEL            MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES

@@ -47,6 +47,7 @@
 #define MICROPY_NLR_NUM_REGS_RV32I          (14)
 #define MICROPY_NLR_NUM_REGS_RV64I          (14)
 #define MICROPY_NLR_NUM_REGS_LOONG64        (13)
+#define MICROPY_NLR_NUM_REGS_M68K          (13)
 
 // *FORMAT-OFF*
 
@@ -108,6 +109,9 @@
     #else
         #error Unsupported Loongarch variant.
     #endif
+#elif defined(__m68k__)
+    #define MICROPY_NLR_M68K (1)
+    #define MICROPY_NLR_NUM_REGS (MICROPY_NLR_NUM_REGS_M68K)
 #else
     #define MICROPY_NLR_SETJMP (1)
     //#warning "No native NLR support for this arch, using setjmp implementation"
