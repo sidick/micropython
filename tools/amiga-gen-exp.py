@@ -48,9 +48,7 @@ def gather_tests(dirs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("dirs", nargs="+", help="test directories to process")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="print per-file progress"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="print per-file progress")
     parser.add_argument(
         "--timeout",
         type=float,

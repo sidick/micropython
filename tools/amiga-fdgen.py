@@ -136,8 +136,22 @@ def parse_fd(path):
                 )
                 continue
             for r in regs:
-                if r not in {"d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7",
-                             "a0", "a1", "a2", "a3", "a4", "a5"}:
+                if r not in {
+                    "d0",
+                    "d1",
+                    "d2",
+                    "d3",
+                    "d4",
+                    "d5",
+                    "d6",
+                    "d7",
+                    "a0",
+                    "a1",
+                    "a2",
+                    "a3",
+                    "a4",
+                    "a5",
+                }:
                     warnings.append(
                         f"{path}:{lineno}: {name}: register {r!r} not in "
                         f"D0-D7/A0-A5 (a6 is the library base, a7 is sp); "
@@ -145,13 +159,15 @@ def parse_fd(path):
                     )
                     break
             else:
-                functions.append({
-                    "name": name,
-                    "lvo": lvo,
-                    "regs": tuple(regs),
-                    "public": public,
-                    "lineno": lineno,
-                })
+                functions.append(
+                    {
+                        "name": name,
+                        "lvo": lvo,
+                        "regs": tuple(regs),
+                        "public": public,
+                        "lineno": lineno,
+                    }
+                )
 
     return base, functions, warnings
 
@@ -192,33 +208,45 @@ def emit_python(libraries, out, sources):
         "\n"
     )
     total_funcs = sum(len(fns) for fns in libraries.values())
-    out.write(f"# {len(libraries)} libraries / devices / resources, "
-              f"{total_funcs} function signatures.\n\n")
+    out.write(
+        f"# {len(libraries)} libraries / devices / resources, "
+        f"{total_funcs} function signatures.\n\n"
+    )
     out.write("LIBRARIES = {\n")
     for libname in sorted(libraries):
         out.write(f"    {libname!r}: {{\n")
         for fname in sorted(libraries[libname]):
             lvo, regs, since = libraries[libname][fname]
             regs_csv = ",".join(regs)
-            out.write(
-                f"        {fname!r}: ({lvo}, {regs_csv!r}, {since!r}),\n")
+            out.write(f"        {fname!r}: ({lvo}, {regs_csv!r}, {since!r}),\n")
         out.write("    },\n")
     out.write("}\n")
 
 
 AMIGA_OS_RELEASE_ORDER = (
-    "1.0", "1.1", "1.2", "1.3",
-    "2.0", "2.04", "2.1",
-    "3.0", "3.1",
-    "3.5",          # Haage & Partner, 1999
-    "3.9",          # Haage & Partner, 2001 — last of the original line
+    "1.0",
+    "1.1",
+    "1.2",
+    "1.3",
+    "2.0",
+    "2.04",
+    "2.1",
+    "3.0",
+    "3.1",
+    "3.5",  # Haage & Partner, 1999
+    "3.9",  # Haage & Partner, 2001 — last of the original line
     # AmigaOS development resumed under Hyperion / AmigaOS Foundation
     # several years later, restarting from 3.1.4.  Calendar-wise these
     # are NEWER than 3.9, but numeric-wise they're older — the source
     # of the sort-order trap this table is here to fix.
-    "3.1.4", "3.1.4.1",
-    "3.2", "3.2.1", "3.2.2", "3.2.2.1", "3.2.3",
-    "3.3",          # forthcoming Hyperion release at time of writing
+    "3.1.4",
+    "3.1.4.1",
+    "3.2",
+    "3.2.1",
+    "3.2.2",
+    "3.2.2.1",
+    "3.2.3",
+    "3.3",  # forthcoming Hyperion release at time of writing
 )
 
 # Lookup table: version -> 0-based chronological position.
@@ -278,18 +306,32 @@ def main(argv=None):
         description=__doc__.splitlines()[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--fd-dir", action="append", metavar="[VERSION=]PATH",
-                   help=("directory of .fd files; may be given multiple "
-                         "times.  Prefix with `VERSION=` to tag every "
-                         "function found there with that NDK version. "
-                         f"Defaults to a single, untagged scan of "
-                         f"{DEFAULT_FD_DIR}."))
-    p.add_argument("--output", "-o", default="-",
-                   help="output file path, or '-' for stdout (default)")
-    p.add_argument("--include-private", action="store_true",
-                   help="emit ##private functions too (default: drop them)")
-    p.add_argument("--quiet", "-q", action="store_true",
-                   help="suppress per-file warnings; only print the final summary")
+    p.add_argument(
+        "--fd-dir",
+        action="append",
+        metavar="[VERSION=]PATH",
+        help=(
+            "directory of .fd files; may be given multiple "
+            "times.  Prefix with `VERSION=` to tag every "
+            "function found there with that NDK version. "
+            f"Defaults to a single, untagged scan of "
+            f"{DEFAULT_FD_DIR}."
+        ),
+    )
+    p.add_argument(
+        "--output", "-o", default="-", help="output file path, or '-' for stdout (default)"
+    )
+    p.add_argument(
+        "--include-private",
+        action="store_true",
+        help="emit ##private functions too (default: drop them)",
+    )
+    p.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="suppress per-file warnings; only print the final summary",
+    )
     args = p.parse_args(argv)
 
     raw_sources = args.fd_dir or [DEFAULT_FD_DIR]
@@ -357,8 +399,7 @@ def main(argv=None):
             out.close()
 
     summary_parts = [
-        f"amiga-fdgen: {total_fd_files} .fd files across "
-        f"{len(sources)} source dir(s)",
+        f"amiga-fdgen: {total_fd_files} .fd files across {len(sources)} source dir(s)",
         f"{len(libraries)} openable names",
         f"{sum(len(v) for v in libraries.values())} functions emitted",
     ]
