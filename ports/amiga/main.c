@@ -870,23 +870,18 @@ static int amiga_main(int argc_unused, char **argv_unused) {
 
         } else {
             // Positional argument: treat as a script file.
-            // Add the script's directory to the front of sys.path so
-            // `from sibling_module import ...` works. If the script
-            // was passed by basename, the directory component is
-            // empty — fall back to the cwd (matches CPython, which
-            // sets sys.path[0] to the script's resolved absolute dir).
+            // Set sys.path[0] to the script's directory so
+            // `from sibling_module import ...` works. When the script is
+            // passed by basename the directory component is empty; leave
+            // it as "" -- the MicroPython convention for "the current
+            // directory", which VfsAmiga resolves relative to cwd. Using
+            // the absolute cwd here (NameFromLock) instead made imported
+            // modules' __file__ absolute, diverging from CPython and the
+            // unix port (see import/import_file.py).
             char dir[256];
             path_dir(argv[a], dir, sizeof(dir));
-            if (!dir[0]) {
-                struct Process *me_p = (struct Process *)FindTask(NULL);
-                if (!NameFromLock(me_p->pr_CurrentDir, (STRPTR)dir, sizeof(dir))) {
-                    dir[0] = '\0';
-                }
-            }
-            if (dir[0]) {
-                mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
-                    mp_obj_new_str(dir, strlen(dir)));
-            }
+            mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
+                mp_obj_new_str(dir, strlen(dir)));
             set_sys_argv(argv, argc, a);
             exit_code = pyexec_file(argv[a]);
             ran_something = true;
@@ -913,12 +908,9 @@ static int amiga_main(int argc_unused, char **argv_unused) {
         // files come back via amiga.wb_selected_files()).
         char dir[256];
         path_dir(wb_script_to_run, dir, sizeof(dir));
-        if (!dir[0]) {
-            struct Process *me_p = (struct Process *)FindTask(NULL);
-            if (!NameFromLock(me_p->pr_CurrentDir, (STRPTR)dir, sizeof(dir))) {
-                dir[0] = '\0';
-            }
-        }
+        // Same convention as the positional-script path: leave a basename's
+        // directory as "" (cwd, relative) rather than the absolute cwd, so
+        // sibling-import __file__ matches CPython / the unix port.
         if (dir[0]) {
             mp_obj_list_store(mp_sys_path, MP_OBJ_NEW_SMALL_INT(0),
                 mp_obj_new_str(dir, strlen(dir)));
