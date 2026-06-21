@@ -47,6 +47,10 @@ Supported features include:
   Roadshow, etc.), including `select.poll()` / `select.select()` over
   sockets (the socket's `MP_STREAM_POLL` ioctl is backed by a
   zero-timeout `WaitSelect()`).
+- `asyncio` — the cooperative event loop, driven by `select.poll()`
+  over `bsdsocket` and idling in `mp_event_wait` (no OS threads). Tasks,
+  `sleep`, `gather`, `Event`/`Lock`, `wait_for`, and `open_connection`
+  (plain TCP) all work; TLS streams are pending the SSL poll hookup.
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
   variant, omitted from the size-optimised variants). Provides the
   upstream `ssl` surface: `ssl.SSLContext`, `ssl.OPENSSL_VERSION`, the
