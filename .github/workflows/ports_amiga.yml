@@ -36,28 +36,36 @@ jobs:
       - name: Confirm toolchain
         run: m68k-amigaos-gcc --version
 
+      - name: Cache AmiSSL SDK
+        # The fetcher pins the version; key on the version string baked
+        # into the script so a version bump automatically invalidates
+        # the cache.
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/amissl-sdk
+          key: amissl-sdk-${{ hashFiles('ports/amiga/tools/amiga-fetch-amissl-sdk.sh') }}
+
+      - name: Fetch AmiSSL SDK
+        # Idempotent. Downloads on cache miss, ~0.25 s short-circuit
+        # on cache hit. Must run BEFORE 'make submodules' because the
+        # Makefile's MICROPY_PY_AMIGA_SSL=1 guard fires on every make
+        # invocation, including the submodule sub-target. Default cache
+        # dir is $HOME/.cache/amissl-sdk which matches the actions/cache
+        # path above.
+        #
+        # The Makefile default AMISSL_SDK_DEV points at /amissl-cache,
+        # which is where ports/amiga/tools/amiga-build.sh bind-mounts the host cache
+        # locally. CI doesn't bind-mount, so symlink the host cache into
+        # /amissl-cache so the Makefile's default path resolves.
+        run: |
+          ports/amiga/tools/amiga-fetch-amissl-sdk.sh
+          ln -sfn "$HOME/.cache/amissl-sdk" /amissl-cache
+
       - name: Init required submodules
         # The port's manifest.py only freezes ports/amiga/modules, but the
         # frozen-content build rule unconditionally checks for
         # lib/micropython-lib/README.md whenever FROZEN_MANIFEST is set.
         run: make -C ports/amiga submodules
-
-      - name: Cache AmiSSL SDK
-        # The fetcher pins the version; key on the version string baked
-        # into the script so a version bump automatically invalidates
-        # the cache.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/amissl-sdk
-          key: amissl-sdk-${{ hashFiles('tools/amiga-fetch-amissl-sdk.sh') }}
-
-      - name: Fetch AmiSSL SDK
-        # Idempotent. Downloads on cache miss, ~0.25 s short-circuit
-        # on cache hit. Phase 28 code consumes the headers + stubs;
-        # earlier variants don't, but the fetcher still runs to keep
-        # the cache warm. Default cache dir is $HOME/.cache/amissl-sdk
-        # which matches the actions/cache path above.
-        run: tools/amiga-fetch-amissl-sdk.sh
 
       - name: Build mpy-cross
         run: make -C mpy-cross -j$(nproc)
@@ -71,23 +79,46 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Upload standard
-        uses: actions/upload-artifact@v7
-        with:
-          name: micropython-amiga-standard-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-standard/micropython
-          if-no-files-found: error
+      - name: Install lha
+        # `lha` is a virtual package on Ubuntu; `lhasa` is extract-only,
+        # so we install `jlha-utils` for the `jlha` creator.
+        run: apt-get update && apt-get install -y --no-install-recommends jlha-utils
 
-      - name: Upload 68020fpu
-        uses: actions/upload-artifact@v7
-        with:
-          name: micropython-amiga-68020fpu-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-68020fpu/micropython
-          if-no-files-found: error
+      - name: Stage release tree
+        # Assemble a single deployment-ready tree:
+        #   README.md                     (port README at top)
+        #   icons/python_script.info      (WBPROJECT icon to rename)
+        #   examples/                     (Amiga-port examples)
+        #   micropython.<variant>         (each variant binary)
+        #   micropython.<variant>.info    (WBTOOL icon for that variant)
+        run: |
+          set -e
+          mkdir -p release/icons release/examples
+          cp ports/amiga/README.md release/
+          cp ports/amiga/python_script.info release/icons/
+          cp -a examples/amiga/. release/examples/
+          for v in standard 68020fpu 68040; do
+            cp ports/amiga/build-$v/micropython release/micropython.$v
+            cp ports/amiga/micropython.info release/micropython.$v.info
+          done
+          ls -laR release/
 
-      - name: Upload 68040
+      - name: Pack LHA
+        run: |
+          set -e
+          archive="micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}.lha"
+          cd release
+          # `jlha a` adds files (recursive via -r); -q suppresses
+          # progress chatter. Archive lives one level up so its own
+          # path isn't in the file list.
+          jlha -aq ../$archive .
+          cd ..
+          ls -la "$archive"
+          jlha -v "$archive"
+
+      - name: Upload LHA
         uses: actions/upload-artifact@v7
         with:
-          name: micropython-amiga-68040-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
-          path: ports/amiga/build-68040/micropython
+          name: micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}
+          path: micropython-amiga-${{ steps.refname.outputs.value }}-${{ steps.sha.outputs.short }}.lha
           if-no-files-found: error

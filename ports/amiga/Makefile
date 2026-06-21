@@ -19,7 +19,7 @@ include ../../py/mkenv.mk
 # Cross-compile with bebbo GCC (https://franke.ms/git/bebbo/amiga-gcc).
 # The toolchain must be installed with 'make all' or 'make clib2 ndk' —
 # 'make min' alone does not include C library headers and will not compile.
-CROSS_COMPILE = m68k-amigaos-
+CROSS_COMPILE ?= m68k-amigaos-
 
 # qstr definitions (must come before including py.mk)
 QSTR_DEFS = qstrdefsport.h
@@ -98,7 +98,7 @@ LDFLAGS += -Wl,--wrap=pow,--wrap=tgamma
 
 # AmiSSL v5 TLS (Phase 28). Every variant inherits the default and
 # links -lamisslstubs. The SDK headers and the libamisslstubs.a archive
-# come from the host cache populated by tools/amiga-fetch-amissl-sdk.sh
+# come from the host cache populated by ports/amiga/tools/amiga-fetch-amissl-sdk.sh
 # and bind-mounted into the container at /amissl-cache. Override
 # AMISSL_SDK_DEV when building natively against a different install.
 MICROPY_PY_AMIGA_SSL ?= 1
@@ -107,7 +107,7 @@ AMISSL_SDK_DEV ?= /amissl-cache/latest/AmiSSL/Developer
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 ifeq ($(wildcard $(AMISSL_SDK_DEV)/include/openssl/ssl.h),)
 $(error MICROPY_PY_AMIGA_SSL=1 but AmiSSL SDK not found at \
-  $(AMISSL_SDK_DEV)/include/openssl/ssl.h. Run tools/amiga-fetch-amissl-sdk.sh \
+  $(AMISSL_SDK_DEV)/include/openssl/ssl.h. Run ports/amiga/tools/amiga-fetch-amissl-sdk.sh \
   first, override AMISSL_SDK_DEV, or pass MICROPY_PY_AMIGA_SSL=0)
 endif
 CFLAGS += -I$(AMISSL_SDK_DEV)/include -DMICROPY_PY_AMIGA_SSL=1

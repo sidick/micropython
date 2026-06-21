@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tools/amiga-fetch-amissl-sdk.sh — fetch + unpack the AmiSSL v5 SDK
+# ports/amiga/tools/amiga-fetch-amissl-sdk.sh — fetch + unpack the AmiSSL v5 SDK
 # for use by ports/amiga's TLS support (Phase 28).
 #
 # Designed to run **inside** the bebbo amiga-gcc container, where lha
 # and curl are already available. Local container builds invoke this
-# script via tools/amiga-build.sh (which bind-mounts the cache); the
+# script via ports/amiga/tools/amiga-build.sh (which bind-mounts the cache); the
 # CI workflow invokes it directly in its container step.
 #
 # Idempotent: downloads + extracts only when the pinned-version
@@ -14,7 +14,7 @@
 # the version string.
 #
 # Usage:
-#   tools/amiga-fetch-amissl-sdk.sh
+#   ports/amiga/tools/amiga-fetch-amissl-sdk.sh
 #
 # Environment:
 #   AMISSL_VERSION       override the pinned version (default 5.27)
