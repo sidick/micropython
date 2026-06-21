@@ -94,6 +94,8 @@ PY_CORE_O_BASENAME = $(addprefix py/,\
 	nlrrv32.o \
 	nlrrv64.o \
 	nlrloong64.o \
+	nlr68k.o \
+	nlr68k_jump.o \
 	nlrsetjmp.o \
 	malloc.o \
 	gc.o \
@@ -128,7 +130,7 @@ PY_CORE_O_BASENAME = $(addprefix py/,\
 	emitnrv32.o \
 	emitinlinerv32.o \
 	asm68k.o \
-	emit68k.o \
+	emitn68k.o \
 	emitndebug.o \
 	formatfloat.o \
 	parsenumbase.o \

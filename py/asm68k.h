@@ -619,7 +619,7 @@ void asm_68k_exit(asm_68k_t *as);
 void asm_68k_end_pass(asm_68k_t *as);
 
 // ---------------------------------------------------------------------------
-// Higher-level helpers used from asm68k.c / emit68k.c
+// Higher-level helpers used from asm68k.c / emitn68k.c
 // ---------------------------------------------------------------------------
 void asm_68k_emit_call_ind(asm_68k_t *as, mp_uint_t index);
 void asm_68k_emit_jump(asm_68k_t *as, mp_uint_t label);
@@ -636,7 +636,7 @@ void asm_68k_emit_load_reg_reg_reg(asm_68k_t *as, mp_uint_t rd, mp_uint_t rs1, m
 void asm_68k_emit_store_reg_reg_reg(asm_68k_t *as, mp_uint_t rs_val, mp_uint_t rs1, mp_uint_t rs2, mp_uint_t op_size);
 
 // ---------------------------------------------------------------------------
-// GENERIC_ASM_API  — consumed by emitnative.c via #include from emit68k.c
+// GENERIC_ASM_API  — consumed by emitnative.c via #include from emitn68k.c
 // ---------------------------------------------------------------------------
 #ifdef GENERIC_ASM_API
 
