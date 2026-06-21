@@ -582,9 +582,9 @@ static void emit_native_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scop
         // Store in the first machine-word an index used to the function's prelude.
         // This is used at runtime by mp_obj_fun_native_get_prelude_ptr().
         // mp_asm_base_data() emits the word little-endian, but this slot is read
-        // back as a native uintptr_t; on big-endian (N_68K) byte-swap so the
+        // back as a native uintptr_t; on a big-endian target byte-swap so the
         // bytes land in the machine's native order.
-        #if N_68K
+        #if MP_ENDIANNESS_BIG
         mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)__builtin_bswap32(emit->prelude_ptr_index));
         #else
         mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)emit->prelude_ptr_index);
@@ -593,7 +593,7 @@ static void emit_native_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scop
         if (emit->scope->scope_flags & MP_SCOPE_FLAG_GENERATOR) {
             // Same big-endian fix as the prelude index above; read back as a
             // native uintptr_t by the generator-resume path.
-            #if N_68K
+            #if MP_ENDIANNESS_BIG
             mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)__builtin_bswap32(emit->start_offset));
             #else
             mp_asm_base_data(&emit->as->base, ASM_WORD_SIZE, (uintptr_t)emit->start_offset);
@@ -655,10 +655,12 @@ static void emit_native_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scop
             // Set code_state.n_state.
             // n_state is a uint16_t, but the emitter writes a full uintptr_t-sized slot.
             // On little-endian the value naturally lands in the correct bytes.
-            // On big-endian (N_68K) the uint16_t occupies the upper half of the word,
-            // so shift the value left by 16 to place it in the correct byte positions.
-            #if N_68K
-            emit_native_mov_state_imm_via(emit, emit->code_state_start + OFFSETOF_CODE_STATE_N_STATE, (mp_uint_t)emit->n_state << 16, REG_ARG_1);
+            // On a big-endian target the uint16_t occupies the most-significant
+            // bytes of the word, so shift it up into place. The shift is sized
+            // from the word width (== 16 on the 32-bit big-endian targets that
+            // currently use this path).
+            #if MP_ENDIANNESS_BIG
+            emit_native_mov_state_imm_via(emit, emit->code_state_start + OFFSETOF_CODE_STATE_N_STATE, (mp_uint_t)emit->n_state << (8 * (sizeof(mp_uint_t) - sizeof(uint16_t))), REG_ARG_1);
             #else
             emit_native_mov_state_imm_via(emit, emit->code_state_start + OFFSETOF_CODE_STATE_N_STATE, emit->n_state, REG_ARG_1);
             #endif
