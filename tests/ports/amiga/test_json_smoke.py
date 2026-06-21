@@ -1,15 +1,15 @@
-# json smoke test for the port-local modjson.
+# json smoke test for the port.
 #
-# ports/amiga/modjson.c is a port-local replacement for upstream
-# extmod/modjson.c -- the upstream version uses a stack-allocated
-# mp_obj_stringio_t threaded through the stream protocol, which
-# bebbo gcc on 68k aligns to 2 bytes inside stack frames. The VM's
-# mp_obj_is_obj() check requires 4-byte alignment on the tagged
-# pointer encoding, so under bebbo the upstream code intermittently
-# faults. The port-local version reads directly from the input
-# buffer (mod_json_loads) and skips the stringio wrapper entirely.
-# This test pins the parse/serialise contract to make sure the
-# rewrite stays semantically equivalent to CPython's json module.
+# The port uses the unmodified upstream extmod/modjson.c. That code's
+# json.loads() wraps the input in a stack-allocated mp_obj_stringio_t
+# and threads it through the stream protocol; on 68k a stack object is
+# only 2-byte aligned by default, but the VM's mp_obj_is_obj() check
+# requires the tagged pointer to be 4-byte aligned. The port satisfies
+# this with MICROPY_OBJ_BASE_ALIGNMENT = aligned(4) (mpconfigport.h),
+# which forces 4-byte alignment on every mp_obj_base_t -- and hence on
+# every struct that embeds one, wherever it is allocated. This test is
+# a regression guard confirming the stack-stringio loads() path works
+# on 68k under that setting, matching CPython's json module.
 
 import json
 import io
@@ -71,7 +71,7 @@ assert json.loads(r'"中"') == "中"  # CJK ideograph
 
 # --- loads: malformed input must raise ---------------------------------
 
-# Note: the port-local parser is intentionally lenient on a few
+# Note: MicroPython's json parser is intentionally lenient on a few
 # edge cases that CPython rejects (e.g. it parses `{"a"}` as `{}`).
 # This list only covers cases that DO raise.
 for bad in ("{", "[1, 2", '"unterminated', "tru", "fals", "nul", "1.2.3"):
