@@ -1,12 +1,12 @@
 # @micropython.native 68k non-local-return (NLR) smoke test.
 #
-# Regression test for ports/amiga/nlr68k.S + nlr68k_jump.c, the 68k
+# Regression test for py/nlr68k.S + py/nlr68k_jump.c, the 68k
 # register-based NLR that replaced the setjmp fallback. Under setjmp the
 # native emitter's exception-handler PC (carried in REG_LOCAL_1 = D7 across
 # nlr_push) landed inside the jmp_buf that setjmp overwrote, so every
 # try/except/with inside @micropython.native code faulted the CPU
 # (Invalid Memory Access). With nlr68k.S, D7 is saved at nlr_buf regs[0]
-# (word index NLR_BUF_IDX_LOCAL_1 = 2; see py/emit68k.c) and restored
+# (word index NLR_BUF_IDX_LOCAL_1 = 2; see py/emitn68k.c) and restored
 # verbatim on the longjmp, so the handler PC survives.
 #
 # This exercises the save/restore path directly: the assertions only pass
