@@ -45,7 +45,7 @@ _VALID_REGS = frozenset(
 
 
 def _parse_fd(text):
-    """Pure-Python `.fd` parser — runtime counterpart to tools/amiga-fdgen.py.
+    """Pure-Python `.fd` parser — runtime counterpart to ports/amiga/tools/amiga-fdgen.py.
 
     Returns a dict mapping function name to a `(lvo, regs_csv, "")`
     triple.  Functions inside `##private` sections still consume LVO

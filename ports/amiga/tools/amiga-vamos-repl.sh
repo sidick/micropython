@@ -1,5 +1,5 @@
 #!/bin/bash
-# tools/amiga-vamos-repl.sh — launch the Amiga port's REPL under vamos
+# ports/amiga/tools/amiga-vamos-repl.sh — launch the Amiga port's REPL under vamos
 # from an interactive host terminal.
 #
 # The Amiga binary asks for raw console input via SetMode(stdin, 1), but
@@ -21,7 +21,7 @@ if [ ! -t 0 ]; then
     exit 2
 fi
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 
 # Variant selection — same rules as amiga-vamos-run.sh. Vamos emulates
 # 68020 (soft-float) and 68040 (built-in FPU) but has no 68881/68882

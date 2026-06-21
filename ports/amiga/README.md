@@ -109,16 +109,16 @@ are selected with `VARIANT=`:
     $ make VARIANT=68040
 
 For a reproducible build that mirrors CI exactly, use the
-`tools/amiga-build.sh` Docker wrapper (runs the same
+`ports/amiga/tools/amiga-build.sh` Docker wrapper (runs the same
 `stefanreinauer/amiga-gcc:latest` image CI uses):
 
-    $ tools/amiga-build.sh                   # all three variants
-    $ tools/amiga-build.sh standard          # just one
-    $ tools/amiga-build.sh standard 68040    # several
-    $ tools/amiga-build.sh clean             # clean all build dirs
+    $ ports/amiga/tools/amiga-build.sh                   # all three variants
+    $ ports/amiga/tools/amiga-build.sh standard          # just one
+    $ ports/amiga/tools/amiga-build.sh standard 68040    # several
+    $ ports/amiga/tools/amiga-build.sh clean             # clean all build dirs
 
 The TLS-enabled variants need the AmiSSL v5 SDK headers, fetched
-automatically by `tools/amiga-build.sh`. For a manual build outside
+automatically by `ports/amiga/tools/amiga-build.sh`. For a manual build outside
 the Docker wrapper, set `AMISSL_SDK` to point at an extracted v5
 SDK (or pass `MICROPY_PY_AMIGA_SSL=0` to disable TLS).
 
@@ -169,7 +169,7 @@ convention for "documentation, edit to enable") plus an active
   replace `AUTO/CLOSE` with `AUTO/CLOSE/WAIT` for one-shot SCRIPT=
   use so the window stays open after the script exits.
 
-`tools/amiga-make-icon.py` regenerates the icon from
+`ports/amiga/tools/amiga-make-icon.py` regenerates the icon from
 `logo/1bit-logo.png` if you want to tweak the defaults.
 
 The binary handles the AmigaDOS default-4 KiB Shell stack
@@ -216,7 +216,7 @@ Two paths are supported:
 - **vamos** (host, headless) — fastest iteration, runs the standard
   MicroPython test runner against a host-mounted volume. Suitable
   for the core language and most port-specific smoke tests. See
-  `tools/amiga-vamos-run.sh`.
+  `ports/amiga/tools/amiga-vamos-run.sh`.
 - **Amiberry** (full Kickstart emulation) — covers anything that
   needs real `intuition.library` UI, real ARexx daemon, TLS
   against the AmiSSL v5 install, the persistent REPL history

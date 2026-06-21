@@ -18,9 +18,9 @@ with what CPython emits naturally. The on-device runner is responsible for
 normalising the AmigaOS CRLF output before its own comparison.
 
 Usage:
-    tools/amiga-gen-exp.py tests/basics
-    tools/amiga-gen-exp.py tests/basics tests/float tests/io
-    MICROPY_CPYTHON3=python3.11 tools/amiga-gen-exp.py tests/basics
+    ports/amiga/tools/amiga-gen-exp.py tests/basics
+    ports/amiga/tools/amiga-gen-exp.py tests/basics tests/float tests/io
+    MICROPY_CPYTHON3=python3.11 ports/amiga/tools/amiga-gen-exp.py tests/basics
 """
 
 import argparse
