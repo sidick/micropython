@@ -29,10 +29,12 @@ QSTR_GLOBAL_DEPENDENCIES += $(VARIANT_DIR)/mpconfigvariant.h
 # C-side _amiga module and exposes the Library proxy on top of
 # the .fd-derived signature table in modules/_amiga_fd.py.
 FROZEN_MANIFEST ?= manifest.py
-# mpy-tool defaults to encoding integer literals as MPZ; this port
-# uses MICROPY_LONGINT_IMPL_LONGLONG so the frozen content must
-# match or the static_assert in frozen_content.c trips.
-MPY_TOOL_FLAGS ?= -mlongint-impl=longlong
+# Frozen integer literals (e.g. the 0x8000_0000-class AmigaOS tags in
+# modules/_amiga_tags.py) must be encoded in the same long-int format as
+# MICROPY_LONGINT_IMPL or frozen_content.c's #error trips. This port uses
+# mpz; changing either side needs a clean build so frozen_content.c is
+# regenerated.
+MPY_TOOL_FLAGS ?= -mlongint-impl=mpz
 
 # Variant-supplied knobs. Each variant's mpconfigvariant.mk defines:
 #   AMIGA_CPU_FLAGS    — CPU/FPU selection, e.g. '-m68020 -msoft-float'
