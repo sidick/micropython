@@ -489,6 +489,11 @@ static mp_obj_t make_ssl_socket(mp_ssl_context_t *self, mp_obj_t sock,
 
     if (do_handshake) {
         for (;;) {
+            // SSL_get_error() only reports reliably when the thread error
+            // queue is empty going in -- otherwise a stale error left by a
+            // previous (failed) connection makes this one's WANT_READ look
+            // fatal, spuriously failing the handshake. Clear it each pass.
+            ERR_clear_error();
             int rc = SSL_do_handshake(ssl);
             if (rc == 1) {
                 break;
@@ -739,6 +744,7 @@ static mp_uint_t ssl_socket_read(mp_obj_t self_in, void *buf,
         return MP_STREAM_ERROR;
     }
     for (;;) {
+        ERR_clear_error(); // keep SSL_get_error() reliable (see handshake)
         int rc = SSL_read(self->ssl, buf, (int)size);
         if (rc > 0) {
             return (mp_uint_t)rc;
@@ -775,6 +781,7 @@ static mp_uint_t ssl_socket_write(mp_obj_t self_in, const void *buf,
         return MP_STREAM_ERROR;
     }
     for (;;) {
+        ERR_clear_error(); // keep SSL_get_error() reliable (see handshake)
         int rc = SSL_write(self->ssl, buf, (int)size);
         if (rc > 0) {
             // SSL_write only queued the record into the BIO; push it to the
