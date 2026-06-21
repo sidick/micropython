@@ -17,8 +17,7 @@ new = icon.new(
         "DONOTWAIT": None,  # flag-style: present with no '='
     },
 )
-print("new icon: type=%s default_tool=%r stack=%d"
-      % (new.type, new.default_tool, new.stack_size))
+print("new icon: type=%s default_tool=%r stack=%d" % (new.type, new.default_tool, new.stack_size))
 
 icon.write("RAM:demo", new)
 new.close()
@@ -26,8 +25,9 @@ print("wrote RAM:demo.info")
 
 # Read it back and confirm the round trip.
 back = icon.read("RAM:demo")
-print("read back: type=%s default_tool=%r stack=%d"
-      % (back.type, back.default_tool, back.stack_size))
+print(
+    "read back: type=%s default_tool=%r stack=%d" % (back.type, back.default_tool, back.stack_size)
+)
 print("tooltypes :")
 for k, v in back.tooltypes.items():
     print("  %-10s = %r" % (k, v))
