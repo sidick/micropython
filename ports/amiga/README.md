@@ -50,7 +50,10 @@ Supported features include:
 - `asyncio` — the cooperative event loop, driven by `select.poll()`
   over `bsdsocket` and idling in `mp_event_wait` (no OS threads). Tasks,
   `sleep`, `gather`, `Event`/`Lock`, `wait_for`, and `open_connection`
-  (plain TCP) all work; TLS streams are pending the SSL poll hookup.
+  (plain TCP and TLS via `ssl=True`) all work. Non-blocking TLS goes
+  through the AmiSSL memory-BIO stream path, so a TLS `SSLSocket` is
+  pollable and tolerates the Amiga's slow handshakes better than the
+  blocking fd-path that `urequests` uses.
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
   variant, omitted from the size-optimised variants). Provides the
   upstream `ssl` surface: `ssl.SSLContext`, `ssl.OPENSSL_VERSION`, the

@@ -428,16 +428,21 @@ static void ssl_context_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
 
 // Build an SSLSocket wrapping `sock`. Two transports are supported:
 //
-//   * fd path -- when `sock` exposes fileno() and we're a client, hand
-//     AmiSSL the OS descriptor directly (SSL_set_fd). This is the
-//     original Phase 28 Step 4 path that urequests' HTTPS client relies
-//     on; it is left byte-for-byte unchanged.
+//   * fd path -- a blocking client over a real bsdsocket.library socket
+//     (fileno() present, do_handshake_on_connect=True). AmiSSL gets the
+//     OS descriptor directly (SSL_set_fd). This is the original Phase 28
+//     Step 4 path that urequests' HTTPS client relies on; left unchanged.
 //
-//   * stream path -- otherwise drive AmiSSL through a memory BIO pair and
-//     shuttle ciphertext to/from the Python stream ourselves (see
-//     ssl_socket_pump). This handles server-side sockets and fileno-less
-//     stream objects (io.BytesIO, asyncio wrappers, the upstream
-//     extmod/ssl_*.py test harness sockets).
+//   * stream path -- everything else: server-side sockets, fileno-less
+//     stream objects (io.BytesIO, the extmod/ssl_*.py harness), and --
+//     crucially -- non-blocking clients (do_handshake_on_connect=False,
+//     how asyncio wraps TLS). AmiSSL is driven through a memory BIO pair
+//     (ssl_socket_pump) with the non-blocking, poll-aware read/write/
+//     ioctl machinery, so the SSLSocket is pollable via select.poll().
+//
+// Routing non-blocking clients here (rather than the fd path) is what
+// makes asyncio-over-TLS work: the fd path's ioctl can't report poll
+// readiness, but the stream path delegates POLL down to the socket.
 //
 // We don't take ownership of `sock` -- the caller still owns its
 // lifetime -- but we pin a reference so it can't be GC'd while the
@@ -453,10 +458,10 @@ static mp_obj_t make_ssl_socket(mp_ssl_context_t *self, mp_obj_t sock,
         hostname = mp_obj_str_get_str(server_hostname);
     }
 
-    // fd path: client connection over a real bsdsocket.library socket.
+    // fd path: blocking client over a real bsdsocket.library socket.
     mp_obj_t fileno_meth[2];
     mp_load_method_maybe(sock, MP_QSTR_fileno, fileno_meth);
-    if (fileno_meth[0] != MP_OBJ_NULL && !server_side) {
+    if (fileno_meth[0] != MP_OBJ_NULL && !server_side && do_handshake) {
         int fd = mp_obj_get_int(mp_call_method_n_kw(0, 0, fileno_meth));
 
         SSL *ssl = SSL_new(self->ctx);
