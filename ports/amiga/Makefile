@@ -126,19 +126,12 @@ LDFLAGS += $(LDFLAGS_EXTRA)
 # support on AmigaOS. clib2 provides vsnprintf natively so drop this file.
 SRC_EXTMOD_C := $(filter-out shared/libc/printf.c, $(SRC_EXTMOD_C))
 
-# extmod/modjson.c uses a stack-allocated mp_obj_stringio_t passed through
-# the stream protocol; on 68k this fails because mp_obj_is_obj() requires
-# 4-byte pointer alignment not guaranteed for all stack frames by the SysV
-# ABI. Use a port-local replacement that reads directly from a buffer.
-SRC_EXTMOD_C := $(filter-out extmod/modjson.c, $(SRC_EXTMOD_C))
-
 SRC_C = \
 	main.c \
 	mphalport.c \
 	amiga_history.c \
 	amiga_timer.c \
 	nlr68k_jump.c \
-	modjson.c \
 	modamiga.c \
 	modintuition.c \
 	modasl.c \
@@ -161,7 +154,7 @@ ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_C += amiga_ssl.c modssl.c
 endif
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modjson.c modamiga.c modintuition.c modasl.c modicon.c modcatalog.c modosamiga.c modsocket.c sysstdio.c modtime.c
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c vfs_amiga.c modamiga.c modintuition.c modasl.c modicon.c modcatalog.c modosamiga.c modsocket.c sysstdio.c modtime.c
 ifeq ($(MICROPY_PY_AMIGA_SSL),1)
 SRC_QSTR += modssl.c
 endif
