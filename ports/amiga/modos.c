@@ -41,7 +41,7 @@
 //     unrelated shells.
 //   - unsetenv: remove the local variable.
 // This matches Unix os.putenv semantics ("affects this process and its
-// children") and works under both vamos and real AmigaOS. (Vamos only
+// children") and works under both emulation and real AmigaOS. (Some emulators only
 // implements local-var bookkeeping — GVF_GLOBAL_ONLY paths fall through
 // to DOSFALSE.)
 //
@@ -55,21 +55,21 @@
 // ENVARC: (boot-time AmigaDOS copies ENVARC: into ENV:).
 //
 // Implementation choices (correct on real AmigaOS; each also sidesteps a
-// vamos quirk, noted in parentheses):
+// emulator quirk, noted in parentheses):
 //
 //   * getenv treats `len <= 0` from GetVar as not-found. On real AmigaOS
 //     GetVar returns -1 for missing and 0 for empty, so this collapses a
 //     genuine empty-string variable into not-found. Empty env vars are
 //     rare on AmigaOS in practice (paths, names, and flags always have
 //     content), so this is an acceptable simplification rather than
-//     branching on the exact return value. (It also papers over vamos,
+//     branching on the exact return value. (It also papers over emulators,
 //     whose GetVar returns 0 for missing too, making the -1/0 distinction
 //     unavailable there; FindVar would be the natural existence check but
-//     vamos's FindVar faults in its success-path logging.)
+//     some emulators' FindVar fault in their success-path logging.)
 //
 //   * unsetenv deletes via the V36-documented "SetVar with NULL buffer"
 //     form rather than DeleteVar. This is a standard, well-defined
-//     AmigaOS idiom. (It also avoids a vamos bug: vamos reads DeleteVar's
+//     AmigaOS idiom. (It also avoids an emulator bug: some emulators read DeleteVar's
 //     `flags` argument from D4 instead of the NDK-specified D2, so stale
 //     D4 data can take the GVF_GLOBAL_ONLY branch and silently skip the
 //     delete; the SetVar register reads match the NDK fd and work.)
@@ -91,8 +91,8 @@ static mp_obj_t mp_os_getenv(size_t n_args, const mp_obj_t *args) {
     LONG len = GetVar((STRPTR)name, (STRPTR)buf, sizeof(buf), 0);
     if (len <= 0) {
         // Real AmigaOS: len < 0 means not found, len == 0 means found-empty.
-        // Vamos: len == 0 means either. Treating both as not-found here
-        // gives the correct answer on vamos for missing vars and only
+        // Some emulators: len == 0 means either. Treating both as not-found here
+        // gives the correct answer under emulation for missing vars and only
         // misreports the (rare) empty-string case on real AmigaOS.
         if (n_args == 2) {
             return args[1];
@@ -121,7 +121,7 @@ static MP_DEFINE_CONST_FUN_OBJ_2(mp_os_putenv_obj, mp_os_putenv);
 static mp_obj_t mp_os_unsetenv(mp_obj_t key_in) {
     const char *key = mp_obj_str_get_str(key_in);
     // V36-documented "SetVar with NULL buffer deletes the variable" form,
-    // used in preference to DeleteVar because vamos's DeleteVar reads
+    // used in preference to DeleteVar because some emulators' DeleteVar reads
     // flags from the wrong register. Returns DOSTRUE whether the variable
     // existed or not, so we don't need to filter ERROR_OBJECT_NOT_FOUND
     // here. SetVar(NULL) failing is essentially impossible — only out-of-

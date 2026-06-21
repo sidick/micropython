@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 35 Step 1: thin wrapper around icon.library for reading
+// Thin wrapper around icon.library for reading
 // AmigaOS .info files into Python-side DiskObject objects.
 //
 //   _icon.read(path) -> DiskObject

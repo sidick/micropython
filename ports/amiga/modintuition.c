@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 30: thin wrapper around intuition.library's EasyRequestArgs.
+// Thin wrapper around intuition.library's EasyRequestArgs.
 //
 // Exposes three Python entry points (the latter two are tiny wrappers
 // around the first):

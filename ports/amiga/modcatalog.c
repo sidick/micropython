@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 36: thin wrapper around locale.library's catalog lookups.
+// Thin wrapper around locale.library's catalog lookups.
 //
 // Exposes three Python entry points:
 //

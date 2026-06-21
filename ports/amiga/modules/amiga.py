@@ -467,7 +467,7 @@ def parse_taglist(addr, max_items=64):
     return out
 
 
-# ---------- Phase 17 step 6: ctypes-lite struct accessors ----------
+# ---------- ctypes-lite struct accessors ----------
 #
 # `Struct(addr, layout)` wraps a C struct living at `addr` and gives
 # Python-attribute access to its fields, dispatching through the
@@ -631,7 +631,7 @@ def IntuiMessage(addr):
     return Struct(addr, _structs.INTUIMESSAGE, name="IntuiMessage")
 
 
-# ---------- Phase 18 (inbound): RexxMessage facade ----------
+# ---------- Inbound ARexx: RexxMessage facade ----------
 #
 # `_amiga.rexx_recv` returns the raw RexxMsg address (or None on
 # timeout); we wrap it here so callers see a normal Python object with

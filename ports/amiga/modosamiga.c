@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 34 Step 1: AmigaOS-specific os.* primitives.
+// AmigaOS-specific os.* primitives.
 //
 // Surfaces SetProtection / Lock+Examine and the FIBF_* protection
 // bits so the frozen os.py can expose:
