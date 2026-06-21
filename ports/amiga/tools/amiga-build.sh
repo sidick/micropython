@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# tools/amiga-build.sh — build the Amiga port inside the same Docker
+# ports/amiga/tools/amiga-build.sh — build the Amiga port inside the same Docker
 # container CI uses, so local and CI binaries are identical.
 #
 # Usage:
-#   tools/amiga-build.sh                       # build all four variants
-#   tools/amiga-build.sh standard              # build one
-#   tools/amiga-build.sh standard 68040        # build several
-#   tools/amiga-build.sh clean                 # clean all variant build dirs
+#   ports/amiga/tools/amiga-build.sh                       # build all four variants
+#   ports/amiga/tools/amiga-build.sh standard              # build one
+#   ports/amiga/tools/amiga-build.sh standard 68040        # build several
+#   ports/amiga/tools/amiga-build.sh clean                 # clean all variant build dirs
 #
 # Environment:
 #   AMIGA_DOCKER_IMAGE   override the image tag (default: stefanreinauer/amiga-gcc:latest)
 #
 # Output goes to the standard ports/amiga/build-<variant>/ paths, so
-# tools/amiga-vamos-run.sh and friends find the binaries unchanged.
+# ports/amiga/tools/amiga-vamos-run.sh and friends find the binaries unchanged.
 #
 # Files created inside the container are owned by the host user (via
 # --user), so no root-owned artifacts end up in the working tree.
 #
 # Note: mpy-cross/build/ produced by this script holds Linux ELF binaries;
 # a native macOS bebbo build would put Mach-O there. Don't interleave the
-# two without running 'tools/amiga-build.sh clean' first.
+# two without running 'ports/amiga/tools/amiga-build.sh clean' first.
 #
 # The AmiSSL v5 SDK is fetched into a host-side cache (default
 # $HOME/.cache/amissl-sdk, override with AMISSL_CACHE_DIR) on each
 # build. The cache is bind-mounted into the container at
-# /amissl-cache; tools/amiga-fetch-amissl-sdk.sh runs first thing
+# /amissl-cache; ports/amiga/tools/amiga-fetch-amissl-sdk.sh runs first thing
 # inside the container and short-circuits in ~0.25 s once cached.
 # Phase 28 build rules pick up the SDK paths from there; today's
 # variants don't consume the SDK but the fetcher still runs so the
@@ -33,7 +33,7 @@
 set -euo pipefail
 
 IMAGE="${AMIGA_DOCKER_IMAGE:-stefanreinauer/amiga-gcc:latest}"
-REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
+REPO_DIR=$(cd "$(dirname "$0")/../../.." && pwd)
 AMISSL_CACHE_DIR="${AMISSL_CACHE_DIR:-$HOME/.cache/amissl-sdk}"
 mkdir -p "$AMISSL_CACHE_DIR"
 ALL_VARIANTS=(standard 68020fpu 68040)
@@ -83,7 +83,7 @@ done
 build_script='
     set -e
     git config --global --add safe.directory /workspace
-    tools/amiga-fetch-amissl-sdk.sh >/dev/null
+    ports/amiga/tools/amiga-fetch-amissl-sdk.sh >/dev/null
     make -C ports/amiga submodules
     make -C mpy-cross -j$(nproc)
 '

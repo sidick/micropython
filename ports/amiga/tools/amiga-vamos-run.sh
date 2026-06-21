@@ -1,5 +1,5 @@
 #!/bin/bash
-# tools/amiga-vamos-run.sh — wrapper used as MICROPY_MICROPYTHON.
+# ports/amiga/tools/amiga-vamos-run.sh — wrapper used as MICROPY_MICROPYTHON.
 #
 # tests/run-tests.py invokes its target as
 #
@@ -10,7 +10,7 @@
 # the matching mp:<dir>, and replaces any test-script argument with
 # its basename. The Amiga binary then sees sys.argv[0] / __file__ as
 # just the filename (e.g. "argv.py"), exactly matching what
-# tools/amiga-gen-exp.py records when it runs host CPython with
+# ports/amiga/tools/amiga-gen-exp.py records when it runs host CPython with
 # cwd=<dirname> and argv=<basename>.
 #
 # The mount name `mp:` is purely internal -- it doesn't appear in any
@@ -23,7 +23,7 @@
 
 set -e
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 TESTS_DIR="$REPO_ROOT/tests"
 
 # Variant selection. Pick the build to launch and the matching vamos --cpu
@@ -67,7 +67,7 @@ for arg in "$@"; do
         # vamos's cwd at it. With cwd set to the test's directory and
         # the script invoked by basename, sys.argv[0] / __file__ inside
         # the test see just the filename -- matching what
-        # tools/amiga-gen-exp.py records via host CPython.
+        # ports/amiga/tools/amiga-gen-exp.py records via host CPython.
         "$TESTS_DIR"/*.py)
             rel="${arg#$TESTS_DIR/}"
             d="$(dirname "$rel")"

@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/amissl-sdk
-          key: amissl-sdk-${{ hashFiles('tools/amiga-fetch-amissl-sdk.sh') }}
+          key: amissl-sdk-${{ hashFiles('ports/amiga/tools/amiga-fetch-amissl-sdk.sh') }}
 
       - name: Fetch AmiSSL SDK
         # Idempotent. Downloads on cache miss, ~0.25 s short-circuit
@@ -54,11 +54,11 @@ jobs:
         # path above.
         #
         # The Makefile default AMISSL_SDK_DEV points at /amissl-cache,
-        # which is where tools/amiga-build.sh bind-mounts the host cache
+        # which is where ports/amiga/tools/amiga-build.sh bind-mounts the host cache
         # locally. CI doesn't bind-mount, so symlink the host cache into
         # /amissl-cache so the Makefile's default path resolves.
         run: |
-          tools/amiga-fetch-amissl-sdk.sh
+          ports/amiga/tools/amiga-fetch-amissl-sdk.sh
           ln -sfn "$HOME/.cache/amissl-sdk" /amissl-cache
 
       - name: Init required submodules
