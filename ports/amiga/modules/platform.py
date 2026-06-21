@@ -62,6 +62,19 @@ def python_version():
     return "%d.%d.%d" % (v[0], v[1], v[2])
 
 
+def python_compiler():
+    # The Amiga port is built with the bebbo m68k-amigaos-gcc toolchain.
+    # CPython returns the compiler string; the exact version isn't visible
+    # to frozen Python, so report the toolchain family.
+    return "GCC"
+
+
+def libc_ver():
+    # AmigaOS has no Unix libc; bebbo links libnix. CPython returns a
+    # (library, version) tuple -- mirror the shape with an empty version.
+    return ("libnix", "")
+
+
 def platform():
     return "AmigaOS-%s-%s-MicroPython_%s" % (_amiga.kickstart(), _amiga.cpu(), python_version())
 
