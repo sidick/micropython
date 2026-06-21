@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// ports/amiga/modssl.c -- Phase 28 Step 3: ssl module + SSLContext.
+// ssl module + SSLContext, built on AmiSSL.
 //
 // Provides the upstream-shaped ssl.SSLContext API on top of AmiSSL v5.
 // Step 3 lands the context object + verify-mode property +

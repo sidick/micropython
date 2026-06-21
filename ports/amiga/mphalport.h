@@ -55,7 +55,7 @@ void amiga_arm_banner_inject(int after_n_writes);
 // doesn't bleed through as a phantom Enter and cause a duplicate prompt.
 void amiga_arm_stdin_first_nl_skip(void);
 
-// timer.device lifecycle (Phase 23). main.c calls these around mp_init() /
+// timer.device lifecycle. main.c calls these around mp_init() /
 // mp_deinit().
 bool amiga_timer_open(void);
 void amiga_timer_close(void);

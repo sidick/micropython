@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 31: thin wrapper around asl.library's file requester.
+// Thin wrapper around asl.library's file requester.
 //
 // Step 1 exposes the single-pick form:
 //
@@ -34,7 +34,7 @@
 // Returns the absolute path of the chosen file as a Python string,
 // or None if the user cancelled.
 //
-// Future steps (per docs/phase31-asl-plan.md) add save=, drawers_only=
+// Future work could add save=, drawers_only=
 // and multi= kwargs.
 //
 // asl.library is system-wide on AmigaOS 2.0+; the module opens it

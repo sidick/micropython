@@ -21,7 +21,7 @@ Differences from CPython's `os.path`:
   preserves volume references verbatim).
 * `expanduser`, `expandvars`, `commonpath`, `relpath`, `samefile`
   aren't included; users who need them can wrap `dos.library`
-  GetVar (Phase 20) themselves.
+  GetVar themselves.
 """
 
 import os as _os

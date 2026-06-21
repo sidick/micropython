@@ -24,10 +24,9 @@
  * THE SOFTWARE.
  */
 
-// timer.device-backed timing for the Amiga port (Phase 23).
+// timer.device-backed timing for the Amiga port.
 //
-// Replaces the Phase 8 newlib clock()-based mp_hal_ticks_* / mp_hal_delay_us
-// with two AmigaOS primitives:
+// Implements mp_hal_ticks_* / mp_hal_delay_us with two AmigaOS primitives:
 //
 //   * ReadEClock()        -- sub-microsecond monotonic counter (the E-Clock
 //                            ticks at ~709 kHz PAL / ~715 kHz NTSC, sourced
@@ -64,7 +63,7 @@ static struct MsgPort *timer_port = NULL;
 static struct timerequest *timer_req = NULL;
 static ULONG eclock_freq = 0;
 
-// Separate async timer.device IORequest for amiga.wait_signal() (Phase 25).
+// Separate async timer.device IORequest for amiga.wait_signal().
 // Kept distinct from `timer_req` so a SendIO request pending for a
 // timeout-Wait can't collide with the next synchronous mp_hal_delay_us
 // the script issues from a signal handler.  Both ports share the same

@@ -220,7 +220,7 @@ static mp_obj_t amiga_exists(mp_obj_t path_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_exists_obj, amiga_exists);
 
-// ---------- Phase 21 / 22: dos.library introspection and pattern matching ----------
+// ---------- dos.library introspection and pattern matching ----------
 
 static int amiga_dos_errno_from(LONG err) {
     switch (err) {
@@ -495,7 +495,7 @@ static mp_obj_t amiga_imatch(mp_obj_t pattern_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_imatch_obj, amiga_imatch);
 
-// ---------- Phase 17: generic AmigaOS library-call trampoline ----------
+// ---------- Generic AmigaOS library-call trampoline ----------
 
 // Implemented in amiga_lib_call.S.  Loads A6 with `base`, D0-D7 / A0-A5
 // from the explicit per-register slots, then JSRs to base+offset.  D0
@@ -606,7 +606,7 @@ static mp_obj_t amiga_lib_call(size_t n_args, const mp_obj_t *args, mp_map_t *kw
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_lib_call_obj, 2, amiga_lib_call);
 
-// ---------- Phase 17 step 4: memory peek/poke primitives ----------
+// ---------- Memory peek/poke primitives ----------
 //
 // These are the minimum surface needed for the Python-side TagList
 // helper (which assembles a `struct TagItem[]` from kwargs) and for
@@ -677,7 +677,7 @@ static mp_obj_t amiga_poke_bytes(mp_obj_t addr_obj, mp_obj_t data_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_poke_bytes_obj, amiga_poke_bytes);
 
-// ---------- Phase 25: break-signal IPC ----------
+// ---------- Break-signal IPC ----------
 //
 // AmigaOS gives every task four user-defined break signals
 // (SIGBREAKF_CTRL_C/D/E/F).  Ctrl+C is already handled by the port to
@@ -753,7 +753,7 @@ static mp_obj_t amiga_wait_signal(size_t n_args, const mp_obj_t *pos_args, mp_ma
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(amiga_wait_signal_obj, 1, amiga_wait_signal);
 
-// ---------- Phase 18 (inbound): public ARexx port ----------
+// ---------- Inbound: public ARexx port ----------
 //
 // AmigaOS apps expose a public MsgPort named "<APPNAME>.<N>" for ARexx
 // scripts to drive.  This block sets up one for the MicroPython VM so
@@ -779,7 +779,7 @@ struct RxsLib *RexxSysBase = NULL;
 static struct MsgPort *amiga_rexx_port = NULL;
 static char amiga_rexx_port_name[40];
 
-// Phase 32 persistent ARexx clients (definitions below near the
+// Persistent ARexx clients (definitions below near the
 // client primitives); kept here so amiga_rexx_shutdown() -- which
 // walks the array on process exit -- sees them.
 #define AMIGA_REXX_CLIENT_MAX 16
@@ -988,7 +988,7 @@ static mp_obj_t amiga_rexx_reply_fn(size_t n_args, const mp_obj_t *args) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_reply_obj, 3, 4, amiga_rexx_reply_fn);
 
-// ---------- Phase 18 outbound: drive another app's ARexx port ----------
+// ---------- Outbound: drive another app's ARexx port ----------
 //
 // FindPort(host) → CreateRexxMsg referencing a reply port →
 // CreateArgstring for the command → PutMsg to the target → Wait for
@@ -1024,7 +1024,7 @@ static bool amiga_rexx_ensure_rexxsys(void) {
 // Core send: takes an already-open reply MsgPort and runs the full
 // CreateRexxMsg → CreateArgstring → PutMsg → Wait → cleanup dance
 // against it.  Shared by `amiga_rexx_send_fn` (which owns its reply
-// port for the duration of the call) and Phase 32's persistent
+// port for the duration of the call) and the persistent
 // RexxClient C primitives (which reuse the same reply port across
 // many sends).
 static mp_obj_t amiga_rexx_send_via_port(struct MsgPort *reply,
@@ -1121,7 +1121,7 @@ static mp_obj_t amiga_rexx_send_fn(mp_obj_t port_obj, mp_obj_t cmd_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_2(amiga_rexx_send_obj, amiga_rexx_send_fn);
 
-// ---------- Phase 32: persistent ARexx client ----------
+// ---------- Persistent ARexx client ----------
 //
 // `RexxClient` (Python) holds an open reply MsgPort across many
 // sends. Driving a host (DOpus, IBrowse, YAM, ...) in a tight loop
@@ -1206,7 +1206,7 @@ static mp_obj_t amiga_rexx_client_send_fn(size_t n_args,
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(amiga_rexx_client_send_obj,
     3, 3, amiga_rexx_client_send_fn);
 
-// ---------- Phase 32: ARexx polish (rexx_exists, rexx_list) ----------
+// ---------- ARexx introspection (rexx_exists, rexx_list) ----------
 
 // amiga.rexx_exists(name) -> bool. Light-weight wrapper around
 // FindPort, fenced with Forbid/Permit so the port list can't
@@ -1226,7 +1226,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(amiga_rexx_exists_obj, amiga_rexx_exists_fn);
 // mutate mid-walk. Nodes with NULL ln_Name (rare; not strictly
 // required to have one) are skipped silently. Allocating Python
 // objects inside a Forbid window matches the precedent in
-// amiga_rexx_open_fn (Phase 18) -- mp_obj_new_str / list_append
+// amiga_rexx_open_fn -- mp_obj_new_str / list_append
 // don't issue Forbid-unsafe calls.
 static mp_obj_t amiga_rexx_list_fn(void) {
     mp_obj_t list = mp_obj_new_list(0, NULL);
@@ -1244,7 +1244,7 @@ static mp_obj_t amiga_rexx_list_fn(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(amiga_rexx_list_obj, amiga_rexx_list_fn);
 
-// ---------- Phase 24: REPL history accessors ----------
+// ---------- REPL history accessors ----------
 //
 // The readline history ring lives in `MP_STATE_PORT(readline_hist)`
 // and is normally only touched by `shared/readline/readline.c`.
@@ -1283,7 +1283,7 @@ static mp_obj_t amiga_readline_push_history_fn(mp_obj_t line_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(amiga_readline_push_history_obj, amiga_readline_push_history_fn);
 
-// ---------- Phase 33: platform identity (cpu/fpu/chipset/...) ----------
+// ---------- Platform identity (cpu/fpu/chipset/...) ----------
 //
 // Six lightweight probes feeding the frozen platform.py facade.
 // Values reflect runtime state (a 68040 running a -m68020 binary
@@ -1434,14 +1434,14 @@ static const mp_rom_map_elem_t amiga_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_rexx_client_send),  MP_ROM_PTR(&amiga_rexx_client_send_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_history),      MP_ROM_PTR(&amiga_readline_history_obj) },
     { MP_ROM_QSTR(MP_QSTR_readline_push_history), MP_ROM_PTR(&amiga_readline_push_history_obj) },
-    // Phase 33: platform identity
+    // Platform identity
     { MP_ROM_QSTR(MP_QSTR_cpu),         MP_ROM_PTR(&amiga_cpu_obj) },
     { MP_ROM_QSTR(MP_QSTR_fpu),         MP_ROM_PTR(&amiga_fpu_obj) },
     { MP_ROM_QSTR(MP_QSTR_chipset),     MP_ROM_PTR(&amiga_chipset_obj) },
     { MP_ROM_QSTR(MP_QSTR_kickstart),   MP_ROM_PTR(&amiga_kickstart_obj) },
     { MP_ROM_QSTR(MP_QSTR_chipmem),     MP_ROM_PTR(&amiga_chipmem_obj) },
     { MP_ROM_QSTR(MP_QSTR_fastmem),     MP_ROM_PTR(&amiga_fastmem_obj) },
-    // Break-signal bits (Phase 25)
+    // Break-signal bits
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_C), MP_ROM_INT(SIGBREAKF_CTRL_C) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_D), MP_ROM_INT(SIGBREAKF_CTRL_D) },
     { MP_ROM_QSTR(MP_QSTR_SIGBREAKF_CTRL_E), MP_ROM_INT(SIGBREAKF_CTRL_E) },
@@ -1462,7 +1462,7 @@ const mp_obj_module_t amiga_module = {
 
 // Registered as `_amiga` (underscore prefix) so the frozen `amiga.py`
 // in ports/amiga/modules/ can do `from _amiga import *` and add the
-// Python-side Library proxy on top (Phase 17 step 3).
+// Python-side Library proxy on top.
 MP_REGISTER_MODULE(MP_QSTR__amiga, amiga_module);
 
 #endif // MICROPY_PY_AMIGA

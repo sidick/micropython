@@ -220,7 +220,7 @@ extern struct WBStartup *_WBenchMsg;
 
 // icon.library state. Opened on demand when the script (or our startup
 // code) first looks at a tooltype; closed at shutdown. icon.library may
-// genuinely be absent on stripped-down systems and is absent under vamos,
+// genuinely be absent on stripped-down systems,
 // so callers treat NULL IconBase as "no tooltypes available". The Workbench
 // disk object is GetDiskObject'd from sm_ArgList[0] on WB launch so the
 // "SCRIPT=" tooltype is available before mp_init().
@@ -243,7 +243,7 @@ struct DiskObject *amiga_wb_get_diskobject(void) {
 static BPTR amiga_wb_console = 0;
 
 // Stack ceiling captured at main() entry. Used by gc_collect when
-// task->tc_SPUpper is unavailable (vamos leaves it zero) to bound the
+// task->tc_SPUpper is unavailable (it is zero on some systems) to bound the
 // stack scan. The address of a local in main() is below the start of
 // the stack, but main()'s caller frames are all below us too, so this
 // is a safe upper bound: anything we want to keep alive is at or below
@@ -254,7 +254,7 @@ static void *gc_stack_top;
 void gc_collect(void) {
     // Scan from the current SP (approximated by a local variable) up to
     // gc_stack_top (captured at main() entry). On real AmigaOS we could
-    // use task->tc_SPUpper, but vamos leaves that field zero on the
+    // use task->tc_SPUpper, but that field can be zero on the
     // initial process, which would compute a multi-gigabyte scan length
     // and walk off into unmapped memory. Bounding the scan to main()'s
     // frame and below is sufficient: nothing above main() (C runtime,
@@ -325,7 +325,7 @@ static void set_sys_argv(char **argv, int argc, int start) {
 // Parse the AmigaOS CLI argument string (pr_Arguments) into argc/argv.
 //
 // The bebbo C runtime's __nocommandline parser produces broken argv
-// pointers under vamos, so we parse the raw arg string ourselves.
+// pointers in some environments, so we parse the raw arg string ourselves.
 // pr_Arguments is a NUL-terminated string with a trailing newline.
 //
 // Tokenisation rules (matching AmigaOS shell):
@@ -465,13 +465,13 @@ static void amiga_runtime_init(void *initial_ptr, size_t initial_heap) {
     mp_init();
     // mp_init() already initializes sys.path = [""] and sys.argv = [].
 
-    // Phase 24: load persistent REPL history.  Done after mp_init so
+    // Load persistent REPL history.  Done after mp_init so
     // MP_STATE_PORT(readline_hist) is properly initialised.  Silent
     // no-op on first run (no file yet) or on unreadable history files.
     extern void amiga_history_load(void);
     amiga_history_load();
 
-    // Phase 26: append `PROGDIR:` to sys.path so users can drop modules
+    // Append `PROGDIR:` to sys.path so users can drop modules
     // next to the binary and `import` them without extra setup.
     // AmigaDOS auto-assigns PROGDIR: to the directory of the running
     // executable, so the assign-resolution machinery takes care of the
@@ -526,14 +526,14 @@ static void amiga_runtime_deinit(void) {
     vfs_amiga_cleanup();
     #endif
 
-    // Phase 24: persist the REPL history before mp_deinit() drops
+    // Persist the REPL history before mp_deinit() drops
     // MP_STATE_PORT(readline_hist).  Failure (e.g. S: read-only) is
     // silent — the user notices "no history on next launch", they
     // don't get a startup error.
     extern void amiga_history_save(void);
     amiga_history_save();
 
-    // Phase 18 (inbound): if a script forgot to amiga.rexx_close(),
+    // Inbound ARexx: if a script forgot to amiga.rexx_close(),
     // tear the port down ourselves so we don't leave a dangling public
     // MsgPort name (and a freed memory pointer) in Exec's port list.
     extern void amiga_rexx_shutdown(void);
@@ -681,7 +681,7 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     }
 
     // Parse arguments ourselves from pr_Arguments; the bebbo C runtime
-    // produces broken argv pointers under vamos. WB launch has no
+    // produces broken argv pointers in some environments. WB launch has no
     // pr_Arguments (sm_ArgList carries selected files instead, exposed
     // via amiga.wb_selected_files()), so skip the parse there.
     char **argv = NULL;
@@ -813,10 +813,10 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     // command) gave them; the AmigaDOS 4 KiB default is too tight for
     // anything beyond trivial recursion, so the documented expectation
     // for this port is `Stack 32768` or similar before launching, and
-    // tools/amiga-vamos-run.sh asks vamos for `-s 32`.
+    // the bundled test runner requests a 32 KiB stack.
     //
     // Use task->tc_SPLower/tc_SPUpper when populated to size the limit
-    // dynamically with a 2 KiB safety margin. Vamos zeros both fields
+    // dynamically with a 2 KiB safety margin. Some hosts zero both fields
     // on the initial process, in which case we assume the documented
     // 32 KiB-ish stack and use a 24 KiB limit -- conservative against
     // a smaller stack but big enough that the test suite's nested
@@ -834,7 +834,7 @@ static int amiga_main(int argc_unused, char **argv_unused) {
     }
     #endif
 
-    // Open timer.device for mp_hal_ticks_* / mp_hal_delay_* (Phase 23).
+    // Open timer.device for mp_hal_ticks_* / mp_hal_delay_*.
     // Must happen before any code that might call into these HAL hooks; in
     // practice mp_init() and below all do. A failure here is non-fatal —
     // amiga_timer.c degrades to dos.library Delay() and ticks_* return 0.
@@ -1181,7 +1181,7 @@ int main(int argc, char **argv) {
     struct Task *task = FindTask(NULL);
     size_t current = (size_t)((char *)task->tc_SPUpper - (char *)task->tc_SPLower);
     // Skip the swap if the caller already gave us a comfortable stack
-    // (Workbench launches, `Stack 65536`, or vamos's --stack=). The
+    // (Workbench launches, `Stack 65536`). The
     // 32 KiB threshold is generous enough to cover all known import
     // depths in this port plus the test suite's nested recursion.
     if (current >= AMIGA_MAIN_STACK_MIN) {

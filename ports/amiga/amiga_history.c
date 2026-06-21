@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// Phase 24: persistent REPL history.
+// Persistent REPL history.
 //
 // Reads the readline ring back from disk on startup so ↑ recalls
 // commands from a previous session, and writes it back out at exit.
@@ -58,7 +58,7 @@
 static void amiga_history_resolve_path(char *out, size_t cap) {
     // `MICROPYHISTORY` overrides the default.  GetVar(flags=0) is a
     // local var; falls back to ENV:/ENVARC: per dos.library convention
-    // so the override semantics match Phase 14's `MICROPYHEAP`.
+    // so the override semantics match those of `MICROPYHEAP`.
     LONG n = GetVar((STRPTR)"MICROPYHISTORY", (STRPTR)out, cap, 0);
     if (n > 0) {
         // GetVar may include a trailing newline (it does so for ENV:

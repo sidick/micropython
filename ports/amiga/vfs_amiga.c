@@ -36,8 +36,7 @@
 //
 // File types live here too (mp_type_amiga_fileio / mp_type_amiga_textio
 // implementing the mp_stream_p_t protocol) so that vfs_amiga_open can
-// return them directly. They replace the file types that used to live
-// in amigaio.c.
+// return them directly.
 
 #include <string.h>
 

@@ -1,6 +1,6 @@
 # urequests -- HTTP/1.0 client for the MicroPython Amiga port.
 #
-# Phase 29 covers Steps 1-5: GET / HEAD / POST / PUT / DELETE / PATCH
+# Supports GET / HEAD / POST / PUT / DELETE / PATCH
 # verbs, fixed-length and chunked response bodies, gzip / deflate
 # response decompression, HTTPS via ssl.SSLContext, plus
 # data= / json= / headers= keyword arguments on request().
@@ -14,12 +14,11 @@
 #     print(r.text[:80])
 #     r.close()
 #
-# Known limitation: HTTPS against modern CDNs that gate on TLS-1.3
-# client fingerprinting (Cloudflare, GitHub) inherits the Phase 28
-# AmiSSL issue tracked at https://github.com/jens-maus/amissl/issues/111
-# -- the handshake completes, then the next write returns broken
-# pipe. Direct origins that still negotiate TLS 1.2 by default
-# (e.g. www.python.org) work cleanly.
+# Known limitation: HTTPS against modern CDNs that negotiate TLS 1.3
+# (Cloudflare, GitHub) can be unreliable on slower machines that cannot
+# drive the handshake fast enough to keep up with the peer. Direct
+# origins that still negotiate TLS 1.2 by default (e.g. www.python.org)
+# work cleanly, as do faster (accelerated) machines.
 
 import socket
 

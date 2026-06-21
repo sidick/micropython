@@ -150,7 +150,7 @@ int mp_hal_stdin_rx_chr(void) {
     // parameters, where xterm-style consoles use ESC '['. shared/readline/
     // only understands the latter, so when we see 0x9B we return ESC now and
     // hand '[' to the next call. Other bytes pass through unchanged, so
-    // hosts that already emit ESC '[' (e.g. vamos's host xterm pass-through)
+    // hosts that already emit ESC '[' (e.g. a host terminal pass-through)
     // are unaffected.
     if (amiga_stdin_pending >= 0) {
         int c = amiga_stdin_pending;
@@ -227,5 +227,5 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len) {
     return written < 0 ? 0 : (mp_uint_t)written;
 }
 
-// mp_hal_delay_ms / mp_hal_delay_us live in amiga_timer.c (Phase 23 —
+// mp_hal_delay_ms / mp_hal_delay_us live in amiga_timer.c (
 // timer.device + ReadEClock).

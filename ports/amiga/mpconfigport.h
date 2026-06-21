@@ -73,8 +73,7 @@ void amiga_free_heap(void *p);
 // via a port-local VfsAmiga in vfs_amiga.c that wraps dos.library
 // (Lock/Examine/CurrentDir/...). MICROPY_READER_VFS routes
 // mp_lexer_new_from_file through the VFS so the import machinery uses
-// the same file-open path as the rest of the binary, replacing the
-// direct dos.library reads that used to live in amigafile.c.
+// the same file-open path as the rest of the binary.
 #define MICROPY_VFS                         (1)
 #define MICROPY_READER_VFS                  (1)
 
@@ -94,7 +93,7 @@ void amiga_free_heap(void *p);
 // this needs a clean build so frozen_content.c regenerates.
 #define MICROPY_LONGINT_IMPL                MICROPY_LONGINT_IMPL_MPZ
 
-// time module wall-clock surface (Phase 39 step 1). time.time() /
+// time module wall-clock surface. time.time() /
 // time.time_ns() are backed by timer.device GetSysTime() (already
 // opened at startup for ticks_*/delay_*); gmtime/localtime/mktime go
 // through extmod/modtime.c's timeutils path. Epoch is Unix (1970) to
@@ -120,7 +119,7 @@ void amiga_free_heap(void *p);
 // sys.atexit registry; needed by the test runner's `-m` invocation so
 // modules that register atexit callbacks see them fire on a clean exit.
 #define MICROPY_PY_SYS_ATEXIT               (1)
-// Phase 24: keep more REPL history since disk storage is cheap and the
+// Keep more REPL history since disk storage is cheap and the
 // ring is reloaded from S:MicroPython.history on startup.  Default is 8.
 #define MICROPY_READLINE_HISTORY_SIZE       (32)
 // sys.stdin/stdout/stderr stream objects backed by the mphal stdio HAL.
@@ -214,14 +213,14 @@ void amiga_free_heap(void *p);
 #define MICROPY_PY_AMIGA_SOCKET             (1)
 #endif
 
-// AmiSSL v5 TLS (Phase 28). Defaults to whatever the socket layer is
+// AmiSSL v5 TLS. Defaults to whatever the socket layer is
 // — TLS without sockets is meaningless on this port. Builds without
 // the AmiSSL SDK installed must override this to 0 at make time.
 #ifndef MICROPY_PY_AMIGA_SSL
 #define MICROPY_PY_AMIGA_SSL                (MICROPY_PY_AMIGA_SOCKET)
 #endif
 
-// hashlib MD5 + SHA1 (Phase 39). The upstream extmod/modhashlib.c gates
+// hashlib MD5 + SHA1. The upstream extmod/modhashlib.c gates
 // these on MICROPY_PY_SSL because it routes through mbedtls / axtls for
 // the algorithm itself; we don't have mbedtls and AmiSSL is OpenSSL-shaped
 // (wrong API). Take the axtls code path -- only md5.c and sha1.c are
@@ -232,14 +231,14 @@ void amiga_free_heap(void *p);
 #define MICROPY_PY_HASHLIB_MD5              (1)
 #define MICROPY_PY_HASHLIB_SHA1             (1)
 
-// deflate write/compress (Phase 39). MICROPY_PY_DEFLATE is already on
+// deflate write/compress. MICROPY_PY_DEFLATE is already on
 // at EXTRA_FEATURES, giving us DeflateIO-as-decompressor; flipping
 // MICROPY_PY_DEFLATE_COMPRESS lights up the write side. uzlib's lz77.c
 // + defl_static.c are #include'd by extmod/moddeflate.c under this
 // flag, so no extra SRC_C wiring is needed.
 #define MICROPY_PY_DEFLATE_COMPRESS         (1)
 
-// btree (Phase 39). modbtree.c needs mp_stream_posix_{read,write,lseek,fsync}
+// btree. modbtree.c needs mp_stream_posix_{read,write,lseek,fsync}
 // to bridge berkeley-db's read/write/lseek calls onto a Python stream
 // object; those are declared in py/stream.h and defined in py/stream.c
 // under MICROPY_STREAMS_POSIX_API. Also gates the MICROPY_PY_BTREE C

@@ -53,9 +53,9 @@ double __floatunsidf(unsigned int x) {
     return (double)(int)(x >> 1) * 2.0 + (double)(int)(x & 1u);
 }
 
-// clib2's __fixdfsi calls into MathIeeeDoubBasBase. Under vamos, that
-// library's IEEEDPFix raises a Python ValueError for NaN input rather
-// than returning a sentinel, so the entire emulator process aborts.
+// clib2's __fixdfsi calls into MathIeeeDoubBasBase, whose IEEEDPFix can
+// fault on NaN input rather than returning a sentinel on some hosts,
+// aborting the process.
 // Real AmigaOS hardware would return 0x80000000 ("indefinite") for NaN
 // in the same routine. Replace the conversion with a software version
 // that returns INT_MAX/INT_MIN for inf/overflow and 0 for NaN -- gcc
