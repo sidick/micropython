@@ -50,23 +50,21 @@ Supported features include:
 - `asyncio` — the cooperative event loop, driven by `select.poll()`
   over `bsdsocket` and idling in `mp_event_wait` (no OS threads). Tasks,
   `sleep`, `gather`, `Event`/`Lock`, `wait_for`, and `open_connection`
-  (plain TCP and TLS via `ssl=True`) all work. Non-blocking TLS goes
-  through the AmiSSL memory-BIO stream path, so a TLS `SSLSocket` is
-  pollable and tolerates the Amiga's slow handshakes better than the
-  blocking fd-path that `urequests` uses.
+  (plain TCP and TLS via `ssl=True`) all work.
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
   variant, omitted from the size-optimised variants). Provides the
   upstream `ssl` surface: `ssl.SSLContext`, `ssl.OPENSSL_VERSION`, the
   module-level `ssl.wrap_socket(...)` legacy helper,
   `SSLContext.load_cert_chain`, `load_verify_locations` (file/dir or
-  in-memory `cadata`), `verify_mode`, and `server_side` wrapping. Real
-  `bsdsocket` connections use the AmiSSL fd transport; fileno-less
-  stream objects (`io.BytesIO`, asyncio wrappers) are driven through a
-  memory BIO pair with a non-blocking, poll-driven handshake state
-  machine. The full upstream `extmod/ssl_*` suite passes —
-  `ssl_basic`, `ssl_ioctl`, `ssl_keycert`, `ssl_cadata`, `ssl_poll`,
-  `ssl_sslcontext`, and both `ssl_sslcontext_verify_mode` tests — with
-  `ssl_keycert_pkcs8` skipping (it is mbedTLS-only).
+  in-memory `cadata`), `verify_mode`, and `server_side` wrapping. Every
+  TLS socket -- blocking (`urequests`), non-blocking (`asyncio`), server,
+  or fileno-less (`io.BytesIO`) -- is driven through a single AmiSSL
+  memory-BIO transport with a non-blocking, poll-aware read/write/ioctl
+  state machine, so an `SSLSocket` is `select.poll()`-able. The full
+  upstream `extmod/ssl_*` suite passes — `ssl_basic`, `ssl_ioctl`,
+  `ssl_keycert`, `ssl_cadata`, `ssl_poll`, `ssl_sslcontext`, and both
+  `ssl_sslcontext_verify_mode` tests — with `ssl_keycert_pkcs8` skipping
+  (it is mbedTLS-only).
 - `urequests` frozen HTTP / HTTPS client.
 - `platform` module with CPython-shaped identity (`system`,
   `machine`, `release`, `python_version`, `platform`) plus

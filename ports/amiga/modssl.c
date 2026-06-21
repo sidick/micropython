@@ -71,13 +71,10 @@ typedef struct _mp_ssl_context_t {
 typedef struct _mp_ssl_socket_t {
     mp_obj_base_t base;
     SSL *ssl;
-    // net_bio is the application half of a BIO pair used by the stream
-    // path; NULL on the fd path. stream_mode records which path built
-    // this socket (net_bio is freed+nulled on close, so it can't double
-    // as the discriminator once closed).
+    // net_bio is the application half of the BIO pair AmiSSL talks to;
+    // freed and NULLed on close.
     BIO *net_bio;
-    bool stream_mode;
-    // Non-blocking poll state (stream path only). poll_mask is the
+    // Non-blocking poll state. poll_mask is the
     // cross-direction the last read/write needed (0 if it blocked in its
     // natural direction); ioctl(POLL) uses it to translate the caller's
     // requested direction. last_error latches a fatal TLS error so a
@@ -426,23 +423,19 @@ static void ssl_context_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest) {
     }
 }
 
-// Build an SSLSocket wrapping `sock`. Two transports are supported:
+// Build an SSLSocket wrapping `sock`. AmiSSL is always driven through a
+// memory BIO pair (ssl_socket_pump shuttles ciphertext to/from the
+// object's stream protocol), which works for every case: blocking
+// clients (urequests), non-blocking clients (asyncio, do_handshake_on_
+// connect=False), server-side sockets, and fileno-less stream objects
+// (io.BytesIO, the extmod/ssl_*.py harness).
 //
-//   * fd path -- a blocking client over a real bsdsocket.library socket
-//     (fileno() present, do_handshake_on_connect=True). AmiSSL gets the
-//     OS descriptor directly (SSL_set_fd). This is the original Phase 28
-//     Step 4 path that urequests' HTTPS client relies on; left unchanged.
-//
-//   * stream path -- everything else: server-side sockets, fileno-less
-//     stream objects (io.BytesIO, the extmod/ssl_*.py harness), and --
-//     crucially -- non-blocking clients (do_handshake_on_connect=False,
-//     how asyncio wraps TLS). AmiSSL is driven through a memory BIO pair
-//     (ssl_socket_pump) with the non-blocking, poll-aware read/write/
-//     ioctl machinery, so the SSLSocket is pollable via select.poll().
-//
-// Routing non-blocking clients here (rather than the fd path) is what
-// makes asyncio-over-TLS work: the fd path's ioctl can't report poll
-// readiness, but the stream path delegates POLL down to the socket.
+// An earlier revision had a second "fd path" that handed AmiSSL the raw
+// descriptor via SSL_set_fd for blocking clients. It was dropped: its
+// ioctl couldn't report poll readiness (so it was unusable from asyncio),
+// and its single blocking SSL_connect was the more fragile of the two --
+// it intermittently broke the pipe under the Amiga's slow handshakes,
+// where the BIO pump (with proper EAGAIN handling) succeeds.
 //
 // We don't take ownership of `sock` -- the caller still owns its
 // lifetime -- but we pin a reference so it can't be GC'd while the
@@ -458,60 +451,8 @@ static mp_obj_t make_ssl_socket(mp_ssl_context_t *self, mp_obj_t sock,
         hostname = mp_obj_str_get_str(server_hostname);
     }
 
-    // fd path: blocking client over a real bsdsocket.library socket.
-    mp_obj_t fileno_meth[2];
-    mp_load_method_maybe(sock, MP_QSTR_fileno, fileno_meth);
-    if (fileno_meth[0] != MP_OBJ_NULL && !server_side && do_handshake) {
-        int fd = mp_obj_get_int(mp_call_method_n_kw(0, 0, fileno_meth));
-
-        SSL *ssl = SSL_new(self->ctx);
-        if (ssl == NULL) {
-            raise_ssl_error();
-        }
-        SSL_set_fd(ssl, fd);
-
-        if (hostname) {
-            SSL_set_tlsext_host_name(ssl, hostname);
-        }
-
-        if (do_handshake) {
-            // Underlying sockets are blocking by default; SSL_connect
-            // therefore either succeeds or returns a terminal error.
-            // WANT_READ/WANT_WRITE only crop up on non-blocking sockets;
-            // surface them as EAGAIN so a future asyncio glue knows what
-            // to do.
-            int rc = SSL_connect(ssl);
-            if (rc != 1) {
-                // Capture diagnostic state before SSL_free -- afterwards
-                // the ssl pointer is dangling and SSL_get_verify_result
-                // silently returns X509_V_OK off freed memory.
-                int err = SSL_get_error(ssl, rc);
-                long verify = SSL_get_verify_result(ssl);
-                SSL_free(ssl);
-                if (err == SSL_ERROR_WANT_READ
-                    || err == SSL_ERROR_WANT_WRITE) {
-                    mp_raise_OSError(MP_EAGAIN);
-                }
-                raise_ssl_diag(err, verify);
-            }
-        }
-
-        mp_ssl_socket_t *s = mp_obj_malloc_with_finaliser(
-            mp_ssl_socket_t, &ssl_socket_type);
-        s->ssl = ssl;
-        s->net_bio = NULL;
-        s->stream_mode = false;
-        s->poll_mask = 0;
-        s->last_error = 0;
-        s->out_buf = NULL;
-        s->out_cap = 0;
-        s->out_len = 0;
-        s->out_off = 0;
-        s->sock_obj = sock;
-        return MP_OBJ_FROM_PTR(s);
-    }
-
-    // stream path: AmiSSL drives a memory BIO pair; we pump ciphertext.
+    // The object must implement the full stream protocol so the pump can
+    // shuttle ciphertext through it.
     mp_get_stream_raise(sock,
         MP_STREAM_OP_READ | MP_STREAM_OP_WRITE | MP_STREAM_OP_IOCTL);
 
@@ -538,7 +479,6 @@ static mp_obj_t make_ssl_socket(mp_ssl_context_t *self, mp_obj_t sock,
         mp_ssl_socket_t, &ssl_socket_type);
     s->ssl = ssl;
     s->net_bio = net_bio;
-    s->stream_mode = true;
     s->poll_mask = 0;
     s->last_error = 0;
     s->out_buf = NULL;
@@ -663,16 +603,6 @@ static mp_obj_t mod_ssl_wrap_socket(
 static MP_DEFINE_CONST_FUN_OBJ_KW(mod_ssl_wrap_socket_obj, 1, mod_ssl_wrap_socket);
 
 // SSLSocket -- stream protocol on top of SSL_read / SSL_write.
-
-// Translate an SSL_get_error code for a read/write call into a
-// stream-protocol errcode. ZERO_RETURN is the caller's responsibility
-// (read uses it as EOF; write doesn't).
-static int ssl_stream_errcode(int err) {
-    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        return MP_EAGAIN;
-    }
-    return MP_EIO;
-}
 
 // Flush the stashed outgoing ciphertext (out_buf[out_off..out_len]) to the
 // transport in a single write call, so a whole TLS flight reaches the peer
@@ -801,24 +731,8 @@ static mp_uint_t ssl_socket_read(mp_obj_t self_in, void *buf,
         return MP_STREAM_ERROR;
     }
 
-    if (!self->stream_mode) {
-        // fd path: blocking SSL_read against a real bsdsocket descriptor.
-        int rc = SSL_read(self->ssl, buf, (int)size);
-        if (rc > 0) {
-            return (mp_uint_t)rc;
-        }
-        int err = SSL_get_error(self->ssl, rc);
-        if (err == SSL_ERROR_ZERO_RETURN) {
-            return 0; // clean TLS close = EOF
-        }
-        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-            *errcode = ssl_stream_errcode(err);
-            return MP_STREAM_ERROR;
-        }
-        raise_stream_ssl_error(self->ssl, rc);
-    }
-
-    // Stream path: pump-driven, non-blocking aware.
+    // Pump-driven, non-blocking aware (blocking transports just never
+    // return EAGAIN, so the pump loops until the data arrives).
     self->poll_mask = 0;
     if (self->last_error != 0) {
         *errcode = self->last_error;
@@ -853,20 +767,6 @@ static mp_uint_t ssl_socket_write(mp_obj_t self_in, const void *buf,
     if (self->ssl == NULL) {
         *errcode = MP_EBADF;
         return MP_STREAM_ERROR;
-    }
-
-    if (!self->stream_mode) {
-        // fd path.
-        int rc = SSL_write(self->ssl, buf, (int)size);
-        if (rc > 0) {
-            return (mp_uint_t)rc;
-        }
-        int err = SSL_get_error(self->ssl, rc);
-        if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-            *errcode = ssl_stream_errcode(err);
-            return MP_STREAM_ERROR;
-        }
-        raise_stream_ssl_error(self->ssl, rc);
     }
 
     self->poll_mask = 0;
@@ -904,81 +804,61 @@ static mp_uint_t ssl_socket_ioctl(mp_obj_t self_in, mp_uint_t request,
     uintptr_t arg, int *errcode) {
     mp_ssl_socket_t *self = MP_OBJ_TO_PTR(self_in);
 
-    if (self->stream_mode) {
-        // Stream path follows the upstream modtls semantics: CLOSE frees
-        // the TLS state then passes the close down to the underlying
-        // stream; POLL on a closed socket reports NVAL; everything else
-        // is unsupported.
-        mp_obj_t sock = self->sock_obj;
-        if (request == MP_STREAM_CLOSE) {
-            if (self->ssl == NULL) {
-                return 0; // already closed
-            }
-            SSL_free(self->ssl);
-            self->ssl = NULL;
-            if (self->net_bio) {
-                BIO_free(self->net_bio);
-                self->net_bio = NULL;
-            }
-            self->sock_obj = mp_const_none;
-            if (sock == mp_const_none || sock == MP_OBJ_NULL) {
-                return 0;
-            }
-            return mp_get_stream(sock)->ioctl(sock, request, arg, errcode);
-        }
-        if (request == MP_STREAM_POLL) {
-            if (self->ssl == NULL || self->last_error != 0
-                || sock == mp_const_none || sock == MP_OBJ_NULL) {
-                return MP_STREAM_POLL_NVAL;
-            }
-
-            // If the last read/write needed the opposite direction, poll
-            // the transport for that instead, but remember what the caller
-            // asked so the answer can be reported in their terms.
-            mp_uint_t want = arg;
-            mp_uint_t saved = 0;
-            const mp_uint_t rdwr = MP_STREAM_POLL_RD | MP_STREAM_POLL_WR;
-            if (self->poll_mask && (want & rdwr)) {
-                saved = want & rdwr;
-                want = (want & ~saved) | self->poll_mask;
-            }
-
-            mp_uint_t ret = 0;
-            // Decrypted data already buffered inside AmiSSL is readable
-            // without touching the transport.
-            if ((want & MP_STREAM_POLL_RD) && SSL_pending(self->ssl) > 0) {
-                ret |= MP_STREAM_POLL_RD;
-                if (want == MP_STREAM_POLL_RD) {
-                    return MP_STREAM_POLL_RD;
-                }
-            }
-
-            ret |= mp_get_stream(sock)->ioctl(sock, request, want, errcode);
-
-            // Translate the transport's readiness back to the caller's
-            // requested direction so it re-enters read()/write().
-            if (self->poll_mask && (ret & self->poll_mask)) {
-                ret |= saved;
-            }
-            return ret;
-        }
-        *errcode = MP_EINVAL;
-        return MP_STREAM_ERROR;
-    }
-
-    // fd path.
+    // Follows the upstream modtls semantics: CLOSE frees the TLS state then
+    // passes the close down to the underlying stream; POLL on a closed
+    // socket reports NVAL; everything else is unsupported.
+    mp_obj_t sock = self->sock_obj;
     if (request == MP_STREAM_CLOSE) {
-        if (self->ssl) {
-            // One-shot SSL_shutdown: send close_notify, don't wait
-            // for peer's. Two-step polling is what asyncio buys us;
-            // not in scope for Step 4. The peer may complain in its
-            // log but TLS-spec-wise both sides are free to close.
-            SSL_shutdown(self->ssl);
-            SSL_free(self->ssl);
-            self->ssl = NULL;
+        if (self->ssl == NULL) {
+            return 0; // already closed
+        }
+        SSL_free(self->ssl);
+        self->ssl = NULL;
+        if (self->net_bio) {
+            BIO_free(self->net_bio);
+            self->net_bio = NULL;
         }
         self->sock_obj = mp_const_none;
-        return 0;
+        if (sock == mp_const_none || sock == MP_OBJ_NULL) {
+            return 0;
+        }
+        return mp_get_stream(sock)->ioctl(sock, request, arg, errcode);
+    }
+    if (request == MP_STREAM_POLL) {
+        if (self->ssl == NULL || self->last_error != 0
+            || sock == mp_const_none || sock == MP_OBJ_NULL) {
+            return MP_STREAM_POLL_NVAL;
+        }
+
+        // If the last read/write needed the opposite direction, poll the
+        // transport for that instead, but remember what the caller asked
+        // so the answer can be reported in their terms.
+        mp_uint_t want = arg;
+        mp_uint_t saved = 0;
+        const mp_uint_t rdwr = MP_STREAM_POLL_RD | MP_STREAM_POLL_WR;
+        if (self->poll_mask && (want & rdwr)) {
+            saved = want & rdwr;
+            want = (want & ~saved) | self->poll_mask;
+        }
+
+        mp_uint_t ret = 0;
+        // Decrypted data already buffered inside AmiSSL is readable
+        // without touching the transport.
+        if ((want & MP_STREAM_POLL_RD) && SSL_pending(self->ssl) > 0) {
+            ret |= MP_STREAM_POLL_RD;
+            if (want == MP_STREAM_POLL_RD) {
+                return MP_STREAM_POLL_RD;
+            }
+        }
+
+        ret |= mp_get_stream(sock)->ioctl(sock, request, want, errcode);
+
+        // Translate the transport's readiness back to the caller's
+        // requested direction so it re-enters read()/write().
+        if (self->poll_mask && (ret & self->poll_mask)) {
+            ret |= saved;
+        }
+        return ret;
     }
     *errcode = MP_EINVAL;
     return MP_STREAM_ERROR;
