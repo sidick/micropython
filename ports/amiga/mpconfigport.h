@@ -149,11 +149,15 @@ void amiga_free_heap(void *p);
 // No threads — AmigaOS uses cooperative multitasking.
 #define MICROPY_PY_THREAD                   (0)
 
-// No asyncio until threads/event loop are sorted.
-#define MICROPY_PY_ASYNCIO                  (0)
+// asyncio: cooperative event loop (no OS threads). IO readiness comes
+// from select.poll() over bsdsocket (modsocket.c MP_STREAM_POLL), and the
+// loop idles in mp_event_wait, which sleeps via MICROPY_INTERNAL_WFE
+// instead of busy-spinning.
+#define MICROPY_PY_ASYNCIO                  (1)
 
-// Scheduler is used by asyncio and ussl callbacks; disable for now.
-#define MICROPY_ENABLE_SCHEDULER            (0)
+// Enables micropython.schedule() and the pending-callback queue asyncio
+// and stream callbacks build on.
+#define MICROPY_ENABLE_SCHEDULER            (1)
 
 // Native code emitter for Motorola 68020. Variants for low-memory
 // machines (a500) disable this to save flash.
