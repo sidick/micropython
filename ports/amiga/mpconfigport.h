@@ -87,10 +87,12 @@ void amiga_free_heap(void *p);
 // 68k has no hardware FPU; soft-float via -msoft-float in CFLAGS.
 #define MICROPY_FLOAT_IMPL                  MICROPY_FLOAT_IMPL_DOUBLE
 
-// Native 64-bit ints for values beyond 31-bit smallint range. Needed
-// for the 'q'/'Q' struct codes and any int literal > 30 bits in the
-// source (e.g. 0xFFFF_FFFF in feature-detect tests).
-#define MICROPY_LONGINT_IMPL                MICROPY_LONGINT_IMPL_LONGLONG
+// Arbitrary-precision integers (mpz), matching CPython -- ints grow
+// past 64 bits instead of raising OverflowError. mpz.c / objint_mpz.c
+// are already in py.mk; this just selects them. The frozen content must
+// be encoded to match (see MPY_TOOL_FLAGS in the Makefile), and switching
+// this needs a clean build so frozen_content.c regenerates.
+#define MICROPY_LONGINT_IMPL                MICROPY_LONGINT_IMPL_MPZ
 
 // time module wall-clock surface (Phase 39 step 1). time.time() /
 // time.time_ns() are backed by timer.device GetSysTime() (already
