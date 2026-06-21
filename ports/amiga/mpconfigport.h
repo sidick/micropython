@@ -164,8 +164,11 @@ void amiga_free_heap(void *p);
 #ifndef MICROPY_EMIT_68K
 #define MICROPY_EMIT_68K                    (1)
 #endif
-// Loading pre-compiled native .mpy files is not yet supported on this port.
-#define MICROPY_PERSISTENT_CODE_LOAD_NATIVE (0)
+// Load pre-compiled .mpy bytecode files from the filesystem at import
+// time (the .mpy reader is already linked in for frozen modules). Native
+// code inside a .mpy stays unsupported -- only m68k bytecode .mpy load.
+#define MICROPY_PERSISTENT_CODE_LOAD         (1)
+#define MICROPY_PERSISTENT_CODE_LOAD_NATIVE  (0)
 
 // Poll for Ctrl+C (SIGBREAKF_CTRL_C) every 1024 bytecodes.
 // amiga_check_ctrl_c() is defined in mphalport.c.
