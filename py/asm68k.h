@@ -106,7 +106,7 @@ static inline void asm_68k_emit32(asm_68k_t *as, uint32_t v) {
     if (p) {
         p[0] = (v >> 24) & 0xFF;
         p[1] = (v >> 16) & 0xFF;
-        p[2] = (v >> 8)  & 0xFF;
+        p[2] = (v >> 8) & 0xFF;
         p[3] = v & 0xFF;
     }
 }
@@ -114,7 +114,7 @@ static inline void asm_68k_emit32(asm_68k_t *as, uint32_t v) {
 // Patch a 16-bit value at a previously emitted position (pass-2 fixup).
 static inline void asm_68k_patch16(asm_68k_t *as, size_t offset, uint16_t w) {
     if (as->base.pass == MP_ASM_PASS_EMIT) {
-        as->base.code_base[offset]     = (w >> 8) & 0xFF;
+        as->base.code_base[offset] = (w >> 8) & 0xFF;
         as->base.code_base[offset + 1] = w & 0xFF;
     }
 }
@@ -703,8 +703,8 @@ void asm_68k_emit_store_reg_reg_reg(asm_68k_t *as, mp_uint_t rs_val, mp_uint_t r
 
 // Jump-register (indirect via register)
 #define ASM_JUMP_REG(as, rs) do { \
-    asm_68k_movea_dreg_areg((as), ASM_68K_REG_A0, (rs)); \
-    asm_68k_jmp_ind((as), ASM_68K_REG_A0); } while (0)
+        asm_68k_movea_dreg_areg((as), ASM_68K_REG_A0, (rs)); \
+        asm_68k_jmp_ind((as), ASM_68K_REG_A0); } while (0)
 
 // Local variable access (frame-relative)
 #define ASM_MOV_REG_LOCAL(as, rd, loc)      asm_68k_emit_mov_reg_local((as), (rd), (loc))
