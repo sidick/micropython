@@ -47,14 +47,17 @@ Supported features include:
   Roadshow, etc.).
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
   variant, omitted from the size-optimised variants). Provides the
-  upstream `ssl` surface: `ssl.SSLContext`, the module-level
-  `ssl.wrap_socket(...)` legacy helper, `SSLContext.load_cert_chain`,
-  `load_verify_locations` (file/dir or in-memory `cadata`), and
-  `server_side` wrapping. Real `bsdsocket` connections use the AmiSSL
-  fd transport; fileno-less stream objects (`io.BytesIO`, asyncio
-  wrappers) are driven through a memory BIO pair, so the upstream
-  `extmod/ssl_basic`, `ssl_ioctl`, `ssl_keycert`, and `ssl_cadata`
-  tests pass unmodified (`ssl_keycert_pkcs8` skips, being mbedTLS-only).
+  upstream `ssl` surface: `ssl.SSLContext`, `ssl.OPENSSL_VERSION`, the
+  module-level `ssl.wrap_socket(...)` legacy helper,
+  `SSLContext.load_cert_chain`, `load_verify_locations` (file/dir or
+  in-memory `cadata`), `verify_mode`, and `server_side` wrapping. Real
+  `bsdsocket` connections use the AmiSSL fd transport; fileno-less
+  stream objects (`io.BytesIO`, asyncio wrappers) are driven through a
+  memory BIO pair with a non-blocking, poll-driven handshake state
+  machine. The full upstream `extmod/ssl_*` suite passes —
+  `ssl_basic`, `ssl_ioctl`, `ssl_keycert`, `ssl_cadata`, `ssl_poll`,
+  `ssl_sslcontext`, and both `ssl_sslcontext_verify_mode` tests — with
+  `ssl_keycert_pkcs8` skipping (it is mbedTLS-only).
 - `urequests` frozen HTTP / HTTPS client.
 - `platform` module with CPython-shaped identity (`system`,
   `machine`, `release`, `python_version`, `platform`) plus
