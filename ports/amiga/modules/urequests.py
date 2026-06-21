@@ -228,20 +228,44 @@ def _urlencode(d):
     return b"&".join(parts)
 
 
-def request(method, url, *, data=None, json=None, headers=None):
-    use_ssl, host, port, path = _parse_url(url)
+# One TLS context, built lazily and reused for every HTTPS request.
+# Each ssl.SSLContext() + set_default_verify_paths() loads the AmiSSL CA
+# store, which is slow; rebuilding it per request also piles up CA stores
+# that aren't freed until GC, exhausting AmiSSL/socket resources on
+# repeated HTTPS calls in one process. SSL_CTX is designed to be shared
+# (a fresh SSL is made per wrap_socket), so one context keeps in-process
+# repeat requests reliable.
+_ssl_context = None
 
-    addr = socket.getaddrinfo(host, port)[0][-1]
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(addr)
 
-    if use_ssl:
+def _https_context():
+    global _ssl_context
+    if _ssl_context is None:
         import ssl
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.verify_mode = ssl.CERT_REQUIRED
         ctx.set_default_verify_paths()
-        s = ctx.wrap_socket(s, server_hostname=host)
+        _ssl_context = ctx
+    return _ssl_context
+
+
+def request(method, url, *, data=None, json=None, headers=None):
+    use_ssl, host, port, path = _parse_url(url)
+
+    addr = socket.getaddrinfo(host, port)[0][-1]
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.connect(addr)
+        if use_ssl:
+            s = _https_context().wrap_socket(s, server_hostname=host)
+    except Exception:
+        # Don't leak the socket (or its SSL state) on a failed connect or
+        # TLS handshake. A leftover fd/SSL after a request to a server
+        # AmiSSL can't complete with poisons later requests in the same
+        # process -- they start failing with EIO/EINVAL.
+        s.close()
+        raise
 
     # Resolve the request body once so we can set Content-Length up
     # front. dict body -> urlencoded; str body -> utf-8 bytes; bytes
@@ -290,16 +314,22 @@ def request(method, url, *, data=None, json=None, headers=None):
     # Send request head.
     if isinstance(method, str):
         method = method.encode()
-    s.send(method + b" " + path.encode() + b" HTTP/1.0\r\n")
-    for k, v in final.items():
-        s.send(k.encode() + b": " + str(v).encode() + b"\r\n")
-    s.send(b"\r\n")
-    if body is not None:
-        s.send(body)
+    try:
+        s.send(method + b" " + path.encode() + b" HTTP/1.0\r\n")
+        for k, v in final.items():
+            s.send(k.encode() + b": " + str(v).encode() + b"\r\n")
+        s.send(b"\r\n")
+        if body is not None:
+            s.send(body)
 
-    resp = Response(s)
-    resp._read_status_line()
-    resp._read_headers()
+        resp = Response(s)
+        resp._read_status_line()
+        resp._read_headers()
+    except Exception:
+        # Same reasoning as above: close on any send/response failure so a
+        # half-finished request can't leak the socket.
+        s.close()
+        raise
     return resp
 
 
