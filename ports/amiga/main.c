@@ -348,7 +348,7 @@ static int amiga_parse_args(char ***argv_out, char **buf_out) {
         GetProgramName((STRPTR)prog_buf, sizeof(prog_buf));
     }
     if (!prog_buf[0]) {
-        strcpy(prog_buf, "micropython");
+        snprintf(prog_buf, sizeof(prog_buf), "micropython");
     }
 
     // Worst-case: every char becomes a separate token, plus argv[0].
