@@ -54,25 +54,25 @@
 // And for persistence across reboots, also write the same value to
 // ENVARC: (boot-time AmigaDOS copies ENVARC: into ENV:).
 //
-// Vamos workarounds:
+// Implementation choices (correct on real AmigaOS; each also sidesteps a
+// vamos quirk, noted in parentheses):
 //
-//   * GetVar returns 0 (rather than -1) for missing variables, so we
-//     can't reliably distinguish "not found" from "found but empty" via
-//     the return value alone. Code below treats `len <= 0` as not-found,
-//     which means a genuine empty-string variable comes back as missing
-//     on vamos. Real AmigaOS GetVar returns -1 for missing and 0 for
-//     empty, so the distinction works correctly there. Empty-string
-//     env vars on AmigaOS are rare in practice (paths, names, and
-//     flags always have content), so this is acceptable. (FindVar
-//     would be the obvious test-existence call, but vamos's FindVar
-//     hits an AttributeError in its success-path logging.)
+//   * getenv treats `len <= 0` from GetVar as not-found. On real AmigaOS
+//     GetVar returns -1 for missing and 0 for empty, so this collapses a
+//     genuine empty-string variable into not-found. Empty env vars are
+//     rare on AmigaOS in practice (paths, names, and flags always have
+//     content), so this is an acceptable simplification rather than
+//     branching on the exact return value. (It also papers over vamos,
+//     whose GetVar returns 0 for missing too, making the -1/0 distinction
+//     unavailable there; FindVar would be the natural existence check but
+//     vamos's FindVar faults in its success-path logging.)
 //
-//   * DeleteVar reads its `flags` argument from D4 in vamos (the NDK
-//     fd specifies D2). With stale data in D4, vamos can take the
-//     GVF_GLOBAL_ONLY branch and silently skip the deletion. We use
-//     the V36-documented "SetVar with NULL buffer" form for delete,
-//     which vamos handles correctly (its SetVar register reads match
-//     the NDK fd).
+//   * unsetenv deletes via the V36-documented "SetVar with NULL buffer"
+//     form rather than DeleteVar. This is a standard, well-defined
+//     AmigaOS idiom. (It also avoids a vamos bug: vamos reads DeleteVar's
+//     `flags` argument from D4 instead of the NDK-specified D2, so stale
+//     D4 data can take the GVF_GLOBAL_ONLY branch and silently skip the
+//     delete; the SetVar register reads match the NDK fd and work.)
 
 #include <exec/types.h>
 #include <dos/dos.h>
