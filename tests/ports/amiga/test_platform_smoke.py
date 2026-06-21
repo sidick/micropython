@@ -23,6 +23,13 @@ pv = platform.python_version()
 expected = "%d.%d.%d" % tuple(sys.implementation.version[:3])
 assert pv == expected, (pv, expected)
 
+# CPython-shaped build info (exercised by extmod/platform_basic.py):
+# python_compiler() -> str, libc_ver() -> (lib, ver) tuple.
+assert isinstance(platform.python_compiler(), str)
+lv = platform.libc_ver()
+assert isinstance(lv, tuple) and len(lv) == 2, lv
+assert all(isinstance(x, str) for x in lv), lv
+
 # platform() should combine kickstart / cpu / python_version.
 pl = platform.platform()
 assert rel in pl and m in pl and pv in pl, pl
