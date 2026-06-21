@@ -174,6 +174,11 @@ void amiga_free_heap(void *p);
         amiga_check_ctrl_c(); \
     }
 
+// Suspend backend for mp_event_wait_ms()/_indefinite(): without it the
+// default is a no-op and select()/poll() idle-waits busy-spin the CPU.
+// amiga_internal_wfe() sleeps in short Ctrl-C-aware slices (mphalport.c).
+#define MICROPY_INTERNAL_WFE(TIMEOUT_MS) amiga_internal_wfe(TIMEOUT_MS)
+
 // os.getenv / os.putenv / os.unsetenv backed by dos.library
 // GetVar / SetVar / DeleteVar. Function bodies live in ports/amiga/modos.c
 // and are pulled in by extmod/modos.c via MICROPY_PY_OS_INCLUDEFILE. This
