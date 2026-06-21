@@ -131,7 +131,6 @@ SRC_C = \
 	mphalport.c \
 	amiga_history.c \
 	amiga_timer.c \
-	nlr68k_jump.c \
 	modamiga.c \
 	modintuition.c \
 	modasl.c \
@@ -161,7 +160,6 @@ endif
 
 SRC_S = \
 	amiga_lib_call.S \
-	nlr68k.S \
 
 OBJ = $(PY_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))

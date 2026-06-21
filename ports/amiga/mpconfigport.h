@@ -33,7 +33,7 @@
 #include "mpconfigvariant.h"
 
 // NLR: py/nlr.h auto-detects __m68k__ and selects the register-based NLR
-// implemented in ports/amiga/nlr68k.S + nlr68k.c. This is required for
+// implemented in py/nlr68k.S + py/nlr68k_jump.c. This is required for
 // try/except/with to work inside @micropython.native code, where the
 // exception handler PC is carried in REG_LOCAL_1 (D7) across nlr_push.
 

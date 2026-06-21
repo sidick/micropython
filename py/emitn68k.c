@@ -35,7 +35,7 @@
 #include "py/asm68k.h"
 
 // Word index within nlr_buf_t for the exception handler PC local.
-// This is regs[0], where ports/amiga/nlr68k.S saves REG_LOCAL_1 (D7).
+// This is regs[0], where py/nlr68k.S saves REG_LOCAL_1 (D7).
 // The native emitter carries the exception handler PC in D7 across the
 // nlr_push call and reads it back from this slot after a non-local return.
 #define NLR_BUF_IDX_LOCAL_1 (2)
