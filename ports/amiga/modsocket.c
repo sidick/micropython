@@ -37,6 +37,7 @@
 
 #include <sys/socket.h>
 #include <sys/filio.h>
+#include <sys/select.h> // fd_set + FD_* for WaitSelect()-backed poll
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -160,13 +161,55 @@ static mp_uint_t socket_write(mp_obj_t self_in, const void *buf, mp_uint_t size,
 
 static mp_uint_t socket_ioctl(mp_obj_t self_in, mp_uint_t request, uintptr_t arg, int *errcode) {
     mp_obj_amiga_socket_t *self = MP_OBJ_TO_PTR(self_in);
-    (void)arg;
     if (request == MP_STREAM_CLOSE) {
         if (self->fd >= 0) {
             CloseSocket(self->fd);
             self->fd = -1;
         }
         return 0;
+    }
+    if (request == MP_STREAM_GET_FILENO) {
+        return (mp_uint_t)self->fd;
+    }
+    if (request == MP_STREAM_POLL) {
+        // Report readiness for the requested directions via a zero-timeout
+        // WaitSelect() on this one socket. This is what select.poll()/
+        // select.select() (extmod/modselect.c) drive, one object at a time.
+        if (self->fd < 0) {
+            return MP_STREAM_POLL_NVAL;
+        }
+        fd_set rfds, wfds, efds;
+        FD_ZERO(&rfds);
+        FD_ZERO(&wfds);
+        FD_ZERO(&efds);
+        if (arg & MP_STREAM_POLL_RD) {
+            FD_SET(self->fd, &rfds);
+        }
+        if (arg & MP_STREAM_POLL_WR) {
+            FD_SET(self->fd, &wfds);
+        }
+        if (arg & MP_STREAM_POLL_ERR) {
+            FD_SET(self->fd, &efds);
+        }
+        struct timeval tv; // zero timeout: WaitSelect returns immediately
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        LONG n = WaitSelect(self->fd + 1, &rfds, &wfds, &efds, (APTR)&tv, NULL);
+        if (n < 0) {
+            *errcode = sock_errno();
+            return MP_STREAM_ERROR;
+        }
+        mp_uint_t ret = 0;
+        if (FD_ISSET(self->fd, &rfds)) {
+            ret |= MP_STREAM_POLL_RD;
+        }
+        if (FD_ISSET(self->fd, &wfds)) {
+            ret |= MP_STREAM_POLL_WR;
+        }
+        if (FD_ISSET(self->fd, &efds)) {
+            ret |= MP_STREAM_POLL_ERR;
+        }
+        return ret;
     }
     *errcode = MP_EINVAL;
     return MP_STREAM_ERROR;

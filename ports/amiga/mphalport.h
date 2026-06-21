@@ -41,6 +41,10 @@ mp_uint_t mp_hal_ticks_cpu(void);
 // Called by the VM hook every N bytecodes to check for Ctrl+C.
 void amiga_check_ctrl_c(void);
 
+// MICROPY_INTERNAL_WFE backend (see mpconfigport.h). Sleeps in short,
+// Ctrl-C-aware slices so select()/poll() idle-waits don't busy-spin.
+void amiga_internal_wfe(mp_uint_t timeout_ms);
+
 // One-shot REPL banner injector. main.c arms this before entering
 // pyexec_friendly_repl with after_n_writes = number of upstream
 // banner writes to elapse before the inject fires. See mphalport.c.
