@@ -45,6 +45,26 @@ void amiga_check_ctrl_c(void) {
     }
 }
 
+// MICROPY_INTERNAL_WFE backend: mp_event_wait_ms()/_indefinite() call this
+// to suspend until the next event. Without it the default is a no-op, so
+// select()/poll() (extmod/modselect.c) busy-spin while waiting. Sleep in
+// short slices instead: a slice is capped so the poll loop re-checks socket
+// readiness, its own timeout, and Ctrl-C at least every ~40 ms, and an
+// "indefinite" (mp_uint_t)-1 wait can never hang.
+void amiga_internal_wfe(mp_uint_t timeout_ms) {
+    if (timeout_ms == 0) {
+        return; // caller only wanted pending events serviced
+    }
+    ULONG ticks = (ULONG)(timeout_ms / 20); // dos Delay(): 50 ticks/second
+    if (ticks < 1) {
+        ticks = 1; // ~20 ms minimum slice
+    } else if (ticks > 2) {
+        ticks = 2; // ~40 ms cap
+    }
+    Delay(ticks);
+    amiga_check_ctrl_c();
+}
+
 // One-slot push-back buffer used by the AmigaOS CSI translation
 // (0x9b -> ESC '[') in mp_hal_stdin_rx_chr.
 static int amiga_stdin_pending = -1;

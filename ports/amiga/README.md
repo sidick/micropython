@@ -44,7 +44,9 @@ Supported features include:
     `unsetenv` map to AmigaDOS `GetVar` / `SetVar`, sharing the
     `ENV:` store with the AmigaShell.
 - `socket` networking via `bsdsocket.library` (AmiTCP, MiamiDx,
-  Roadshow, etc.).
+  Roadshow, etc.), including `select.poll()` / `select.select()` over
+  sockets (the socket's `MP_STREAM_POLL` ioctl is backed by a
+  zero-timeout `WaitSelect()`).
 - TLS / SSL via AmiSSL v5 (variant-gated; bundled with the standard
   variant, omitted from the size-optimised variants). Provides the
   upstream `ssl` surface: `ssl.SSLContext`, `ssl.OPENSSL_VERSION`, the
