@@ -26,7 +26,7 @@
 
 // ports/amiga/amiga_ssl.h — AmiSSL v5 lifecycle and shared types.
 //
-// Phase 28 Step 2: provide the library-base globals and the
+// Provide the library-base globals and the
 // open/close hooks called from main.c. Higher-level wrappers (Step 3
 // SSLContext, Step 4 SSLSocket) consume the bases through the
 // regular <proto/amissl.h> inlines.

@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// time module wall-clock backing for the Amiga port (Phase 39 step 1).
+// time module wall-clock backing for the Amiga port.
 //
 // Included into extmod/modtime.c via MICROPY_PY_TIME_INCLUDEFILE. Supplies
 // the three hooks the include-file contract expects:

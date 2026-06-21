@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-// ports/amiga/amiga_ssl.c — Phase 28 Step 2: AmiSSL v5 lifecycle.
+// AmiSSL v5 lifecycle.
 //
 // Mirrors modsocket.c's amiga_socket_open()/_close() shape. The
 // global library bases live here; the AmiSSL SDK's stub trampolines
