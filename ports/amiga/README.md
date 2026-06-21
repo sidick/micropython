@@ -70,6 +70,8 @@ Supported features include:
   `machine`, `release`, `python_version`, `platform`) plus
   `platform.amiga_info()` for a one-line AmigaOS summary
   (CPU / FPU / chipset / Kickstart / chip / fast memory).
+- Arbitrary-precision integers (`mpz`) and double-precision floats, so
+  integer maths grows past 64 bits like CPython rather than overflowing.
 
 The port produces three build variants:
 
