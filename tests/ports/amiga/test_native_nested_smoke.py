@@ -104,6 +104,7 @@ def factory():
     out = []
     i = 0
     while i < 3:
+
         @micropython.native
         def leaf():
             return 42

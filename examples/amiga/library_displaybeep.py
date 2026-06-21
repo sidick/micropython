@@ -14,6 +14,6 @@ with amiga.library("intuition.library", 37) as intuition:
 
 # A second example -- exec.library's AvailMem with a flags arg in D1.
 with amiga.library("exec.library", 33) as execlib:
-    chip_free = execlib.AvailMem(2)        # MEMF_CHIP = 2
-    fast_free = execlib.AvailMem(4)        # MEMF_FAST = 4
+    chip_free = execlib.AvailMem(2)  # MEMF_CHIP = 2
+    fast_free = execlib.AvailMem(4)  # MEMF_FAST = 4
     print("chip free:", chip_free, "fast free:", fast_free)

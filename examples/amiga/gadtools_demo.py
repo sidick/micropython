@@ -175,11 +175,23 @@ def _build_gadgets(arena, gt, textattr, vi):
     gx = 150  # gadgets start here (labels sit to the LEFT of this)
     gw = 240  # input gadget width
     h = 14  # row height
-    info = {"names": {}, "ptrs": {}, "kinds": {}, "nopts": {},
-            "state": {}, "shortcuts": {}}
+    info = {"names": {}, "ptrs": {}, "kinds": {}, "nopts": {}, "state": {}, "shortcuts": {}}
 
-    def add(gad, kind, top, width, label, place, gid, name,
-            left=gx, height=h, nopts=0, state=None, **tags):
+    def add(
+        gad,
+        kind,
+        top,
+        width,
+        label,
+        place,
+        gid,
+        name,
+        left=gx,
+        height=h,
+        nopts=0,
+        state=None,
+        **tags,
+    ):
         if not gad:  # a previous CreateGadgetA already failed
             return gad
         ng = _new_gadget(arena, left, top, width, height, label, place, gid, textattr, vi)
@@ -202,37 +214,110 @@ def _build_gadgets(arena, gt, textattr, vi):
         return g
 
     gad = context
-    gad = add(gad, STRING_KIND, 20, gw, "_Name:", PLACETEXT_LEFT, 1, "string",
-              GTST_String="MicroPython", GTST_MaxChars=64)
+    gad = add(
+        gad,
+        STRING_KIND,
+        20,
+        gw,
+        "_Name:",
+        PLACETEXT_LEFT,
+        1,
+        "string",
+        GTST_String="MicroPython",
+        GTST_MaxChars=64,
+    )
     # "Coun_t" (shortcut 't'), not "_Count" -- 'c' belongs to Cancel below.
-    gad = add(gad, INTEGER_KIND, 40, 80, "Coun_t:", PLACETEXT_LEFT, 2, "integer",
-              GTIN_Number=42, GTIN_MaxChars=8)
-    gad = add(gad, CHECKBOX_KIND, 60, 26, "_Enabled:", PLACETEXT_LEFT, 3, "checkbox",
-              state=1, GTCB_Checked=1)
-    gad = add(gad, CYCLE_KIND, 80, gw, "_Mode:", PLACETEXT_LEFT, 4, "cycle",
-              nopts=3, state=1,
-              GTCY_Labels=arena.string_array(["Draft", "Normal", "Final"]),
-              GTCY_Active=1)
-    gad = add(gad, SLIDER_KIND, 100, gw, "_Volume:", PLACETEXT_LEFT, 5, "slider",
-              state=70,
-              GTSL_Min=0, GTSL_Max=100, GTSL_Level=70,
-              GTSL_LevelFormat="%3ld", GTSL_MaxLevelLen=3,
-              GTSL_LevelPlace=PLACETEXT_RIGHT)
+    gad = add(
+        gad,
+        INTEGER_KIND,
+        40,
+        80,
+        "Coun_t:",
+        PLACETEXT_LEFT,
+        2,
+        "integer",
+        GTIN_Number=42,
+        GTIN_MaxChars=8,
+    )
+    gad = add(
+        gad,
+        CHECKBOX_KIND,
+        60,
+        26,
+        "_Enabled:",
+        PLACETEXT_LEFT,
+        3,
+        "checkbox",
+        state=1,
+        GTCB_Checked=1,
+    )
+    gad = add(
+        gad,
+        CYCLE_KIND,
+        80,
+        gw,
+        "_Mode:",
+        PLACETEXT_LEFT,
+        4,
+        "cycle",
+        nopts=3,
+        state=1,
+        GTCY_Labels=arena.string_array(["Draft", "Normal", "Final"]),
+        GTCY_Active=1,
+    )
+    gad = add(
+        gad,
+        SLIDER_KIND,
+        100,
+        gw,
+        "_Volume:",
+        PLACETEXT_LEFT,
+        5,
+        "slider",
+        state=70,
+        GTSL_Min=0,
+        GTSL_Max=100,
+        GTSL_Level=70,
+        GTSL_LevelFormat="%3ld",
+        GTSL_MaxLevelLen=3,
+        GTSL_LevelPlace=PLACETEXT_RIGHT,
+    )
     # MX (radio): GTMX_Labels is the NULL-terminated choice list, `height`
     # is each choice's row height and GTMX_Spacing the gap between rows.
     # The radio images are ~14px tall, so the pitch (height + spacing) has
     # to clear that or the three buttons overlap into one unclickable blob.
-    gad = add(gad, MX_KIND, 122, 18, "_Align:", PLACETEXT_LEFT, 6, "radio",
-              height=16, nopts=3, state=0,
-              GTMX_Labels=arena.string_array(["Left", "Centre", "Right"]),
-              GTMX_Spacing=2, GTMX_Active=0)
-    gad = add(gad, NUMBER_KIND, 186, gw, "Pixels:", PLACETEXT_LEFT, 7, "number",
-              GTNM_Number=1024, GTNM_Border=1)
+    gad = add(
+        gad,
+        MX_KIND,
+        122,
+        18,
+        "_Align:",
+        PLACETEXT_LEFT,
+        6,
+        "radio",
+        height=16,
+        nopts=3,
+        state=0,
+        GTMX_Labels=arena.string_array(["Left", "Centre", "Right"]),
+        GTMX_Spacing=2,
+        GTMX_Active=0,
+    )
+    gad = add(
+        gad,
+        NUMBER_KIND,
+        186,
+        gw,
+        "Pixels:",
+        PLACETEXT_LEFT,
+        7,
+        "number",
+        GTNM_Number=1024,
+        GTNM_Border=1,
+    )
 
     # Two push buttons along the bottom; label drawn IN the button.
     gad = add(gad, BUTTON_KIND, 210, 90, "_OK", PLACETEXT_IN, 101, "ok")
-    gad = add(gad, BUTTON_KIND, 210, 90, "_Cancel", PLACETEXT_IN, 102, "cancel",
-              left=gx + 150)
+    gad = add(gad, BUTTON_KIND, 210, 90, "_Cancel", PLACETEXT_IN, 102, "cancel", left=gx + 150)
 
     if not gad:
         raise RuntimeError("a CreateGadgetA call failed")
@@ -270,18 +355,31 @@ def main():
             g = info["ptrs"][gid]
             poke_w(g + GG_ACTIVATION, peek_w(g + GG_ACTIVATION) | GACT_TABCYCLE)
 
-        wtags = arena.keep(amiga.taglist(
-            WA_Left=40, WA_Top=20, WA_Width=420, WA_Height=246,
-            WA_Title="MicroPython GadTools Demo",
-            WA_PubScreen=screen,
-            WA_Gadgets=glist,
-            WA_DragBar=1, WA_DepthGadget=1, WA_CloseGadget=1,
-            WA_Activate=1, WA_NewLookMenus=1,
-            # MX reports via GADGETDOWN, the others via GADGETUP; listen
-            # for both so every gadget's events reach us.
-            WA_IDCMP=(IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW
-                      | IDCMP_GADGETUP | IDCMP_GADGETDOWN | IDCMP_VANILLAKEY),
-        ))
+        wtags = arena.keep(
+            amiga.taglist(
+                WA_Left=40,
+                WA_Top=20,
+                WA_Width=420,
+                WA_Height=246,
+                WA_Title="MicroPython GadTools Demo",
+                WA_PubScreen=screen,
+                WA_Gadgets=glist,
+                WA_DragBar=1,
+                WA_DepthGadget=1,
+                WA_CloseGadget=1,
+                WA_Activate=1,
+                WA_NewLookMenus=1,
+                # MX reports via GADGETDOWN, the others via GADGETUP; listen
+                # for both so every gadget's events reach us.
+                WA_IDCMP=(
+                    IDCMP_CLOSEWINDOW
+                    | IDCMP_REFRESHWINDOW
+                    | IDCMP_GADGETUP
+                    | IDCMP_GADGETDOWN
+                    | IDCMP_VANILLAKEY
+                ),
+            )
+        )
         window = intuition.OpenWindowTagList(0, wtags)
         if not window:
             raise RuntimeError("OpenWindowTagList failed")

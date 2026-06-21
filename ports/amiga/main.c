@@ -744,13 +744,13 @@ static int amiga_main(int argc_unused, char **argv_unused) {
             if (v != 0) {
                 amiga_heap_max_bytes = v;
             }
-            #if MICROPY_PY_AMIGA_SSL
+        #if MICROPY_PY_AMIGA_SSL
         } else if (strncmp(argv[a + 1], "sslver=", 7) == 0) {
             // Diagnostic: pin OpenAmiSSLTags to a specific APIVersion
             // (one of the AMISSL_V* enum values). 0 / unset = default.
             extern int amiga_ssl_version_override;
             amiga_ssl_version_override = atoi(argv[a + 1] + 7);
-            #endif
+        #endif
         }
     }
     // Workbench tooltypes can also drive heap sizing; this is the only way
