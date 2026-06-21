@@ -116,8 +116,8 @@ class Response:
     @property
     def content(self):
         if self._cached is None:
-            te = self.headers.get("transfer-encoding", "").lower()
-            if "chunked" in te:
+            tenc = self.headers.get("transfer-encoding", "").lower()
+            if "chunked" in tenc:
                 data = self._read_chunked()
             else:
                 cl = self.headers.get("content-length")
