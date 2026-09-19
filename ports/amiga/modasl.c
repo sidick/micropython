@@ -206,8 +206,8 @@ static mp_obj_t mod_asl_file_request(size_t n_args, const mp_obj_t *pos_args,
     ctx.ok = FALSE;
     struct StackSwapStruct sss;
     sss.stk_Lower = scratch;
-    sss.stk_Upper = (APTR)((char *)scratch + ASL_SWAP_STACK_BYTES);
-    sss.stk_Pointer = sss.stk_Upper;
+    sss.stk_Upper = (ULONG)((char *)scratch + ASL_SWAP_STACK_BYTES);
+    sss.stk_Pointer = (APTR)sss.stk_Upper;
     StackSwap(&sss);
     asl_run_on_scratch_stack(&ctx);
     StackSwap(&sss);

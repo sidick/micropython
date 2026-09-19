@@ -31,6 +31,7 @@
 #include "py/gc.h"
 #include "py/mperrno.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include <exec/types.h>

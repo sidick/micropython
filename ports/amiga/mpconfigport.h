@@ -265,8 +265,16 @@ void amiga_free_heap(void *p);
 
 // Type definitions for a 32-bit big-endian machine.
 // (Endianness itself is auto-detected from GCC's __BYTE_ORDER__.)
+// bebbo's m68k-amigaos-gcc has intptr_t/uintptr_t as "long", which
+// conflicts with libnix/AmigaOS headers that use plain "int" for
+// 32-bit values, so mp_int_t is defined directly rather than via
+// py/mpconfig.h's default MP_INT_TYPE_INTPTR (intptr_t-based) path.
+#define MP_INT_TYPE (MP_INT_TYPE_OTHER)
 typedef int mp_int_t;
 typedef unsigned int mp_uint_t;
+#define MP_INT_MAX INT_MAX
+#define MP_INT_MIN INT_MIN
+#define MP_UINT_MAX UINT_MAX
 typedef long mp_off_t;
 
 // alloca is available from GCC built-ins / newlib

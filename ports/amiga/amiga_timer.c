@@ -50,6 +50,7 @@
 #include <exec/ports.h>
 #include <devices/timer.h>
 #include <proto/exec.h>
+#include <proto/dos.h>
 #include <proto/timer.h>
 
 #include "py/mphal.h"

@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <exec/tasks.h>
@@ -1196,9 +1197,9 @@ int main(int argc, char **argv) {
         return amiga_main(argc, argv);
     }
     amiga_main_sss.stk_Lower = amiga_main_scratch;
-    amiga_main_sss.stk_Upper = (APTR)((char *)amiga_main_scratch
+    amiga_main_sss.stk_Upper = (ULONG)((char *)amiga_main_scratch
         + AMIGA_MAIN_STACK_BYTES);
-    amiga_main_sss.stk_Pointer = amiga_main_sss.stk_Upper;
+    amiga_main_sss.stk_Pointer = (APTR)amiga_main_sss.stk_Upper;
     StackSwap(&amiga_main_sss);
     int rc = amiga_main(argc, argv);
     StackSwap(&amiga_main_sss);
