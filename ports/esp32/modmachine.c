@@ -272,7 +272,7 @@ static mp_int_t mp_machine_reset_cause(void) {
 #include "esp32s3/rom/usb/chip_usb_dw_wrapper.h"
 #endif
 
-MP_NORETURN static void machine_bootloader_rtc(void) {
+MP_NORETURN void machine_bootloader_rtc(void) {
     #if CONFIG_IDF_TARGET_ESP32S3 && MICROPY_HW_USB_CDC
     usb_usj_mode();
     usb_dc_prepare_persist();
@@ -326,9 +326,7 @@ static mp_obj_t machine_wake_pins(void) {
 
     // Only a few (~8) pins might cause wakeup.
     // Therefore, we calculate the required space in a first pass.
-    for (index = 0, len = 0; index < 64; index++) {
-        len += (status & (1ULL << index)) ? 1 : 0;
-    }
+    len = mp_popcount(status >> 32) + mp_popcount(status & 0xFFFFFFFF);
     if (len) {
         mp_obj_tuple_t *tuple = MP_OBJ_TO_PTR(mp_obj_new_tuple(len, NULL));
 
