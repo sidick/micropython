@@ -38,6 +38,7 @@
 
 #include <stdbool.h>
 #include <errno.h>
+#include <utility/tagitem.h>
 #include <proto/exec.h>
 #include <proto/amisslmaster.h>
 #include <libraries/amisslmaster.h>
